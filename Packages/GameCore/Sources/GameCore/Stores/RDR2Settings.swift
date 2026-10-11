@@ -1,8 +1,9 @@
 extension RockstarLauncher {
     /// Red Dead Redemption 2's `system.xml` as tested on a 14" MacBook Pro (M4, 16 GB): DirectX 12 on
-    /// D3DMetal 3.0, Fullscreen, mostly Low and Medium quality with High textures, and DLSS
-    /// (MetalFX through D3DMetal). Written only before the game's first launch, so a player's own
-    /// settings are never replaced.
+    /// D3DMetal 3.0, Fullscreen, Ultra textures, High shadows, reflections, lighting and tessellation,
+    /// Medium water, volumetrics and most of the rest, and DLSS (MetalFX through D3DMetal). About
+    /// 50 FPS at the 1512×982 desktop, 25 with Retina mode (2026-10-11). Written only before the
+    /// game's first launch, so a player's own settings are never replaced.
     ///
     /// Left out so the game fills them in for each Mac: the refresh rate and the adapter's name. The
     /// screen size is the tested Mac's; `fitWindow` replaces it with each Mac's desktop on the first
@@ -17,22 +18,22 @@ extension RockstarLauncher {
           <version value="37" />
           <configSource>kSettingsConfig_Safe</configSource>
           <graphics>
-            <tessellation>kSettingLevel_Low</tessellation>
-            <shadowQuality>kSettingLevel_Medium</shadowQuality>
+            <tessellation>kSettingLevel_High</tessellation>
+            <shadowQuality>kSettingLevel_High</shadowQuality>
             <farShadowQuality>kSettingLevel_Medium</farShadowQuality>
-            <reflectionQuality>kSettingLevel_Medium</reflectionQuality>
+            <reflectionQuality>kSettingLevel_High</reflectionQuality>
             <mirrorQuality>kSettingLevel_Low</mirrorQuality>
             <ssao>kSettingLevel_Medium</ssao>
-            <textureQuality>kSettingLevel_High</textureQuality>
+            <textureQuality>kSettingLevel_Ultra</textureQuality>
             <particleQuality>kSettingLevel_Medium</particleQuality>
-            <waterQuality>kSettingLevel_Low</waterQuality>
-            <volumetricsQuality>kSettingLevel_Low</volumetricsQuality>
-            <lightingQuality>kSettingLevel_Medium</lightingQuality>
-            <ambientLightingQuality>kSettingLevel_Low</ambientLightingQuality>
-            <anisotropicFiltering value="4" />
-            <dlssIndex value="4" />
-            <dlssQuality value="1" />
-            <dlssSharpen value="0.350000" />
+            <waterQuality>kSettingLevel_Medium</waterQuality>
+            <volumetricsQuality>kSettingLevel_Medium</volumetricsQuality>
+            <lightingQuality>kSettingLevel_High</lightingQuality>
+            <ambientLightingQuality>kSettingLevel_Medium</ambientLightingQuality>
+            <anisotropicFiltering value="3" />
+            <dlssIndex value="3" />
+            <dlssQuality value="2" />
+            <dlssSharpen value="0.700000" />
             <fsr2Index value="0" />
             <fsr2Sharpen value="0.350000" />
             <taa>kSettingLevel_High</taa>
@@ -40,10 +41,10 @@ extension RockstarLauncher {
             <msaa value="0" />
             <graphicsQualityPreset value="1.000000" />
             <hdr value="true" />
-            <hdr10PlusGaming value="false" />
-            <hdrIntensity value="100" />
-            <hdrPeakBrightness value="1000" />
-            <hdrFilmicMode value="true" />
+            <hdr10PlusGaming value="true" />
+            <hdrIntensity value="120" />
+            <hdrPeakBrightness value="300" />
+            <hdrFilmicMode value="false" />
             <gamma value="15" />
             <hdrSettingsMigrated value="true" />
           </graphics>
@@ -57,10 +58,10 @@ extension RockstarLauncher {
             <motionBlurLimit value="16.000000" />
             <particleLightingQuality>kSettingLevel_Medium</particleLightingQuality>
             <waterReflectionSSR value="true" />
-            <waterRefractionQuality>kSettingLevel_Low</waterRefractionQuality>
-            <waterReflectionQuality>kSettingLevel_Low</waterReflectionQuality>
-            <waterSimulationQuality value="1" />
-            <waterLightingQuality>kSettingLevel_Medium</waterLightingQuality>
+            <waterRefractionQuality>kSettingLevel_Medium</waterRefractionQuality>
+            <waterReflectionQuality>kSettingLevel_Medium</waterReflectionQuality>
+            <waterSimulationQuality value="2" />
+            <waterLightingQuality>kSettingLevel_High</waterLightingQuality>
             <furDisplayQuality>kSettingLevel_Medium</furDisplayQuality>
             <maxTexUpgradesPerFrame value="5" />
             <shadowGrassShadows>kSettingLevel_Low</shadowGrassShadows>
@@ -70,9 +71,9 @@ extension RockstarLauncher {
             <worldHeightShadowQuality value="0.330000" />
             <directionalScreenSpaceShadowQuality value="0.330000" />
             <ambientMaskVolumesHighPrecision value="false" />
-            <scatteringVolumeQuality>kSettingLevel_Low</scatteringVolumeQuality>
-            <volumetricsRaymarchQuality>kSettingLevel_Low</volumetricsRaymarchQuality>
-            <volumetricsLightingQuality>kSettingLevel_Low</volumetricsLightingQuality>
+            <scatteringVolumeQuality>kSettingLevel_Medium</scatteringVolumeQuality>
+            <volumetricsRaymarchQuality>kSettingLevel_Medium</volumetricsRaymarchQuality>
+            <volumetricsLightingQuality>kSettingLevel_Medium</volumetricsLightingQuality>
             <volumetricsRaymarchResolutionUnclamped value="false" />
             <terrainShadowQuality>kSettingLevel_Medium</terrainShadowQuality>
             <damageModelsDisabled value="true" />

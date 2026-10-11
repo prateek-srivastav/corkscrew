@@ -14,8 +14,11 @@ public enum LoaderBundles {
     /// Where Wine makes them: the per-user temporary folder, whatever `TMPDIR` says.
     public static var temporaryDirectory: URL? {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count) > 0 else { return nil }
-        return URL(fileURLWithPath: String(cString: buffer), isDirectory: true)
+        // The length includes the terminating NUL.
+        let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+        guard length > 1, length <= buffer.count else { return nil }
+        let path = String(decoding: buffer.prefix(length - 1).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     /// Our bundles in `temporary`'s `winetemp-*` folders.

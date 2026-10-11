@@ -24,4 +24,11 @@ struct LoaderBundlesTests {
             #expect(LoaderBundles.find(in: temporary.appending(path: "missing")).isEmpty)
         }
     }
+
+    /// Wine's per-user temporary folder (`/var/folders/…/T`), not `TMPDIR`.
+    @Test func temporaryDirectoryIsTheUsersTempFolder() {
+        let folder = LoaderBundles.temporaryDirectory
+        #expect(folder?.lastPathComponent == "T")
+        #expect(folder.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    }
 }
