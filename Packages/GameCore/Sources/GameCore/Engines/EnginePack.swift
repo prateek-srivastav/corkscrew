@@ -2,7 +2,8 @@ import Foundation
 
 /// What a downloaded copy of Corkscrew installs on first launch instead of building anything: the
 /// Wine runtime and the graphics components: D3DMetal (Apple's Game Porting Toolkit, whose license
-/// allows non-commercial redistribution with Apple's notices), DXMT and DXVK.
+/// allows non-commercial redistribution with Apple's notices), DXMT and DXVK. The DMG's app carries
+/// the archive (`bundledArchive(in:)`); other builds download it.
 ///
 /// `scripts/package-engine.sh` builds the archive from `build/runtime` and `build/components` and
 /// writes `EnginePack.current` (EnginePackPin.swift). Layout, under one top folder:
@@ -36,6 +37,14 @@ public struct EnginePack: Sendable, Equatable {
         self.url = url
         self.sha256 = sha256
         self.size = size
+    }
+
+    /// The pack's archive in the app's resources (`EnginePack/<archive name>`), where
+    /// `scripts/make-dmg.sh` puts it so setup doesn't download it; nil in builds without it.
+    public func bundledArchive(in resources: URL?) -> URL? {
+        guard let archive = resources?.appending(path: "EnginePack/\(url.lastPathComponent)"),
+              FileManager.default.fileExists(atPath: archive.path) else { return nil }
+        return archive
     }
 
     /// Whether installing this pack would change what's installed: no runtime came from it, and one

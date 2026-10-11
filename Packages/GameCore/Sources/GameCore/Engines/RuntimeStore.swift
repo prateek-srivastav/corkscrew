@@ -117,6 +117,10 @@ public struct RuntimeStore: Sendable {
     }
 
     /// Unpacks a tar archive (any compression `tar` knows) into `folder`.
+    ///
+    /// macOS's `tar` gives every file the archive's quarantine flag, and the engine pack inside a
+    /// downloaded DMG has one. Gatekeeper could then refuse to run Wine's programs and libraries,
+    /// which aren't notarized; callers check the archive's SHA-256 first, so the flag comes off.
     static func unpack(_ archive: URL, into folder: URL) throws {
         let tar = Process()
         tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
@@ -124,6 +128,13 @@ public struct RuntimeStore: Sendable {
         try tar.run()
         tar.waitUntilExit()
         guard tar.terminationStatus == 0 else { throw StoreError.extractFailed(status: tar.terminationStatus) }
+        removeQuarantine(in: folder)
+    }
+
+    static func removeQuarantine(in folder: URL) {
+        removexattr(folder.path, "com.apple.quarantine", XATTR_NOFOLLOW)
+        guard let items = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) else { return }
+        for case let item as URL in items { removexattr(item.path, "com.apple.quarantine", XATTR_NOFOLLOW) }
     }
 
     /// A scratch folder on the same volume as the runtimes, so the final move is a rename.

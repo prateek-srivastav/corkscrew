@@ -2,8 +2,8 @@
 
 A release has two parts:
 
-- **The engine pack** (`runtime-*` releases): the Wine runtime, D3DMetal, DXMT and DXVK, built on the maintainer's Mac. The app downloads it on first launch. It only changes when the runtime or components change.
-- **The app** (`v*` releases): `Corkscrew-<version>.dmg`, built by GitHub Actions from a tag. Each app version points at one engine pack (`EnginePackPin.swift`).
+- **The engine pack** (`runtime-*` releases): the Wine runtime, D3DMetal, DXMT and DXVK, built on the maintainer's Mac, with the source of everything in it. It only changes when the runtime or components change.
+- **The app** (`v*` releases): `Corkscrew-<version>.dmg`, built by GitHub Actions from a tag. Each app version points at one engine pack (`EnginePackPin.swift`), and the DMG's app carries that pack, so setup doesn't download it. Builds without it (from source) download it.
 
 ## A new engine pack
 
@@ -66,8 +66,8 @@ The app takes the same override: `-EnginePackURL <url>`.
    git tag v0.3.0 && git push origin v0.3.0
    ```
 
-4. The **Release** workflow builds the DMG and creates a draft release with it. Read the notes, try the DMG, then publish the draft.
+4. The **Release** workflow downloads the pinned engine pack, puts it in the app, builds the DMG and creates a draft release with it. Read the notes, try the DMG, then publish the draft.
 
-To build the DMG locally instead: `scripts/make-dmg.sh` (with `CORKSCREW_TRY_DMG=1` while the engine pack isn't published yet).
+To build the DMG locally instead: `scripts/make-dmg.sh`. It takes the pack from `dist/runtime-<release>/` when it's there, and needs `CORKSCREW_TRY_DMG=1` while the pack isn't published yet.
 
 The app is ad hoc signed, so users confirm it once with **Open Anyway**. Signing with a Developer ID and notarizing would remove that step; it needs an Apple Developer Program membership.

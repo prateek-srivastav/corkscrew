@@ -62,6 +62,34 @@ struct EnginePackTests {
         EnginePack(version: version, url: URL(string: "https://example.invalid/pack.tar.xz")!, sha256: sha256, size: 0)
     }
 
+    /// The pack inside a downloaded DMG has the download's quarantine flag, and `tar` gives it to
+    /// every file it unpacks. Wine isn't notarized, so the installed copy must not keep it.
+    @Test func unpacksWithoutTheDownloadsQuarantine() throws {
+        try withTempDir { root in
+            let archive = try Self.makePack(in: root)
+            let quarantine = "0083;6acb4078;Safari;11111111-2222-3333-4444-555555555555"
+            #expect(setxattr(archive.path, "com.apple.quarantine", quarantine, quarantine.utf8.count, 0, 0) == 0)
+            let paths = RuntimeStoreTests.paths(root)
+            try Self.pack("1-1", sha256: try RuntimeStore.sha256(of: archive)).install(archive: archive, paths: paths)
+            let installed = [paths.runtimes, paths.components].flatMap { folder in
+                (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects ?? []).compactMap { $0 as? URL }
+            }
+            #expect(installed.contains { $0.lastPathComponent == "wine" })
+            #expect(installed.filter { getxattr($0.path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) >= 0 }.isEmpty)
+        }
+    }
+
+    @Test func findsTheArchiveInsideTheApp() throws {
+        try withTempDir { resources in
+            let pack = Self.pack("1-1", sha256: "00")
+            #expect(pack.bundledArchive(in: resources) == nil)
+            #expect(pack.bundledArchive(in: nil) == nil)
+            let archive = resources.appending(path: "EnginePack/pack.tar.xz")
+            try archive.write("xz")
+            #expect(pack.bundledArchive(in: resources) == archive)
+        }
+    }
+
     /// A pack revision rebuilds the same Wine version, so its runtime has the installed one's id. It
     /// must replace it: 26.3.0-1 crashed on macOS 26, and 26.3.0-2 has to reach those Macs.
     @Test func aNewerPackReplacesTheRuntimeAndComponents() throws {

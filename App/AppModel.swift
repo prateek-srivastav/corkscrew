@@ -143,7 +143,7 @@ final class AppModel {
                 setupTask = nil
                 isSettingUp = false
             }
-            await downloadEnginePack()
+            await installEnginePack()
         }
     }
 
@@ -558,8 +558,15 @@ final class AppModel {
         return pack
     }
 
+    /// The pack's archive inside the app (DMG builds), so setup needs no download. Not with
+    /// `-EnginePackURL`, which is there to try another copy.
+    static var bundledEnginePack: URL? {
+        guard UserDefaults.standard.string(forKey: "EnginePackURL") == nil else { return nil }
+        return EnginePack.current.bundledArchive(in: Bundle.main.resourceURL)
+    }
+
     /// Everything a new user needs to play, in one go: Rosetta, the engine pack (Wine, D3DMetal, DXMT,
-    /// DXVK), the "Games" bottle and Steam. Steps already done are skipped, so it can simply be run
+    /// DXVK; inside the DMG's app, otherwise downloaded), the "Games" bottle and Steam. Steps already done are skipped, so it can simply be run
     /// again after a failure; a failed or cancelled step stops the rest.
     func setUp() {
         guard setupTask == nil else { return }
@@ -576,7 +583,7 @@ final class AppModel {
                 guard installed != nil else { return }
             }
             if runtimes.isEmpty || Self.enginePack.upgradesInstalledRuntime(in: paths) {
-                guard await downloadEnginePack(), !Task.isCancelled else { return }
+                guard await installEnginePack(), !Task.isCancelled else { return }
             }
             if gamesBottle == nil { guard await createBottleNow(name: "Games", kind: .standard), !Task.isCancelled else { return } }
             if !hasSteam, let bottle = gamesBottle { await installSteam(into: bottle) }
@@ -585,31 +592,35 @@ final class AppModel {
 
     func cancelSetUp() { setupTask?.cancel() }
 
-    /// Downloads the engine pack and installs its runtime and components, replacing ones from an
-    /// older pack. Returns whether it did.
+    /// Installs the engine pack's runtime and components, replacing ones from an older pack: from
+    /// the copy inside the app, or downloaded. Returns whether it did.
     @discardableResult
-    private func downloadEnginePack() async -> Bool {
+    private func installEnginePack() async -> Bool {
         let paths = self.paths
         let pack = Self.enginePack
-        let archive = paths.cachesRoot.appending(path: "Downloads/\(pack.url.lastPathComponent)")
-        enginePackProgress = 0
-        do {
-            try await Downloader.download(pack.url, to: archive) { fraction in
-                Task { @MainActor in
-                    // Late updates after the download ended are dropped.
-                    if let progress = self.enginePackProgress { self.enginePackProgress = max(progress, fraction) }
+        let bundled = Self.bundledEnginePack
+        let archive = bundled ?? paths.cachesRoot.appending(path: "Downloads/\(pack.url.lastPathComponent)")
+        if bundled == nil {
+            enginePackProgress = 0
+            do {
+                try await Downloader.download(pack.url, to: archive) { fraction in
+                    Task { @MainActor in
+                        // Late updates after the download ended are dropped.
+                        if let progress = self.enginePackProgress { self.enginePackProgress = max(progress, fraction) }
+                    }
                 }
+                enginePackProgress = nil
+            } catch {
+                enginePackProgress = nil
+                if (error as? URLError)?.code != .cancelled { errorMessage = "Couldn't download the Wine runtime: \(Self.describe(error))" }
+                return false
             }
-            enginePackProgress = nil
-        } catch {
-            enginePackProgress = nil
-            if (error as? URLError)?.code != .cancelled { errorMessage = "Couldn't download the Wine runtime: \(Self.describe(error))" }
-            return false
         }
         isInstallingEngine = true
         defer { isInstallingEngine = false }
         let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…") {
-            defer { try? FileManager.default.removeItem(at: archive) }
+            // The copy inside the app stays: it's sealed by the app's signature.
+            defer { if bundled == nil { try? FileManager.default.removeItem(at: archive) } }
             return try pack.install(archive: archive, paths: paths)
         }
         return installed != nil

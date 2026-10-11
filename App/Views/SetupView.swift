@@ -34,7 +34,9 @@ struct SetupView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .disabled(model.activity != nil)
-                    Text("Downloads \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file)) for Wine; Steam updates itself the first time it opens. "
+                    Text((AppModel.bundledEnginePack != nil
+                          ? "Wine comes with the app. Steam is downloaded, and updates itself the first time it opens. "
+                          : "Downloads \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file)) for Wine; Steam updates itself the first time it opens. ")
                          + "If Rosetta isn't installed yet, macOS asks for your password once.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {

@@ -5,9 +5,9 @@ import Foundation
 extension EnginePack {
     /// The engine pack this version of the app downloads on first launch.
     public static let current = EnginePack(
-        version: "26.3.0-2",
-        url: URL(string: "https://github.com/Prateek-Srivastav/corkscrew/releases/download/runtime-26.3.0-2/corkscrew-engine-26.3.0-2.tar.xz")!,
-        sha256: "4d5a419d80df7695ae74cef3861fbdb43bf01b6c218dc80b11b9da2106b9f23b",
-        size: 319399464
+        version: "26.3.0-3",
+        url: URL(string: "https://github.com/Prateek-Srivastav/corkscrew/releases/download/runtime-26.3.0-3/corkscrew-engine-26.3.0-3.tar.xz")!,
+        sha256: "c38898c00b0274befccbd58c83f789156c5ce05575c20b775dddce525a292318",
+        size: 319368836
     )
 }
