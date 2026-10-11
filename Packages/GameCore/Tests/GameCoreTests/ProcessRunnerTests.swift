@@ -63,14 +63,16 @@ struct ProcessRunnerTests {
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("pipes\n"))
     }
 
+    /// The background program outlives the launch by seconds, not milliseconds: on a busy CI Mac
+    /// starting the shell alone took 1.7 s, which a 1-second sleep couldn't tell apart from waiting.
     @Test func keepsLoggingProgramsThatOutliveTheLaunch() async throws {
         let start = ContinuousClock.now
-        let (result, dir) = try await run("(sleep 1; echo late) & echo early")
+        let (result, dir) = try await run("(sleep 5; echo late) & echo early")
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(ContinuousClock.now - start < .seconds(1), "returns when the launched process exits")
+        #expect(ContinuousClock.now - start < .seconds(4), "returns when the launched process exits")
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("early\n"))
 
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(10)
         while try !String(contentsOf: result.log, encoding: .utf8).hasSuffix("late\n"), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
