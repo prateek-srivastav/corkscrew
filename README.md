@@ -11,17 +11,17 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27), and contri
 
 ## Install
 
-You need an Apple Silicon Mac with macOS 26 or 27, and about 3 GB of free space for the app, its Wine runtime and a bottle, plus your games.
+You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free space for the app, its Wine runtime and a bottle, plus your games.
 
-1. Download `Corkscrew-<version>.dmg` from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest). Open it and drag Corkscrew to Applications.
+1. Download `Corkscrew-<version>.dmg` (about 320 MB) from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest). Open it and drag Corkscrew to Applications.
 2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time:
    - Click **Done** in the warning.
    - Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Corkscrew. Confirm with your password.
 
    You only do this once.
-3. Click **Set Up Corkscrew**. It does everything in one go, in about two minutes on a fast connection:
+3. Click **Set Up Corkscrew**. It does everything in one go:
    - installs **Rosetta** if your Mac doesn't have it yet (macOS asks for your password); the Wine runtime is made for Intel Macs and runs through it;
-   - downloads the **Wine runtime with its graphics translators**, about 300 MB: D3DMetal from Apple's Game Porting Toolkit for DirectX 12, DXMT and DXVK for DirectX 10/11. The app checks it against a SHA-256 built into the app before installing it;
+   - unpacks the **Wine runtime with its graphics translators**, which come inside the app: D3DMetal from Apple's Game Porting Toolkit for DirectX 12, DXMT and DXVK for DirectX 10/11. The app checks them against a SHA-256 built into its code before installing them;
    - creates a bottle called "Games";
    - installs **Steam**, which downloads the rest of itself (about 240 MB).
 4. Open Steam from the Library, sign in, and install your games. The [games tested](#games-tested) with Corkscrew are already in the Library, and their button opens them in Steam.
@@ -319,7 +319,7 @@ Corkscrew is free software: you can redistribute it and modify it under the term
 
 This repository only contains Corkscrew's own code. The build scripts download each third-party component at build time, check it against the SHA-256 in `scripts/runtime-pins.env`, and keep everything under `build/`, which isn't in git.
 
-The DMG doesn't include them either. On first launch the app downloads an **engine pack**: the Wine runtime built by these scripts, D3DMetal, DXMT and DXVK, with their licenses. `scripts/package-engine.sh` makes it, and each pack is published as a `runtime-*` release together with the source code of everything in it.
+The DMG's app carries them as an **engine pack** (`Contents/Resources/EnginePack`), which setup unpacks: the Wine runtime built by these scripts, D3DMetal, DXMT and DXVK, with their licenses (also next to the archive, in `LICENSES/`). `scripts/package-engine.sh` makes it, and each pack is published as a `runtime-*` release together with the source code of everything in it. Apps built from source download the pack instead, or use `build/`.
 
 Each component keeps its own license:
 

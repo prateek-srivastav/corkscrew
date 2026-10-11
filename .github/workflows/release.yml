@@ -28,7 +28,7 @@ jobs:
           [[ "v$version" == "$TAG" ]] || { echo "::error::Tag $TAG doesn't match the app's version $version in project.yml"; exit 1; }
       # Only what the app needs: mingw-w64 for the Steam web helper wrapper, XcodeGen for the project.
       - run: brew install mingw-w64 xcodegen
-      # Also checks that the engine pack the app downloads is published.
+      # Also checks that the engine pack is published, and puts it in the app.
       - run: scripts/make-dmg.sh
       - name: Draft the release
         env:
@@ -44,7 +44,7 @@ jobs:
 
           1. Download **Corkscrew-$version.dmg** below, open it, and drag Corkscrew to Applications.
           2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time: click **Done**, then go to **System Settings → Privacy & Security**, click **Open Anyway** next to Corkscrew, and confirm. You only do this once.
-          3. Click **Set Up Corkscrew**: it installs Rosetta if needed, downloads Wine with its graphics translators (engine $engine, about 300 MB, including D3DMetal from Apple's Game Porting Toolkit under Apple's non-commercial license), creates the "Games" bottle and installs Steam.
+          3. Click **Set Up Corkscrew**: it installs Rosetta if needed, unpacks Wine with its graphics translators (engine $engine, inside the app, including D3DMetal from Apple's Game Porting Toolkit under Apple's non-commercial license), creates the "Games" bottle and installs Steam.
           4. Open Steam from the Library, sign in and install your games.
 
           The DMG's SHA-256 is in Corkscrew-$version.dmg.sha256. The engine's source code is published with [its release](https://github.com/$GITHUB_REPOSITORY/releases/tag/runtime-$engine).
