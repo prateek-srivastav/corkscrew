@@ -38,8 +38,8 @@ Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 
 |---|---|---|
 | **Red Dead Redemption 2** | Steam → Rockstar Games Launcher, DX12 on D3DMetal | Plays at about 50 FPS (25 in Retina mode) with the tested settings: Ultra textures, High shadows and lighting, DLSS as MetalFX. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX on D3DMetal | 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964. |
-| **God of War (2018)** | El Amigos repack, isolated bottle with internet off, DX11 on D3DMetal | Plays. White specks on Kratos's skin are still open. |
-| **Last Pirates Die Together** | OnlineFix, isolated bottle with internet on and its own Steam, DX11 on D3DMetal | Plays; online co-op works. The app loads OnlineFix's own DLL and Steam's overlay DLL for it automatically. |
+| **God of War (2018)** | Isolated bottle, internet off, DX11 on D3DMetal | Plays. White specks on Kratos's skin are still open. |
+| **Last Pirates Die Together** | Isolated bottle, internet on, with its own Steam; DX11 on D3DMetal | Plays; online co-op works. |
 | **Emily is Away** | 32-bit, DX11 on DXVK | Runs |
 
 ## How it works
