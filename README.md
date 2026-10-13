@@ -30,6 +30,7 @@ Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 
 | Rockstar Games Launcher | Starts, signs in (Social Club), and launches games |
 | Isolated bottles | Programs run in a macOS sandbox with no access to your files; internet off unless you turn it on; DX11 and DX12 render inside it |
 | App | Library with a tab per bottle, per-game settings, logs, Retina mode, Metal HUD and a performance overlay, Finder "Open With" for `.exe`/`.msi` |
+| Game controllers | Xbox controller works in every tested game (not tried yet in Last Pirates Die Together), through Wine's SDL2 support |
 | Game Mode | Turns on for fullscreen games in standard bottles |
 
 ### Games tested
@@ -38,7 +39,7 @@ Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 
 |---|---|---|
 | **Red Dead Redemption 2** | Steam → Rockstar Games Launcher, DX12 on D3DMetal | Plays at about 50 FPS (25 in Retina mode) with the tested settings: Ultra textures, High shadows and lighting, DLSS as MetalFX. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX on D3DMetal | 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964. |
-| **God of War (2018)** | Isolated bottle, internet off, DX11 on D3DMetal | Plays. White specks on Kratos's skin are still open. |
+| **God of War (2018)** | Isolated bottle, internet off, DX11 on D3DMetal | Plays. White specks on Kratos's skin are still open ([#14](https://github.com/Prateek-Srivastav/corkscrew/issues/14)). |
 | **Last Pirates Die Together** | Isolated bottle, internet on, with its own Steam; DX11 on D3DMetal | Plays; online co-op works. |
 | **Emily is Away** | 32-bit, DX11 on DXVK | Runs |
 
@@ -117,19 +118,19 @@ If something doesn't work, check [Known issues](#known-issues), then the game's 
 
 ## Known issues
 
-- **Isolated bottles use `sandbox-exec`**, which Apple has deprecated. It works on macOS 26 and 27, and the tests check the sandbox, but a future macOS could remove it.
-- **RDR2 crashes after changing graphics settings in game** ("No DirectX 12 adapter or runtime found"). Change settings, then quit and relaunch.
-- **The Rockstar launcher sometimes can't reach its library service.** Close it and play again.
-- **Networks that intercept TLS** break Steam downloads and put the Rockstar launcher offline.
-- **FSR 3 Frame Generation crashes DX12 games on D3DMetal.** Keep it off; DLSS (MetalFX) works.
-- **GPTK 4.0 beta 2 draws Wukong's textures as blocks** (an Apple bug), so stable 3.0 is the default.
-- **Steam's UI looks half-size in Retina mode**, because Windows DPI stays at 96.
-- **D3DMetal's shader cache** is shared by every bottle and GPTK version.
+- **Isolated bottles use `sandbox-exec`**, which Apple has deprecated. It works on macOS 26 and 27, and the tests check the sandbox, but a future macOS could remove it. ([#6](https://github.com/Prateek-Srivastav/corkscrew/issues/6))
+- **RDR2 crashes after changing graphics settings in game** ("No DirectX 12 adapter or runtime found"). Change settings, then quit and relaunch. ([#7](https://github.com/Prateek-Srivastav/corkscrew/issues/7))
+- **The Rockstar launcher sometimes can't reach its library service.** Close it and play again. ([#8](https://github.com/Prateek-Srivastav/corkscrew/issues/8))
+- **Networks that intercept TLS** break Steam downloads and put the Rockstar launcher offline. ([#9](https://github.com/Prateek-Srivastav/corkscrew/issues/9))
+- **FSR 3 Frame Generation crashes DX12 games on D3DMetal.** Keep it off; DLSS (MetalFX) works. ([#10](https://github.com/Prateek-Srivastav/corkscrew/issues/10))
+- **GPTK 4.0 beta 2 draws Wukong's textures as blocks** (an Apple bug), so stable 3.0 is the default. ([#11](https://github.com/Prateek-Srivastav/corkscrew/issues/11))
+- **Steam's UI looks half-size in Retina mode**, because Windows DPI stays at 96. ([#12](https://github.com/Prateek-Srivastav/corkscrew/issues/12))
+- **D3DMetal's shader cache** is shared by every bottle and GPTK version. ([#13](https://github.com/Prateek-Srivastav/corkscrew/issues/13))
 
 ## Roadmap
 
 - **M3:** game profiles. **Isolation:** a blocked-actions panel and a network-block check.
-- **M4:** shortcuts and controllers. **M5:** Epic Games and Battle.net launchers.
+- **M4:** shortcuts and controller settings. **M5:** Epic Games and Battle.net launchers.
 - **M6:** an ARM64 Wine with FEX for x86 emulation, before Rosetta 2 is retired.
 - **Distribution:** Developer ID signing, notarization, and automatic updates.
 
