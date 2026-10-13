@@ -87,7 +87,7 @@ struct GameDetailView: View {
                     }
                     if let selectedLog {
                         LogView(file: selectedLog, isLive: isActive && selectedLog == session?.log)
-                            .frame(minHeight: 220)
+                            .frame(height: 320)
                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([selectedLog]) }
                     }
                 }

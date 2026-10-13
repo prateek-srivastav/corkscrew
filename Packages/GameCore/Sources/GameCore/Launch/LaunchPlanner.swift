@@ -82,6 +82,23 @@ public enum LaunchPlanner {
     /// environment, so this goes on Steam's own launch too.
     static let steamOverlayOff = ["gameoverlayrenderer": "", "gameoverlayrenderer64": ""]
 
+    /// OnlineFix (online play through the Steam running in the bottle) starts from a proxy DLL next to
+    /// the game, which Wine skips for its builtin unless told otherwise. Its SteamOverlay64.dll then
+    /// loads Steam's overlay DLL and stops ("Failed to load steam overlay dll", error 126) without it.
+    static let onlineFixMarkers = ["OnlineFix64.dll", "OnlineFix.dll"]
+    static let onlineFixLoaders = ["winmm", "winhttp", "version"]
+
+    /// The loader overrides for an OnlineFix game, nil for any other.
+    static func onlineFixOverrides(for executable: URL) -> [String: String]? {
+        let folder = executable.deletingLastPathComponent()
+        let fm = FileManager.default
+        guard onlineFixMarkers.contains(where: { fm.fileExists(atPath: folder.appending(path: $0).path) }) else { return nil }
+        let loaders = onlineFixLoaders.filter { fm.fileExists(atPath: folder.appending(path: "\($0).dll").path) }
+        return Dictionary(uniqueKeysWithValues: loaders.map { ($0, "n,b") })
+    }
+
+    public static func usesOnlineFix(_ executable: URL) -> Bool { onlineFixOverrides(for: executable) != nil }
+
     public static func plan(_ game: GameLaunch, in context: WineContext) throws -> LaunchPlan {
         // A backend that isn't installed (D3DMetal in a build without the Game Porting Toolkit) would
         // leave the game on WineD3D's DLLs while Wine is told otherwise; use the best installed one.
@@ -122,7 +139,9 @@ public enum LaunchPlanner {
         env["CX_ACTIVE_GRAPHICS_BACKEND"] = backend.rawValue
         env.merge(context.engine.backendEnvironment[backend] ?? [:]) { _, engine in engine }
         var overrides = context.engine.backendDLLOverrides[backend] ?? [:]
-        if !game.profile.steamOverlay { overrides.merge(steamOverlayOff) { engine, _ in engine } }
+        let onlineFix = onlineFixOverrides(for: game.executable)
+        if let onlineFix { overrides.merge(onlineFix) { engine, _ in engine } }
+        if !game.profile.steamOverlay && onlineFix == nil { overrides.merge(steamOverlayOff) { engine, _ in engine } }
         env["WINEDLLOVERRIDES"] = dllOverrides(overrides)
         env.merge(game.profile.environment) { _, user in user }
 

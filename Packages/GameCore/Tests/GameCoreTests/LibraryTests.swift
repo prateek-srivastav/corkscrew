@@ -39,6 +39,18 @@ struct LibraryTests {
         #expect(library.games.map(\.name) == ["Mine", "Steam"])
     }
 
+    @Test func deletingABottleTakesOutItsGamesOnly() {
+        let gone = UUID(), kept = UUID()
+        let steam = Game(name: "Steam", executable: URL(fileURLWithPath: "/a/steam.exe"), bottleID: gone, store: StoreItem(store: "steam"))
+        let game = Game(name: "Demo", executable: URL(fileURLWithPath: "/a/Demo.exe"), bottleID: gone)
+        let other = Game(name: "Other", executable: URL(fileURLWithPath: "/b/Other.exe"), bottleID: kept)
+        var library = Library(games: [steam, game, other],
+                              removedStoreItems: [StoreItem(store: "steam", appID: "1").key(in: gone), StoreItem(store: "steam", appID: "2").key(in: kept)])
+        #expect(library.removeBottle(gone).map(\.id) == [steam.id, game.id])
+        #expect(library.games.map(\.id) == [other.id])
+        #expect(library.removedStoreItems == [StoreItem(store: "steam", appID: "2").key(in: kept)])
+    }
+
     @Test func storeEntriesSavedWithOlderSettingsAreUpgradedOnce() throws {
         try withTempDir { root in
             let store = LibraryStore(paths: RuntimeStoreTests.paths(root))

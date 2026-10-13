@@ -140,6 +140,23 @@ struct LaunchPlannerTests {
         }
     }
 
+    /// OnlineFix needs its own winmm.dll and Steam's overlay DLL, whatever the overlay setting.
+    @Test func onlineFixGamesLoadTheirProxyAndKeepTheOverlay() throws {
+        try withTempDir { root in
+            let f = try fixture(root)
+            let context = f.context(.standard, host: host)
+            let folder = f.exe.deletingLastPathComponent()
+            for file in ["OnlineFix64.dll", "winmm.dll", "SteamOverlay64.dll"] { try folder.appending(path: file).write(Data()) }
+            let game = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(), detectedAPIs: [.d3d11])
+            #expect(try LaunchPlanner.plan(game, in: context).environment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=;winmm=n,b")
+
+            // A winmm.dll alone (no OnlineFix) is left to Wine.
+            try FileManager.default.removeItem(at: folder.appending(path: "OnlineFix64.dll"))
+            #expect(try LaunchPlanner.plan(game, in: context).environment["WINEDLLOVERRIDES"]
+                    == "gameoverlayrenderer=;gameoverlayrenderer64=;winemenubuilder.exe=")
+        }
+    }
+
     /// DXMT offers DLSS (which it runs on MetalFX) only with its NVIDIA extension on.
     @Test func metalFXOnDXMTTurnsOnItsNvidiaExtension() throws {
         try withTempDir { root in

@@ -88,7 +88,19 @@ public struct BottleStore: Sendable {
     /// Brings the bottle up to date with `engine` before a launch: `wineboot --update` when the
     /// runtime's Windows modules changed since the prefix was last booted. A running bottle is left
     /// alone (updating would wait for its programs to quit); the next launch on an idle bottle catches up.
+    /// Isolated bottles then get the Mac's root certificates they're missing (`HostRootCertificates`).
     public func prepareForLaunch(_ bottle: Bottle, engine: Engine) async throws -> Preparation {
+        let preparation = try await updateIfNeeded(bottle, engine: engine)
+        if bottle.kind == .isolated {
+            try ensureWineServerBase()
+            let context = WineContext(engine: engine, bottle: bottle, location: location(of: bottle), paths: paths, hostEnvironment: hostEnvironment)
+            let log = paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/root-certificates.log")
+            try await HostRootCertificates.importMissing(in: context, log: log)
+        }
+        return preparation
+    }
+
+    private func updateIfNeeded(_ bottle: Bottle, engine: Engine) async throws -> Preparation {
         guard bottle.runtimeModules != RuntimeModules.fingerprint(runtime: engine.root) else { return .upToDate }
         guard !WineServer.isRunning(prefix: location(of: bottle).prefix, base: paths.wineServerDirectory) else {
             return .updateDeferred
@@ -111,6 +123,23 @@ public struct BottleStore: Sendable {
         var bottle = bottle
         bottle.runtimeModules = nil
         try save(bottle)
+    }
+
+    /// Stops everything in the bottle (when its runtime is still there) and moves its folder (Windows
+    /// drive, clean snapshot, settings) to the Trash. Returns where it went: "Add Existing Bottle"
+    /// takes it back until the Trash is emptied.
+    @discardableResult
+    public func moveToTrash(_ bottle: Bottle, engine: Engine?) throws -> URL? {
+        let location = location(of: bottle)
+        if let engine {
+            let context = WineContext(engine: engine, bottle: bottle, location: location, paths: paths, hostEnvironment: hostEnvironment)
+            let environment = try LaunchPlanner.plan(wineArguments: [], in: context).environment
+            ProcessRunner.stopSession(environment: environment, wineserver: engine.wineserver)
+            ProcessRunner.waitForSession(environment: environment, wineserver: engine.wineserver, timeout: .seconds(10))
+        }
+        var trashed: NSURL?
+        try FileManager.default.trashItem(at: location.directory, resultingItemURL: &trashed)
+        return trashed as URL?
     }
 
     /// Adds a bottle folder made elsewhere (another data folder, a backup) as an APFS clone.

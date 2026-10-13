@@ -79,7 +79,7 @@ struct OpenProgramSheet: View {
         .padding(20)
         .frame(width: 480)
         .onAppear {
-            bottleID = model.suggestedBottle(for: program)?.id
+            bottleID = model.openBottle(for: program)?.id
             icon = (try? PEFile.icon(contentsOf: program)).flatMap { $0 }.flatMap(NSImage.init(data:))
             name = Game.defaultName(for: program)
         }
@@ -96,6 +96,6 @@ struct OpenProgramSheet: View {
 
     /// Moves on to the next opened program, if any.
     private func dismiss() {
-        model.openRequests.removeAll { $0 == program }
+        model.closeOpenRequest(program)
     }
 }

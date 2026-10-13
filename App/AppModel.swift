@@ -44,6 +44,8 @@ final class AppModel {
     /// Programs opened from Finder, dropped on the window or picked with Add Program, waiting for
     /// the user to choose "Run Once" or "Add to Library".
     var openRequests: [URL] = []
+    /// The bottle to offer first for an opened program, when it was opened from that bottle.
+    private(set) var openBottles: [URL: Bottle.ID] = [:]
     /// What the app is busy with (shown at the bottom of the window), nil when idle.
     private(set) var activity: String?
     /// Everything `perform` is running, oldest first; `activity` shows the newest.
@@ -63,8 +65,10 @@ final class AppModel {
     var isSetUp: Bool { hasRosetta && !runtimes.isEmpty && !bottles.isEmpty }
     /// The standard bottle new games go to.
     var gamesBottle: Bottle? { bottles.first { $0.kind == .standard && $0.name == "Games" } }
-    /// Steam's own entry in the library, which appears once Steam is installed in a bottle.
-    var hasSteam: Bool { games.contains { $0.store?.store == Steam.store && $0.store?.appID == nil } }
+    /// Whether the "Games" bottle has Steam (other bottles may have their own).
+    var hasSteam: Bool { gamesBottle.map(hasSteam(in:)) ?? false }
+    /// Bottles Steam is being installed into.
+    private(set) var steamInstalls: Set<UUID> = []
 
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
@@ -274,12 +278,24 @@ final class AppModel {
 
     // MARK: Opening programs
 
-    func open(_ urls: [URL]) {
+    /// Asks whether to run each program once or add it to the library; `bottle` is offered first.
+    func open(_ urls: [URL], in bottle: Bottle? = nil) {
         let files = urls.filter(\.isFileURL)
         for url in urls where url.scheme == "corkscrew" { handleLink(url) }
         let programs = files.filter { ["exe", "msi"].contains($0.pathExtension.lowercased()) }
         if programs.count < files.count { errorMessage = "Only Windows programs (.exe) and installers (.msi) can be opened." }
+        for program in programs { openBottles[program] = bottle?.id }
         openRequests += programs.filter { !openRequests.contains($0) }
+    }
+
+    /// The bottle the Open sheet selects first for `program`.
+    func openBottle(for program: URL) -> Bottle? {
+        bottles.first { $0.id == openBottles[program] } ?? suggestedBottle(for: program)
+    }
+
+    func closeOpenRequest(_ program: URL) {
+        openRequests.removeAll { $0 == program }
+        openBottles[program] = nil
     }
 
     /// `corkscrew://launch/<game id>` and `corkscrew://stop/<game id>`, for shortcuts and scripts.
@@ -479,22 +495,46 @@ final class AppModel {
 
     // MARK: Bottles
 
-    func createBottle(name: String, kind: Bottle.Kind, allowNetwork: Bool = false) {
-        Task { await createBottleNow(name: name, kind: kind, allowNetwork: allowNetwork) }
+    /// Creates the bottle, then installs Steam into it if asked.
+    func createBottle(name: String, kind: Bottle.Kind, allowNetwork: Bool = false, installSteam: Bool = false) {
+        Task {
+            guard let bottle = await createBottleNow(name: name, kind: kind, allowNetwork: allowNetwork), installSteam else { return }
+            await self.installSteam(into: bottle)
+        }
     }
 
-    /// Returns whether the bottle was created.
+    /// Returns the bottle, if it was created.
     @discardableResult
-    private func createBottleNow(name: String, kind: Bottle.Kind, allowNetwork: Bool = false) async -> Bool {
+    private func createBottleNow(name: String, kind: Bottle.Kind, allowNetwork: Bool = false) async -> Bottle? {
         let paths = self.paths
-        let created: Void? = await perform("Creating the bottle \"\(name)\"… (Wine sets up Windows; this takes a minute)") {
+        return await perform("Creating the bottle \"\(name)\"… (Wine sets up Windows; this takes a minute)") {
             guard let engine = try RuntimeStore(paths: paths).engine() else {
                 throw AppError("Add a Wine runtime first.")
             }
             let bottle = Bottle(name: name, kind: kind, engineID: engine.id, isolation: IsolationPolicy(allowNetwork: allowNetwork))
             try await BottleStore(paths: paths).create(bottle, engine: engine)
+            return bottle
         }
-        return created != nil
+    }
+
+    /// Stops everything in the bottle, moves its folder to the Trash and takes its games out of the library.
+    func delete(_ bottle: Bottle) {
+        let paths = self.paths
+        for (id, session) in sessions where session.isActive && session.game.bottleID == bottle.id {
+            sessions[id]?.task?.cancel()
+        }
+        Task {
+            let trashed: URL?? = await perform("Moving \"\(bottle.name)\" to the Trash…") {
+                let engine = try RuntimeStore(paths: paths).engine(id: bottle.engineID)
+                return try BottleStore(paths: paths).moveToTrash(bottle, engine: engine)
+            }
+            guard trashed != nil else { return }
+            for game in library.removeBottle(bottle.id) {
+                LibraryStore(paths: paths).removeCachedIcon(for: game)
+                icons[game.id] = nil
+            }
+            saveLibrary()
+        }
     }
 
     func importBottle(from folder: URL) {
@@ -585,7 +625,7 @@ final class AppModel {
             if runtimes.isEmpty || Self.enginePack.upgradesInstalledRuntime(in: paths) {
                 guard await installEnginePack(), !Task.isCancelled else { return }
             }
-            if gamesBottle == nil { guard await createBottleNow(name: "Games", kind: .standard), !Task.isCancelled else { return } }
+            if gamesBottle == nil { guard await createBottleNow(name: "Games", kind: .standard) != nil, !Task.isCancelled else { return } }
             if !hasSteam, let bottle = gamesBottle { await installSteam(into: bottle) }
         }
     }
@@ -626,18 +666,35 @@ final class AppModel {
         return installed != nil
     }
 
+    /// Whether Steam's files are in the bottle, listed in the library or not.
+    func hasSteam(in bottle: Bottle) -> Bool {
+        Steam.root(inPrefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix) != nil
+    }
+
     /// Downloads Valve's installer and installs Steam into `bottle`; Steam then shows up in the library.
+    /// An offline isolated bottle gets internet first: Steam doesn't work without it.
     func installSteam(into bottle: Bottle) async {
+        guard !steamInstalls.contains(bottle.id) else { return }
+        steamInstalls.insert(bottle.id)
+        defer { steamInstalls.remove(bottle.id) }
         let paths = self.paths
-        let installer = paths.cachesRoot.appending(path: "Downloads/SteamSetup.exe")
+        // One installer per bottle, so two installs at once don't share a file.
+        let installer = paths.cachesRoot.appending(path: "Downloads/SteamSetup-\(bottle.id.uuidString).exe")
         await perform("Installing Steam into \"\(bottle.name)\"… (it downloads about 240 MB the first time)") {
             defer { try? FileManager.default.removeItem(at: installer) }
+            // The saved copy, which may be newer than the one shown.
+            let store = BottleStore(paths: paths)
+            var target = try store.list().first { $0.id == bottle.id } ?? bottle
+            if target.kind == .isolated && !target.isolation.allowNetwork {
+                target.isolation.allowNetwork = true
+                try store.save(target)
+            }
             try await Downloader.download(Steam.installerURL, to: installer) { _ in }
-            guard let engine = try RuntimeStore(paths: paths).engine(id: bottle.engineID) else {
+            guard let engine = try RuntimeStore(paths: paths).engine(id: target.engineID) else {
                 throw AppError("Add a Wine runtime first.")
             }
-            let log = paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/steam-install.log")
-            try await Steam.install(installer: installer, bottle: bottle, engine: engine, paths: paths, log: log)
+            let log = paths.logsRoot.appending(path: "bottles/\(target.id.uuidString)/steam-install.log")
+            try await Steam.install(installer: installer, bottle: target, engine: engine, paths: paths, log: log)
         }
     }
 

@@ -97,6 +97,15 @@ public struct Library: Codable, Equatable, Sendable {
         if let key = game.storeKey { removedStoreItems.insert(key) }
         games.removeAll { $0.id == id }
     }
+
+    /// Takes out every game of a deleted bottle, and forgets its removed store entries; returns the games.
+    @discardableResult
+    public mutating func removeBottle(_ bottleID: UUID) -> [Game] {
+        let removed = games.filter { $0.bottleID == bottleID }
+        games.removeAll { $0.bottleID == bottleID }
+        removedStoreItems = removedStoreItems.filter { !$0.contains(":\(bottleID.uuidString):") }
+        return removed
+    }
 }
 
 /// Reads and writes the library (`library.json`) and caches game icons.

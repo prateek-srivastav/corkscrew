@@ -106,6 +106,9 @@ public enum Launcher {
                        detectedAPIs: inspection?.graphicsAPIs ?? [], machine: inspection?.machine ?? .x86_64),
             in: context
         )
+        if LaunchPlanner.usesOnlineFix(executable) {
+            notes.append("OnlineFix found: the game's own loader DLL is used, and Steam's overlay stays on because OnlineFix needs it.")
+        }
         if let missing = plan.unavailableBackend, let used = plan.backend {
             notes.append("\(missing.displayName) isn't installed, so this launch uses \(used.displayName)."
                          + (missing == .d3dmetal ? " To get D3DMetal back, click Set Up Corkscrew, or import a Game Porting Toolkit under Setup → Advanced." : ""))
