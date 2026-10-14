@@ -95,11 +95,14 @@ struct BottlesView: View {
         if model.runningBottles.contains(bottle.id) {
             busyItem("Stop Everything in It", "Stopping…", model.isPending(.stopBottle(bottle.id))) { model.stop(bottle) }
         }
-        Divider()
+        if bottle.kind == .isolated || bottle.role == nil { Divider() }
         if bottle.kind == .isolated {
             busyItem("Reset to Clean…", "Resetting…", model.isPending(.resetBottle(bottle.id))) { bottleToReset = bottle }
         }
-        busyItem("Delete Bottle…", "Moving to Trash…", model.isPending(.deleteBottle(bottle.id))) { bottleToDelete = bottle }
+        // Setup's bottles (Steam, Offline and Online Programs) stay; Reset to Clean empties a protected one.
+        if bottle.role == nil {
+            busyItem("Delete Bottle…", "Moving to Trash…", model.isPending(.deleteBottle(bottle.id))) { bottleToDelete = bottle }
+        }
     }
 
     private func deleteMessage(for bottle: Bottle) -> String {
@@ -139,7 +142,7 @@ private struct BottleCard: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(tint)
                     .frame(width: 48, height: 48)
-                    .background(tint.opacity(0.16), in: .rect(cornerRadius: 14))
+                    .background(tint.opacity(0.16), in: .rect(cornerRadius: Theme.cornerRadius))
                 Spacer()
                 if model.runningBottles.contains(bottle.id) {
                     Chip(title: "Running", systemImage: "circle.fill", tint: Theme.running)
@@ -147,20 +150,20 @@ private struct BottleCard: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(bottle.name).font(.title3.weight(.bold)).lineLimit(1)
-                Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                Text(summary).font(.body).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isHovering || isSelected ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: 20))
+        .background(isHovering || isSelected ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
         .background(alignment: .topTrailing) {
             Circle().fill(tint.opacity(0.18)).frame(width: 160, height: 160).blur(radius: 50).offset(x: 30, y: -50)
         }
-        .clipShape(.rect(cornerRadius: 20))
+        .clipShape(.rect(cornerRadius: Theme.cornerRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? Color.white : Theme.stroke, lineWidth: isSelected ? 2 : 1)
+            RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(isSelected ? Color.white : Theme.stroke, lineWidth: isSelected ? 2 : 1)
         }
-        .contentShape(.rect(cornerRadius: 20))
+        .contentShape(.rect(cornerRadius: Theme.cornerRadius))
         .onHover { isHovering = $0 }
         .animation(.snappy(duration: 0.15), value: isHovering)
     }
@@ -205,10 +208,10 @@ private struct BottleDetail: View {
                     Text("Programs here can't see your files, other apps or (unless allowed) the internet. "
                          + "Keep it offline, don't sign into accounts in it, and reset it after use. "
                          + "No sandbox is perfect: macOS or GPU driver bugs can still be exploited.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.body).foregroundStyle(.secondary)
                     if model.hasSteam(in: bottle) {
                         Label(IsolatedSteam.warning, systemImage: "exclamationmark.triangle")
-                            .font(.callout).foregroundStyle(.orange)
+                            .font(.body).foregroundStyle(.orange)
                     }
                 }
             }
@@ -233,8 +236,10 @@ private struct BottleDetail: View {
                     BusyButton("Reset to Clean…", busyTitle: "Resetting…", isBusy: model.isPending(.resetBottle(bottle.id)), action: reset)
                         .foregroundStyle(.red)
                 }
-                BusyButton("Delete Bottle…", busyTitle: "Moving to Trash…", isBusy: model.isPending(.deleteBottle(bottle.id)), action: delete)
-                    .foregroundStyle(.red)
+                if bottle.role == nil {
+                    BusyButton("Delete Bottle…", busyTitle: "Moving to Trash…", isBusy: model.isPending(.deleteBottle(bottle.id)), action: delete)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .panelForm()
@@ -264,15 +269,15 @@ struct NewBottleSheet: View {
                         .disabled(installSteam)
                     Text("For programs you don't trust, like installers from unknown sites. They run in a macOS sandbox "
                          + "that hides your files and other apps.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.subheadline).foregroundStyle(.secondary)
                 } else {
                     Text("For games and launchers like Steam. Programs here can read your files, as on Windows.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Toggle("Install Steam", isOn: $installSteam)
                 if kind == .isolated && installSteam {
                     Label(IsolatedSteam.warning + " Steam needs the internet, so it's on.", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.subheadline).foregroundStyle(.orange)
                 }
             }
             .formStyle(.grouped)

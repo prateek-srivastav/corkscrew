@@ -16,6 +16,9 @@ public enum BottleProcesses {
 
         /// Steam's client (`steam.exe`).
         public var isSteamClient: Bool { BottleProcesses.isSteamClient(program) }
+        /// Steam's interface (`steamwebhelper.exe`): its main and sign-in windows are this
+        /// program's. `steam.exe` only shows the small updater and start-up windows.
+        public var isSteamWebHelper: Bool { program.hasSuffix("\\steamwebhelper.exe") }
     }
 
     /// Our own processes whose environment has WINEPREFIX=prefix.
@@ -55,10 +58,11 @@ public enum BottleProcesses {
         }
     }
 
-    /// The numbers of the bottle's normal windows on screen (as `hasWindowOnScreen` counts them):
-    /// a number not there before is a window that opened, or one shown again.
-    public static func windowsOnScreen(prefix: URL) -> Set<Int> {
-        let pids = Set(list(prefix: prefix).map(\.pid))
+    /// The numbers of the bottle's normal windows on screen (as `hasWindowOnScreen` counts them),
+    /// of the processes `include` picks: a number not there before is a window that opened, or one
+    /// shown again.
+    public static func windowsOnScreen(prefix: URL, of include: (Entry) -> Bool = { _ in true }) -> Set<Int> {
+        let pids = Set(list(prefix: prefix).filter(include).map(\.pid))
         guard !pids.isEmpty else { return [] }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return Set(windows.compactMap { window in

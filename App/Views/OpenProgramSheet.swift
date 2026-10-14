@@ -19,7 +19,7 @@ struct OpenProgramSheet: View {
                     .resizable().frame(width: 48, height: 48)
                 VStack(alignment: .leading) {
                     Text(program.lastPathComponent).font(.headline)
-                    Text(program.deletingLastPathComponent().path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(program.deletingLastPathComponent().path).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
@@ -50,7 +50,7 @@ struct OpenProgramSheet: View {
                 Label("An isolated bottle only sees its own C: drive, so the program (and files next to it named like it) "
                       + "is copied into the bottle's Downloads folder. A game made of many files should be installed inside the bottle instead.",
                       systemImage: "lock.shield")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
             }
             if model.programBottles.isEmpty {
                 Label("Create a bottle under Setup first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)

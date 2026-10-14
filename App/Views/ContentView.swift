@@ -9,6 +9,7 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
+    @AppStorage(Theme.sidebarCollapsedKey) private var isSidebarCollapsed = false
 
     private var pageShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(topLeadingRadius: Theme.windowCornerRadius, bottomLeadingRadius: Theme.windowCornerRadius,
@@ -18,7 +19,7 @@ struct ContentView: View {
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 0) {
-            Sidebar()
+            Sidebar(isCollapsed: isSidebarCollapsed)
             // The container animates, so the section that leaves stays while the new one comes in.
             ZStack {
                 Group {
@@ -42,6 +43,15 @@ struct ContentView: View {
             .ignoresSafeArea(.container, edges: .top)
             .zIndex(1)
         }
+        // On the page, always at its top left, never on the sidebar; it moves with the page's edge,
+        // frame by frame (see `GlassFollowingOffset`).
+        .overlay(alignment: .topLeading) {
+            SidebarToggle(isCollapsed: $isSidebarCollapsed)
+                .modifier(GlassFollowingOffset(x: isSidebarCollapsed ? Sidebar.collapsedWidth : Sidebar.width))
+                .ignoresSafeArea(.container, edges: .top)
+        }
+        .animation(.snappy(duration: 0.3), value: isSidebarCollapsed)
+        .background { WindowButtonsPlacement() }
         .background(Theme.background)
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
         .preferredColorScheme(.dark)
@@ -89,7 +99,7 @@ private struct ActivityBar: View {
                         }
                     }
                 }
-                .font(.callout)
+                .font(.body)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .glassEffect(.regular, in: .capsule)

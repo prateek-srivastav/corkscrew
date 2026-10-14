@@ -152,11 +152,11 @@ private struct GamesPage: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Color.clear.frame(height: FloatingBar.height)
                         if isSearching {
-                            Text(title).font(.system(size: 34, weight: .heavy)).padding(.top, 28)
+                            Text(title).font(.largeTitle.bold()).padding(.top, 28)
                         } else {
                             Spacer(minLength: 24)
                             if featured.isEmpty {
-                                if isSteam { steamHero } else { emptyHero }
+                                if isSteam { steamHero } else { emptyHero(hasLaunchers: !games.isEmpty) }
                             } else {
                                 GameCarousel(games: featured, current: $shown, open: openGame)
                             }
@@ -190,8 +190,8 @@ private struct GamesPage: View {
         .floatingBar { topBar }
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-                    .background(.white.opacity(0.04), in: .rect(cornerRadius: 22))
+                RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                    .background(.white.opacity(0.04), in: .rect(cornerRadius: Theme.cornerRadius))
                     .padding(14)
                     .allowsHitTesting(false)
             }
@@ -267,8 +267,9 @@ private struct GamesPage: View {
         }
     }
 
+    /// `hasLaunchers`: the place has only launchers (a Steam of its own), which the carousel leaves out.
     @ViewBuilder
-    private var emptyHero: some View {
+    private func emptyHero(hasLaunchers: Bool) -> some View {
         if isAll && !model.isReady {
             heroMessage(model.isSettingUp ? "Setting up Corkscrew…" : "Finish setting up Corkscrew",
                         "Setup gets Wine, Steam, and two protected places for other Windows programs.") {
@@ -286,8 +287,9 @@ private struct GamesPage: View {
                     .disabled(!model.isSetUp)
             }
         } else {
-            heroMessage(bottle.map { "No programs in \($0.name)" } ?? "No programs",
-                        "Drop a Windows program (.exe) or installer (.msi) here, open one from Finder, or add one.") {
+            heroMessage(hasLaunchers ? "No games yet" : bottle.map { "No programs in \($0.name)" } ?? "No programs",
+                        hasLaunchers ? "Get games with a launcher below, or drop a Windows program (.exe) or installer (.msi) here."
+                                     : "Drop a Windows program (.exe) or installer (.msi) here, open one from Finder, or add one.") {
                 if bottle != nil {
                     Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
                         .buttonStyle(.prominentPill)
@@ -299,8 +301,7 @@ private struct GamesPage: View {
 
     private func heroMessage(_ title: String, _ message: String, @ViewBuilder action: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionLabel(title)
-            Text(title).font(.system(size: 46, weight: .heavy))
+            Text(title).font(.largeTitle.bold())
             Text(message)
                 .font(.title3).foregroundStyle(.secondary)
                 .frame(maxWidth: 520, alignment: .leading)
@@ -415,16 +416,22 @@ struct HeroBackdrop: View {
             }
             .clipped()
         .overlay {
-            LinearGradient(stops: [.init(color: .black.opacity(0.8), location: 0), .init(color: .black.opacity(0.25), location: 0.55),
+            LinearGradient(stops: [.init(color: .black.opacity(0.6), location: 0), .init(color: .black.opacity(0.15), location: 0.55),
                                    .init(color: .clear, location: 1)],
                            startPoint: .leading, endPoint: .trailing)
         }
         .overlay {
-            LinearGradient(stops: [.init(color: .black.opacity(0.45), location: 0), .init(color: .clear, location: 0.25),
+            LinearGradient(stops: [.init(color: .black.opacity(0.3), location: 0), .init(color: .clear, location: 0.25),
                                    .init(color: .clear, location: 0.55), .init(color: Theme.background, location: 1)],
                            startPoint: .top, endPoint: .bottom)
         }
         .gesture(WindowDragGesture())
+        // Pulled down past the top of the page, the art grows up to the window's top edge, so no
+        // dark gap opens above it.
+        .visualEffect { content, proxy in
+            let pull = max(0, proxy.frame(in: .scrollView).minY)
+            return content.scaleEffect(1 + pull / max(proxy.size.height, 1), anchor: .bottom)
+        }
     }
 }
 
@@ -518,7 +525,7 @@ struct GameHero: View {
                         if isActive { Circle().fill(Theme.running).frame(width: 8, height: 8) }
                         Text(session.status.text).lineLimit(2)
                     }
-                    .font(.callout)
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
                 } else if isActive {
@@ -527,7 +534,7 @@ struct GameHero: View {
                         Circle().fill(Theme.running).frame(width: 8, height: 8)
                         Text("Running")
                     }
-                    .font(.callout)
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
                 }
@@ -538,10 +545,10 @@ struct GameHero: View {
                       ? "Downloading in Steam. It's ready to play once Steam finishes."
                       : "Not installed. Steam's page for it has the Install button.",
                       systemImage: "arrow.down.circle")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
             }
             ForEach(session?.notes ?? [], id: \.self) { note in
-                Label(note, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                Label(note, systemImage: "info.circle").font(.body).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: 640, alignment: .leading)
@@ -605,11 +612,11 @@ struct GameCard: View {
                         }
                     }
                 }
-                .clipShape(.rect(cornerRadius: 16))
+                .clipShape(.rect(cornerRadius: Theme.cornerRadius))
                 .saturation(state == .installed ? 1 : 0)
                 .opacity(state == .installed ? 1 : 0.55)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: Theme.cornerRadius)
                         .strokeBorder(isSelected ? Color.white : Theme.stroke, lineWidth: isSelected ? 2.5 : 1)
                 }
                 .overlay(alignment: .topLeading) {
@@ -618,14 +625,14 @@ struct GameCard: View {
                             ProgressView().controlSize(.mini)
                             Text(busy)
                         }
-                        .font(.caption2.weight(.bold))
+                        .font(.subheadline.weight(.bold))
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.ultraThinMaterial, in: .capsule)
                         .padding(8)
                     } else if model.isRunning(game) {
                         Label("Running", systemImage: "circle.fill")
                             .symbolEffect(.pulse)
-                            .font(.caption2.weight(.bold))
+                            .font(.subheadline.weight(.bold))
                             .foregroundStyle(Theme.running)
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.ultraThinMaterial, in: .capsule)
@@ -639,7 +646,7 @@ struct GameCard: View {
                             Image(systemName: state == .installed ? "play.fill" : "arrow.down")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(.black)
-                                .frame(width: 38, height: 38)
+                                .frame(width: Theme.controlHeight, height: Theme.controlHeight)
                                 .background(.white, in: .circle)
                                 .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
                         }
@@ -652,8 +659,8 @@ struct GameCard: View {
                 .shadow(color: .black.opacity(isHovering ? 0.5 : 0.25), radius: isHovering ? 18 : 8, y: isHovering ? 10 : 4)
                 .scaleEffect(isHovering ? 1.03 : 1)
             VStack(alignment: .leading, spacing: 2) {
-                Text(game.name).font(.callout.weight(.semibold)).lineLimit(1)
-                Text(subtitle(state)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(game.name).font(.body.weight(.semibold)).lineLimit(1)
+                Text(subtitle(state)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
             .padding(.horizontal, 2)
         }

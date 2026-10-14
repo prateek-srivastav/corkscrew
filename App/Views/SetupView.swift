@@ -17,10 +17,12 @@ struct SetupView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         status
                         HStack(spacing: 12) {
-                            step(1, "Rosetta", systemImage: "cpu", done: model.hasRosetta)
-                            step(2, "Wine and graphics", systemImage: "wineglass", done: !model.runtimes.isEmpty)
-                            step(3, "Steam", systemImage: "gamecontroller", done: model.hasSteam)
-                            step(4, "Protected Games", systemImage: "lock.shield",
+                            step(1, .rosetta, "Rosetta", systemImage: "cpu", done: model.hasRosetta)
+                            step(2, .engine, "Wine and graphics", systemImage: "wineglass", done: !model.runtimes.isEmpty)
+                            // steam.exe is there before Steam has updated itself; the install isn't done yet.
+                            step(3, .steam, "Steam", systemImage: "gamecontroller", done: model.hasSteam,
+                                 busy: model.launcherBottle.map { model.steamInstalls.contains($0.id) } == true)
+                            step(4, .protectedGames, "Protected Programs", systemImage: "lock.shield",
                                  done: model.bottle(role: .sandbox) != nil && model.bottle(role: .sandboxOnline) != nil)
                         }
                     }
@@ -33,7 +35,7 @@ struct SetupView: View {
                             Text("Corkscrew picks tested settings for each game. Turn this on to change them: graphics, "
                                  + "overlays, arguments and launch logs. Setup then also shows what's installed, the bottles "
                                  + "and data folders, and lets you add your own runtimes and components.")
-                                .font(.callout).foregroundStyle(.secondary)
+                                .font(.body).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Toggle("Advanced mode", isOn: $advancedMode)
@@ -127,9 +129,9 @@ struct SetupView: View {
                                 .disabled(archiveSHA256.trimmingCharacters(in: .whitespaces).count != 64)
                             }
                             Text("D3DMetal 3.0 comes with the runtime. To try another version, download it from Apple's Game Porting Toolkit page and import its disk image.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.subheadline).foregroundStyle(.secondary)
                             Link("Game Porting Toolkit at Apple", destination: Self.gameportingToolkitPage)
-                                .font(.caption)
+                                .font(.subheadline)
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -149,26 +151,25 @@ struct SetupView: View {
     private var status: some View {
         Text("One click sets up everything: Rosetta if your Mac needs it, Wine with its graphics translators "
              + "(D3DMetal, DXMT and DXVK), a Steam bottle (a Windows drive) with Steam, and two protected places "
-             + "for other games, which can't see your files: Offline Games, without internet, and Online Games.")
+             + "for other programs, which can't see your files: Offline Programs, without internet, and Online Programs.")
             .foregroundStyle(.secondary)
         if model.isSettingUp {
             HStack(spacing: 12) {
-                if let progress = model.enginePackProgress {
-                    ProgressView(value: progress.fraction) {
-                        Text(progress.step == .downloading
-                             ? "\(progress.title) of \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file))"
-                             : progress.title)
-                    }
+                // The whole setup; a background engine upgrade only has its own step.
+                if let progress = model.setupProgress ?? model.enginePackProgress?.overall {
+                    ProgressView(value: progress) { Text(setupTitle).lineLimit(2) }
+                        .animation(.snappy, value: progress)
                 } else {
                     ProgressView().controlSize(.small)
-                    Text(model.activity ?? "Setting up…").lineLimit(2)
+                    Text(setupTitle).lineLimit(2)
                 }
                 Spacer()
                 Button("Cancel") { model.cancelSetUp() }.buttonStyle(.pill)
             }
         } else if !model.isReady {
             HStack(spacing: 14) {
-                Button("Set Up Corkscrew", systemImage: "sparkles") { model.setUp() }
+                Button(model.setupFailure == nil ? "Set Up Corkscrew" : "Try Again",
+                       systemImage: model.setupFailure == nil ? "sparkles" : "arrow.clockwise") { model.setUp() }
                     .buttonStyle(.prominentPill)
                     .controlSize(.large)
                     .disabled(model.activity != nil)
@@ -176,7 +177,7 @@ struct SetupView: View {
                       ? "Wine comes with the app. Steam is downloaded, and updates itself the first time it opens. "
                       : "Downloads \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file)) for Wine; Steam updates itself the first time it opens. ")
                      + "If Rosetta isn't installed yet, macOS asks for your password once.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
         } else {
             Label("Ready. Open Steam from the Library and sign in: your Steam games show there.", systemImage: "checkmark.circle.fill")
@@ -185,23 +186,39 @@ struct SetupView: View {
         }
     }
 
-    private func step(_ number: Int, _ title: String, systemImage: String, done: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var setupTitle: String {
+        guard let progress = model.enginePackProgress else { return model.activity ?? "Setting up…" }
+        guard progress.step == .downloading else { return progress.title }
+        return "\(progress.title) of \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file))"
+    }
+
+    /// A step setup works on (or `busy` outside setup) shows a spinner: what `done` checks may be
+    /// there before the step ends. The step setup stopped at with an error shows as failed.
+    private func step(_ number: Int, _ step: SetupStep, _ title: String, systemImage: String, done: Bool, busy: Bool = false) -> some View {
+        let active = model.setupStep == step || busy
+        let failed = !active && model.setupFailure == step
+        let done = done && !active && !failed
+        let tint: Color? = failed ? .red : done ? .green : nil
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Image(systemName: systemImage).font(.title3)
                 Spacer()
-                Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(done ? Color.green : Color.secondary)
+                if active {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: failed ? "exclamationmark.circle.fill" : done ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(tint ?? Color.secondary)
+                }
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Step \(number)").font(.caption).foregroundStyle(.secondary)
-                Text(title).font(.callout.weight(.semibold)).lineLimit(1)
+                Text("Step \(number)").font(.subheadline).foregroundStyle(.secondary)
+                Text(title).font(.headline).lineLimit(1)
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(done ? Color.green.opacity(0.1) : Theme.surface, in: .rect(cornerRadius: 14))
-        .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(done ? Color.green.opacity(0.3) : Theme.stroke) }
+        .background(tint?.opacity(0.1) ?? Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
+        .overlay { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(tint?.opacity(0.3) ?? Theme.stroke) }
     }
 
     private func pathButton(_ url: URL) -> some View {

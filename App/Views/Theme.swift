@@ -3,23 +3,33 @@ import SwiftUI
 
 /// The app's look: a dark game launcher with soft cards, pill buttons and a sidebar of places.
 enum Theme {
-    static let background = Color(red: 0.055, green: 0.058, blue: 0.066)
-    static let panel = Color(red: 0.085, green: 0.088, blue: 0.098)
-    static let surface = Color.white.opacity(0.055)
-    static let surfaceHover = Color.white.opacity(0.09)
-    static let stroke = Color.white.opacity(0.08)
+    // Close to macOS's own dark windows (about 12% white). Darker read as a dim screen at low
+    // display brightness, where other apps looked fine.
+    static let background = Color(red: 0.105, green: 0.108, blue: 0.118)
+    static let panel = Color(red: 0.14, green: 0.143, blue: 0.155)
+    static let surface = Color.white.opacity(0.07)
+    static let surfaceHover = Color.white.opacity(0.11)
+    static let stroke = Color.white.opacity(0.1)
     static let isolated = Color.orange
     static let running = Color.green
     static let online = Color.green
     /// Steam's blue, from its logo.
     static let steam = Color(red: 0.10, green: 0.60, blue: 1.0)
-    /// The Library: every game.
-    static let library = Color(red: 0.62, green: 0.38, blue: 1.0)
+    /// The Library: every game. The wine red of the app icon (#70002a).
+    static let library = Color(red: 0x70 / 255, green: 0x00 / 255, blue: 0x2a / 255)
+    /// One height for every button and the search field, so they all line up.
+    static let controlHeight: CGFloat = 34
+    /// The icons in buttons and the search field.
+    static let controlIconSize: CGFloat = 15
     /// The window's corner radius (macOS 26, no toolbar); the page's left corners match it.
     static let windowCornerRadius: CGFloat = 16
+    /// The one corner radius for cards, rows, art and panels: the window's, and about the radius
+    /// of the capsules (search field, pill buttons), so every round corner in the app looks the same.
+    /// A shape inside another, close to its edge, takes `cornerRadius - inset` (concentric).
+    static let cornerRadius: CGFloat = windowCornerRadius
 
-    /// A sidebar place's colour, also the glow of its page: the Library purple, Steam blue, Offline
-    /// Games orange, Online Games green, other bottles grey.
+    /// A sidebar place's colour, also the glow of its page: the Library wine red, Steam blue, Offline
+    /// Programs orange, Online Programs green, other bottles grey.
     static func tint(for bottle: Bottle?) -> Color {
         switch bottle?.role {
         case nil: bottle == nil ? library : .gray
@@ -31,17 +41,19 @@ enum Theme {
 
     /// The Advanced mode default: shows each game's launch settings and logs, and the runtime tools.
     static let advancedModeKey = "AdvancedMode"
+    /// The default that collapses the sidebar to its icons (it's open by default).
+    static let sidebarCollapsedKey = "SidebarCollapsed"
 }
 
-/// A small uppercase heading above a group, like "GAMES" or "NOT DOWNLOADED".
+/// A heading above a group, like "Installed" or "Not Installed".
 struct SectionLabel: View {
     let title: String
     init(_ title: String) { self.title = title }
 
     var body: some View {
-        Text(title.uppercased())
-            .font(.caption.weight(.semibold))
-            .tracking(1.2)
+        // A macOS section heading (System Settings): 13 pt bold, not in capitals.
+        Text(title)
+            .font(.headline)
             .foregroundStyle(.secondary)
     }
 }
@@ -55,8 +67,8 @@ struct Card<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Theme.surface, in: .rect(cornerRadius: 18))
-            .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke) }
+            .background(Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
+            .overlay { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(Theme.stroke) }
     }
 }
 
@@ -68,7 +80,7 @@ struct Chip: View {
 
     var body: some View {
         Label(title, systemImage: systemImage)
-            .font(.caption.weight(.medium))
+            .font(.subheadline.weight(.medium))
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -87,10 +99,11 @@ struct PillButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(.semibold))
-            .labelStyle(.titleAndIcon)
+            // A macOS button's 13 pt; the main action a little bolder.
+            .font(.body.weight(prominent ? .semibold : .medium))
+            .labelStyle(PillLabelStyle())
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .frame(height: Theme.controlHeight)
             .foregroundStyle(prominent ? Color.black : destructive ? Color.red : Color.primary)
             .background {
                 if prominent {
@@ -109,6 +122,16 @@ struct PillButtonStyle: ButtonStyle {
     }
 }
 
+/// A pill's icon and title; the icon a little larger than the text.
+private struct PillLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.icon.font(.system(size: Theme.controlIconSize, weight: .semibold))
+            configuration.title
+        }
+    }
+}
+
 extension ButtonStyle where Self == PillButtonStyle {
     static var pill: PillButtonStyle { PillButtonStyle() }
     static var prominentPill: PillButtonStyle { PillButtonStyle(prominent: true) }
@@ -118,6 +141,8 @@ extension ButtonStyle where Self == PillButtonStyle {
 extension EnvironmentValues {
     /// Set by `BusyButton` while its work runs.
     @Entry var isBusy = false
+    /// The sidebar shows only its icons: its rows hide their names.
+    @Entry var isSidebarCollapsed = false
 }
 
 /// A button whose work takes a while. While `isBusy`, it shows a spinner and `busyTitle`
@@ -162,18 +187,33 @@ func busyItem(_ title: String, _ busyTitle: String, _ isBusy: Bool, action: @esc
 
 /// A round icon-only button, for "…" menus and the panel's close button.
 struct CircleButtonStyle: ButtonStyle {
-    var size: CGFloat = 34
+    var size = Theme.controlHeight
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .labelStyle(.iconOnly)
-            .font(.system(size: size * 0.4, weight: .semibold))
+            .font(.system(size: Theme.controlIconSize + 1, weight: .semibold))
             .frame(width: size, height: size)
             .background { if isHovering || configuration.isPressed { Circle().fill(.white.opacity(configuration.isPressed ? 0.14 : 0.08)) } }
             .glassEffect(.regular, in: .circle)
             .contentShape(.circle)
             .onHover { isHovering = $0 }
+    }
+}
+
+/// Moves its content to `x`, one frame at a time. SwiftUI calls an animatable modifier on every
+/// frame of an animation, so Liquid Glass inside gets a real new place each frame. (Glass doesn't
+/// follow SwiftUI's own position animation: it jumped to the end.)
+struct GlassFollowingOffset: ViewModifier, Animatable {
+    var x: CGFloat
+    var animatableData: CGFloat {
+        get { x }
+        set { x = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.padding(.leading, x)
     }
 }
 
@@ -183,7 +223,7 @@ extension View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(.system(size: 34, weight: .bold))
+                    Text(title).font(.largeTitle.bold())
                     if let subtitle { Text(subtitle).foregroundStyle(.secondary) }
                 }
                 Spacer()
@@ -204,7 +244,7 @@ extension View {
                         Text(title).font(.headline).lineLimit(1)
                         Spacer()
                         Button("Close", systemImage: "xmark", action: close)
-                            .buttonStyle(CircleButtonStyle(size: 28))
+                            .buttonStyle(CircleButtonStyle())
                             .keyboardShortcut(.cancelAction)
                             .help("Close (Esc)")
                     }
@@ -237,7 +277,7 @@ struct SearchField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: Theme.controlIconSize)).foregroundStyle(.secondary)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
                 .focusEffectDisabled()
@@ -255,9 +295,9 @@ struct SearchField: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .font(.callout)
+        .font(.body)
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .frame(height: Theme.controlHeight)
         .overlay { if isFocused { Capsule().strokeBorder(.white.opacity(0.35)) } }
         .glassEffect(.regular, in: .capsule)
         .background {
@@ -273,7 +313,11 @@ struct SearchField: View {
 /// background: its glass search field and buttons float on the page.
 enum FloatingBar {
     /// The bar's height; a page leaves this much space at its top for it.
-    static let height: CGFloat = 36
+    static let height = Theme.controlHeight
+    /// The bar's distance from the window's top edge: on the window buttons' line (see `TopBar`).
+    static let top = TopBar.centerY - height / 2
+    /// The bar's left edge: right of the sidebar button, which is on every page (see `SidebarToggle`).
+    static let leading = SidebarToggle.leading + SidebarToggle.size + 12
 }
 
 extension View {
@@ -285,15 +329,15 @@ extension View {
 
 private struct FloatingBarModifier<Bar: View>: ViewModifier {
     let bar: Bar
-
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
                 GlassEffectContainer(spacing: 12) {
                     bar.frame(height: FloatingBar.height)
                 }
-                .padding(.horizontal, 40)
-                .padding(.top, 20)
+                .padding(.leading, FloatingBar.leading)
+                .padding(.trailing, 40)
+                .padding(.top, FloatingBar.top)
                 .ignoresSafeArea(.container, edges: .top)
             }
     }

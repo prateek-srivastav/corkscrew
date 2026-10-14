@@ -9,6 +9,7 @@ struct CorkscrewApp: App {
     @State private var model = AppModel.shared
     @State private var navigator = Navigator()
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
+    @AppStorage(Theme.sidebarCollapsedKey) private var isSidebarCollapsed = false
 
     var body: some Scene {
         Window("Corkscrew", id: "main") {
@@ -22,6 +23,9 @@ struct CorkscrewApp: App {
         .defaultSize(width: 1340, height: 820)
         .commands {
             CommandGroup(before: .sidebar) {
+                Button(isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { isSidebarCollapsed.toggle() }
+                    .keyboardShortcut("s", modifiers: [.control, .command])
+                Divider()
                 Button("Back") { navigator.back() }
                     .keyboardShortcut("[")
                     .disabled(!navigator.canGoBack)

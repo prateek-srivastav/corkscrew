@@ -9,13 +9,19 @@ A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on A
 
 It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs games through their stores and launchers, and any Windows program you add. Corkscrew itself doesn't bypass DRM or copy protection. Contributions are welcome (see [Contributing](#contributing)).
 
+| Library | Steam |
+|---|---|
+| <img src="docs/screenshots/library.png" alt="The Library: every game from every bottle, with the last-played ones in a carousel"> | <img src="docs/screenshots/steam.png" alt="The Steam page: the signed-in account's Steam library"> |
+| **Game page** | **Online Programs** |
+| <img src="docs/screenshots/game.png" alt="A game page with its art, Open in Steam, and details from the Steam store"> | <img src="docs/screenshots/online.png" alt="Online Programs, a protected bottle with internet on and a Steam of its own"> |
+
 ## Install
 
 You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free space plus your games.
 
 1. Download `Corkscrew-<version>.dmg` (about 320 MB) from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest), open it, and drag Corkscrew to Applications.
 2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time: click **Done**, then **Open Anyway** in **System Settings → Privacy & Security**. You only do this once.
-3. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a "Games" bottle, and installs Steam.
+3. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
 4. Open Steam from the Library, sign in, and install your games.
 
 Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 runtime is on the [roadmap](#roadmap). To build from source, see [Building](#building).

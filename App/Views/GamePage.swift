@@ -77,12 +77,12 @@ struct GamePage: View {
                     VStack(alignment: .leading, spacing: 12) {
                         SectionLabel("About")
                         Text(details.summary.isEmpty ? "Steam has no description for it." : details.summary)
-                            .font(.title3)
+                            .font(.body)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: 640, alignment: .leading)
                         if details.name.caseInsensitiveCompare(game.name) != .orderedSame {
-                            Text("On Steam as “\(details.name)”.").font(.callout).foregroundStyle(.tertiary)
+                            Text("On Steam as “\(details.name)”.").font(.body).foregroundStyle(.tertiary)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -105,8 +105,8 @@ struct GamePage: View {
                                 ForEach(details.screenshots, id: \.self) { url in
                                     StoreImage(url: url)
                                         .frame(width: 320, height: 180)
-                                        .clipShape(.rect(cornerRadius: 12))
-                                        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.stroke) }
+                                        .clipShape(.rect(cornerRadius: Theme.cornerRadius))
+                                        .overlay { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(Theme.stroke) }
                                         .contentShape(.rect)
                                         .onTapGesture { withAnimation(.snappy) { screenshot = url } }
                                 }
@@ -135,8 +135,8 @@ struct GamePage: View {
     private func info(_ title: String, _ value: String) -> some View {
         if !value.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Text(value).font(.callout.weight(.medium)).textSelection(.enabled)
+                Text(title).font(.subheadline).foregroundStyle(.secondary)
+                Text(value).font(.body.weight(.medium)).textSelection(.enabled)
             }
         }
     }
@@ -145,7 +145,7 @@ struct GamePage: View {
         ZStack {
             Color.black.opacity(0.85).ignoresSafeArea()
             StoreImage(url: url, contentMode: .fit)
-                .clipShape(.rect(cornerRadius: 14))
+                .clipShape(.rect(cornerRadius: Theme.cornerRadius))
                 .padding(60)
         }
         .contentShape(.rect)

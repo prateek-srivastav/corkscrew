@@ -46,20 +46,29 @@ public struct BottleStore: Sendable {
 
     /// Creates the prefix with `wineboot`. Isolated bottles are created inside their sandbox, then
     /// hardened, and their clean state is kept as an APFS clone for "Reset to clean".
+    ///
+    /// `bottle.json` is written last, so only a finished bottle is listed. When setup fails (Wine
+    /// crashed, or was killed while the Mac slept) the half-made folder goes, and creating the
+    /// bottle again starts clean instead of finding a bottle with a broken Windows drive.
     public func create(_ bottle: Bottle, engine: Engine) async throws {
         let location = location(of: bottle)
         let fm = FileManager.default
-        for folder in [location.directory, location.prefix, location.home] {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        }
-        var bottle = bottle
-        try save(bottle)
-        try await runSetup(["wineboot", "--init"], bottle: bottle, engine: engine, name: "create")
-        bottle.runtimeModules = RuntimeModules.fingerprint(runtime: engine.root)
-        try save(bottle)
-        if bottle.kind == .isolated {
-            try PrefixHardening.apply(prefix: location.prefix)
-            try snapshotClean(bottle)
+        do {
+            for folder in [location.directory, location.prefix, location.home] {
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            }
+            var bottle = bottle
+            try await runSetup(["wineboot", "--init"], bottle: bottle, engine: engine, name: "create")
+            bottle.runtimeModules = RuntimeModules.fingerprint(runtime: engine.root)
+            if bottle.kind == .isolated {
+                try PrefixHardening.apply(prefix: location.prefix)
+                try snapshotClean(bottle)
+            }
+            try save(bottle)
+        } catch {
+            // runSetup has ended the bottle's Wine session, so nothing writes into the folder now.
+            try? fm.removeItem(at: location.directory)
+            throw error
         }
     }
 

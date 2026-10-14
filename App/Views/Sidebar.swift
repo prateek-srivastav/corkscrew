@@ -4,15 +4,20 @@ import SwiftUI
 
 /// The column on the left: the Library with every game, Steam, the two protected bottles (and any
 /// others the user made), Add Program and Setup. The column takes the open place's colour, faded
-/// and grainy; the page lies over it.
+/// and grainy; the page lies over it. Collapsed, it shows only the icons.
 struct Sidebar: View {
+    /// From ContentView, so the sidebar changes in the same animation as the page.
+    let isCollapsed: Bool
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
-    /// The selection slides from place to place.
-    @Namespace private var selection
 
     static let width: CGFloat = 232
+    /// Collapsed: the window's close, minimize and zoom buttons fit with the same margin on both
+    /// sides, and the icons sit under their middle.
+    static let collapsedWidth = TopBar.windowButtonsWidth + 2 * TopBar.windowButtonsLeading
+
+    private var width: CGFloat { isCollapsed ? Self.collapsedWidth : Self.width }
 
     var body: some View {
         let others = model.bottles.filter { $0.role == nil }
@@ -43,9 +48,11 @@ struct Sidebar: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : 12)
             }
             .scrollIndicators(.never)
+            // The selection is drawn outside the scroll view; with room for every place, it stays put.
+            .scrollBounceBehavior(.basedOnSize)
 
             VStack(alignment: .leading, spacing: 4) {
                 Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, 6).padding(.bottom, 8)
@@ -59,25 +66,47 @@ struct Sidebar: View {
                 }
                 section(.setup, title: "Setup", systemImage: "gearshape.fill", needsAttention: !model.isReady)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : 12)
             .padding(.top, 8)
         }
+        .environment(\.isSidebarCollapsed, isCollapsed)
+        // One piece of glass under the open place, like the search field's, that slides to the next.
+        .backgroundPreferenceValue(SelectedRowKey.self) { selected in
+            GeometryReader { proxy in
+                if let selected {
+                    Color.clear
+                        .glassEffect(glass(tint: selected.tint), in: .rect(cornerRadius: SidebarRow.radius(isCollapsed: isCollapsed)))
+                        // Placed frame by frame, so the glass slides with the selection and grows and
+                        // shrinks with the sidebar (see `GlassFollowingOffset`).
+                        .modifier(GlassFrame(rect: proxy[selected.bounds]))
+                        .transition(.opacity)
+                }
+            }
+        }
         // Clears the window's close, minimize and zoom buttons.
-        .padding(.top, 52)
+        .padding(.top, TopBar.bottom + 14)
         .padding(.bottom, 14)
-        .frame(width: Self.width)
+        .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(Color.clear.contentShape(.rect).gesture(WindowDragGesture()))
         // Reaches under the page's round corners, so they show the sidebar, not the window's black.
         .background(alignment: .leading) {
             SidebarBackdrop(tint: openTint)
-                .frame(width: Self.width + Theme.windowCornerRadius)
+                .frame(width: width + Theme.windowCornerRadius)
                 .allowsHitTesting(false)
                 .animation(.smooth(duration: 0.5), value: openTint)
         }
         .ignoresSafeArea(.container, edges: .top)
-        .environment(\.sidebarSelection, selection)
-        .animation(.snappy(duration: 0.3), value: navigator.route.place)
+        // The selection's glass slides from place to place (Setup and Bottles are places here too).
+        .animation(.spring(duration: 0.4, bounce: 0.25), value: navigator.route.place)
+    }
+
+    /// Open, the selection is plain glass (the row's tile has the colour). Collapsed, the icons have
+    /// no tiles, so the glass takes the place's colour; for Setup and Bottles it is white with a black
+    /// glyph, as their tile is when open (plain glass looks like every other icon on glass).
+    private func glass(tint: Color) -> Glass {
+        guard isCollapsed else { return .regular.interactive() }
+        return .regular.tint(tint == .white ? .white.opacity(0.85) : tint.opacity(0.6)).interactive()
     }
 
     /// The colour of the open place; white for the pages that aren't places (Setup, Bottles).
@@ -148,17 +177,49 @@ struct Sidebar: View {
         }
     }
 
+    @ViewBuilder
     private func header(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.caption2.weight(.bold))
-            .tracking(1)
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 8)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
+        if isCollapsed {
+            // No room for the words: a short line between the groups.
+            Rectangle().fill(Theme.stroke).frame(width: 20, height: 1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        } else {
+            // As macOS's own sidebars (Finder, System Settings): 11 pt semibold, not in capitals.
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 16)
+                .padding(.bottom, 4)
+        }
     }
 
     private func games(_ count: Int) -> String { count == 1 ? "1 game" : "\(count) games" }
+}
+
+/// Collapses the sidebar to its icons and opens it again. It is on the page, at its top left, on
+/// the window buttons' line, with the sidebar open or collapsed.
+struct SidebarToggle: View {
+    @Binding var isCollapsed: Bool
+
+    static let size = Theme.controlHeight
+    /// From the page's left edge.
+    static let leading: CGFloat = 16
+    /// From the window's top edge: on the window buttons' line.
+    static let top = TopBar.centerY - size / 2
+
+    var body: some View {
+        // A glass circle like the page's other buttons.
+        // One label in both states: a label that changed would fade out where the button was and in
+        // where it goes, instead of moving with the page.
+        Button { isCollapsed.toggle() } label: { Image(systemName: "sidebar.left") }
+            .accessibilityLabel(isCollapsed ? "Expand Sidebar" : "Collapse Sidebar")
+            .buttonStyle(CircleButtonStyle())
+            .help(isCollapsed ? "Expand Sidebar (⌃⌘S)" : "Collapse Sidebar (⌃⌘S)")
+            .padding(.leading, Self.leading)
+            .padding(.top, Self.top)
+    }
 }
 
 /// One place in the sidebar: its icon on a tile, its name and a line of state. Open, the row and
@@ -177,8 +238,17 @@ struct SidebarRow: View {
     var subtitle: AnyView?
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.sidebarSelection) private var selection
+    @Environment(\.isSidebarCollapsed) private var isCollapsed
     @State private var isHovering = false
+    /// The space around the tile, inside the row's round corners.
+    private static let inset: CGFloat = 5
+    /// A collapsed row: the icon alone, as large as the app's other buttons.
+    static let collapsedSize = Theme.controlHeight
+    /// Concentric with the row's corners.
+    private static let tileRadius = Theme.cornerRadius - inset
+    /// The row's corners. Collapsed, the icon's glass is a rounded square like the open sidebar's
+    /// tiles; with the app's radius, a 34 pt square would be a circle.
+    static func radius(isCollapsed: Bool) -> CGFloat { isCollapsed ? tileRadius : Theme.cornerRadius }
     /// Counts the times the row was opened, to bounce its icon each time.
     @State private var opened = 0
 
@@ -197,24 +267,27 @@ struct SidebarRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 tile
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                    if let subtitle {
-                        subtitle.font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if !isCollapsed {
+                    VStack(alignment: .leading, spacing: 1) {
+                        // The name as System Settings' sidebar has it: the 13 pt body font, regular weight.
+                        Text(title).font(.body).foregroundStyle(.primary).lineLimit(1)
+                        if let subtitle {
+                            subtitle.font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
+                    .transition(.opacity)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 5)
+            .padding(.leading, isCollapsed ? 0 : Self.inset + 1)
+            .padding(.trailing, isCollapsed ? 0 : 12)
+            .padding(.vertical, isCollapsed ? 0 : Self.inset)
             .background {
-                if isSelected {
-                    highlight
-                } else if isHovering {
-                    RoundedRectangle(cornerRadius: 10).fill(Theme.surfaceHover)
-                }
+                if isHovering && !isSelected { RoundedRectangle(cornerRadius: Self.radius(isCollapsed: isCollapsed)).fill(Theme.surfaceHover) }
             }
-            .contentShape(.rect(cornerRadius: 10))
+            // The sidebar draws the selection's glass here (see `Sidebar`).
+            .anchorPreference(key: SelectedRowKey.self, value: .bounds) { isSelected ? SelectedRow(bounds: $0, tint: tint) : nil }
+            .contentShape(.rect(cornerRadius: Self.radius(isCollapsed: isCollapsed)))
         }
         .buttonStyle(.plain)
         .opacity(isEnabled ? 1 : 0.4)
@@ -222,35 +295,29 @@ struct SidebarRow: View {
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .onChange(of: isSelected) { if isSelected { opened += 1 } }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    /// Plain Liquid Glass: the column around it already has the place's colour.
-    @ViewBuilder
-    private var highlight: some View {
-        let glass = Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 10))
-        if let selection {
-            glass.matchedGeometryEffect(id: "selection", in: selection)
-        } else {
-            glass
-        }
+        // Collapsed, the name shows when the pointer rests on the icon.
+        .help(isCollapsed ? title : "")
     }
 
     private var tile: some View {
         ZStack {
             switch icon {
+            // Collapsed, each icon is on glass, like the app's round buttons; the open place's glass is
+            // the sidebar's sliding one (see `Sidebar`).
             case .symbol(let name):
-                RoundedRectangle(cornerRadius: 8).fill(isSelected ? tint : Theme.surface)
+                RoundedRectangle(cornerRadius: Self.tileRadius).fill(isCollapsed ? .clear : isSelected ? tint : Theme.surface)
                 Image(systemName: name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: isCollapsed ? 18 : 16, weight: .semibold))
                     .foregroundStyle(isSelected ? (tint == .white ? Color.black : Color.white) : tint)
                     .symbolEffect(.bounce, value: opened)
             case .image(let image):
-                RoundedRectangle(cornerRadius: 8).fill(isSelected ? tint.opacity(0.35) : Theme.surface)
-                Image(nsImage: image).resizable().interpolation(.high).frame(width: 24, height: 24)
+                RoundedRectangle(cornerRadius: Self.tileRadius).fill(isCollapsed ? .clear : isSelected ? tint.opacity(0.35) : Theme.surface)
+                Image(nsImage: image).resizable().interpolation(.high).frame(width: isCollapsed ? 24 : 26, height: isCollapsed ? 24 : 26)
                     .scaleEffect(isSelected ? 1.08 : 1)
             }
         }
-        .frame(width: 32, height: 32)
+        .frame(width: isCollapsed ? Self.collapsedSize : 32, height: isCollapsed ? Self.collapsedSize : 32)
+        .glassEffect(isCollapsed && !isSelected ? .regular : .identity, in: .rect(cornerRadius: Self.tileRadius))
         .overlay(alignment: .topTrailing) {
             if needsAttention { Circle().fill(.red).frame(width: 9, height: 9).offset(x: 3, y: -3) }
         }
@@ -291,7 +358,29 @@ private struct Grain: View {
     }
 }
 
-extension EnvironmentValues {
-    /// The sidebar's namespace for the sliding selection.
-    @Entry var sidebarSelection: Namespace.ID?
+/// Gives its content the size and place of `rect`, one frame at a time (see `GlassFollowingOffset`).
+private struct GlassFrame: ViewModifier, Animatable {
+    var rect: CGRect
+    var animatableData: CGRect.AnimatableData {
+        get { rect.animatableData }
+        set { rect.animatableData = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: rect.width, height: rect.height)
+            .padding(.leading, rect.minX)
+            .padding(.top, rect.minY)
+    }
+}
+
+/// The sidebar's selected row: where the sidebar puts its glass, and the place's colour.
+private struct SelectedRow {
+    let bounds: Anchor<CGRect>
+    let tint: Color
+}
+
+private struct SelectedRowKey: PreferenceKey {
+    static let defaultValue: SelectedRow? = nil
+    static func reduce(value: inout SelectedRow?, nextValue: () -> SelectedRow?) { value = value ?? nextValue() }
 }

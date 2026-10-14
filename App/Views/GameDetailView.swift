@@ -21,13 +21,13 @@ struct GameDetailView: View {
                         TextField("Name", text: binding(\.name)).labelsHidden()
                             .font(.title3.weight(.semibold)).textFieldStyle(.plain)
                         Text(game.store?.appID != nil ? "Starts through Steam" : game.executable.lastPathComponent)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.subheadline).foregroundStyle(.secondary)
                             .help((game.iconSource ?? game.executable).path)
                     }
                 }
                 if isActive {
                     Label("Settings are locked while it runs.", systemImage: "lock")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
 

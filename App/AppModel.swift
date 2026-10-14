@@ -90,6 +90,19 @@ final class AppModel {
     /// The one-click setup (`setUp()`), while it runs.
     @ObservationIgnored private var setupTask: Task<Void, Never>?
     private(set) var isSettingUp = false
+    /// The step setup works on. Its files appear before it ends (the runtime before the components,
+    /// steam.exe before Steam's update, bottle.json before Windows is set up), so it isn't done yet.
+    private(set) var setupStep: SetupStep?
+    /// The step the last setup stopped at with an error (not when cancelled); cleared when setup starts again.
+    private(set) var setupFailure: SetupStep?
+
+    /// The one-click setup's progress over all its steps (0…1): steps that ended, plus how far the
+    /// engine pack is inside its step. Nil when setup doesn't run.
+    var setupProgress: Double? {
+        guard let step = setupStep, let index = SetupStep.allCases.firstIndex(of: step) else { return nil }
+        let inside = step == .engine ? enginePackProgress?.overall ?? 0 : 0
+        return (Double(index) + inside) / Double(SetupStep.allCases.count)
+    }
     /// While a new engine pack replaces the runtime, games must not start.
     @ObservationIgnored private var isInstallingEngine = false
 
@@ -233,6 +246,7 @@ final class AppModel {
             defer {
                 setupTask = nil
                 isSettingUp = false
+                setupStep = nil
             }
             await installEnginePack()
         }
@@ -575,10 +589,11 @@ final class AppModel {
                                         profile: Steam.clientProfile, store: StoreItem(store: Steam.store))
         if sessions[steam.id]?.isActive == true || isSteamRunning(in: launcher) {
             let ended = forward(steam)
-            pend(.openSteam, untilWindowIn: launcher.id, timeout: .seconds(30)) { ended.isSet }
+            pend(.openSteam, untilWindowIn: launcher.id, of: \.isSteamWebHelper, timeout: .seconds(30)) { ended.isSet }
         } else {
             play(steam, transient: steamClient == nil)
-            pend(.openSteam, untilWindowIn: launcher.id) { [weak self] in self?.sessions[steam.id]?.isActive != true }
+            // Steam's updater window shows first; Steam is open when its own window does.
+            pend(.openSteam, untilWindowIn: launcher.id, of: \.isSteamWebHelper) { [weak self] in self?.sessions[steam.id]?.isActive != true }
         }
     }
 
@@ -593,10 +608,12 @@ final class AppModel {
         if sessions[steam.id]?.isActive == true || isSteamRunning(in: bottle) {
             // This steam.exe only hands the link over.
             let ended = forward(steam)
-            pend(.steamPage(game.id), untilWindowIn: game.bottleID, timeout: .seconds(30)) { ended.isSet }
+            pend(.steamPage(game.id), untilWindowIn: game.bottleID, of: \.isSteamWebHelper, timeout: .seconds(30)) { ended.isSet }
         } else {
             start(steam, transient: entry == nil)
-            pend(.steamPage(game.id), untilWindowIn: game.bottleID) { [weak self] in self?.sessions[steam.id]?.isActive != true }
+            pend(.steamPage(game.id), untilWindowIn: game.bottleID, of: \.isSteamWebHelper) { [weak self] in
+                self?.sessions[steam.id]?.isActive != true
+            }
         }
     }
 
@@ -724,26 +741,28 @@ final class AppModel {
     }
 
     /// Marks `action` pending until `isDone` turns true, `timeout` passes, or (with a bottle) the
-    /// bottle shows a window it didn't show before: the game's, or Steam's shown again.
-    private func pend(_ action: Pending, untilWindowIn bottleID: Bottle.ID? = nil, timeout: Duration = .seconds(120),
-                      isDone: @escaping () -> Bool) {
+    /// bottle shows a window it didn't show before, of the processes `include` picks: the game's,
+    /// or Steam's shown again.
+    private func pend(_ action: Pending, untilWindowIn bottleID: Bottle.ID? = nil,
+                      of include: @escaping @Sendable (BottleProcesses.Entry) -> Bool = { _ in true },
+                      timeout: Duration = .seconds(120), isDone: @escaping () -> Bool) {
         pending.insert(action)
         let prefix = bottleID.map { BottleLocation(bottleID: $0, paths: paths).prefix }
         Task {
             defer { pending.remove(action) }
-            let before = await Self.windowsOnScreen(prefix)
+            let before = await Self.windowsOnScreen(prefix, of: include)
             let deadline = ContinuousClock.now + timeout
             while ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .seconds(1))
                 if isDone() { return }
-                if prefix != nil, !(await Self.windowsOnScreen(prefix)).isSubset(of: before) { return }
+                if prefix != nil, !(await Self.windowsOnScreen(prefix, of: include)).isSubset(of: before) { return }
             }
         }
     }
 
-    nonisolated private static func windowsOnScreen(_ prefix: URL?) async -> Set<Int> {
+    nonisolated private static func windowsOnScreen(_ prefix: URL?, of include: @escaping @Sendable (BottleProcesses.Entry) -> Bool) async -> Set<Int> {
         guard let prefix else { return [] }
-        return await Task.detached(priority: .utility) { BottleProcesses.windowsOnScreen(prefix: prefix) }.value
+        return await Task.detached(priority: .utility) { BottleProcesses.windowsOnScreen(prefix: prefix, of: include) }.value
     }
 
     /// Set once something has ended.
@@ -793,7 +812,8 @@ final class AppModel {
 
     /// Stops everything in the bottle, moves its folder to the Trash and takes its games out of the library.
     func delete(_ bottle: Bottle) {
-        guard !isPending(.deleteBottle(bottle.id)) else { return }
+        // Setup made it and the app relies on it (see `Bottle.role`).
+        guard bottle.role == nil, !isPending(.deleteBottle(bottle.id)) else { return }
         pending.insert(.deleteBottle(bottle.id))
         let paths = self.paths
         for (id, session) in sessions where session.isActive && session.game.bottleID == bottle.id {
@@ -908,23 +928,33 @@ final class AppModel {
             defer {
                 setupTask = nil
                 isSettingUp = false
+                setupStep = nil
             }
+            setupFailure = nil
             if !hasRosetta {
+                setupStep = .rosetta
                 let installed: Void? = await perform("Installing Rosetta… (macOS asks for your password; the download takes a minute)") {
                     try Rosetta.install()
                 }
-                guard installed != nil else { return }
+                guard installed != nil else { return stopSetUp(at: .rosetta) }
             }
+            setupStep = .engine
             if runtimes.isEmpty || Self.enginePack.upgradesInstalledRuntime(in: paths) {
-                guard await installEnginePack(), !Task.isCancelled else { return }
+                guard await installEnginePack(), !Task.isCancelled else { return stopSetUp(at: .engine) }
             }
-            guard await createDefaultBottles([.steam]), !Task.isCancelled else { return }
+            setupStep = .steam
+            guard await createDefaultBottles([.steam]), !Task.isCancelled else { return stopSetUp(at: .steam) }
             if !hasSteam, let launcher = launcherBottle {
-                await installSteam(into: launcher)
-                guard !Task.isCancelled else { return }
+                guard await installSteam(into: launcher), !Task.isCancelled else { return stopSetUp(at: .steam) }
             }
-            await createDefaultBottles()
+            setupStep = .protectedGames
+            guard await createDefaultBottles() else { return stopSetUp(at: .protectedGames) }
         }
+    }
+
+    /// A step that failed shows as failed; a cancelled one doesn't.
+    private func stopSetUp(at step: SetupStep) {
+        if !Task.isCancelled { setupFailure = step }
     }
 
     func cancelSetUp() { setupTask?.cancel() }
@@ -951,7 +981,7 @@ final class AppModel {
             }
         }
         isInstallingEngine = true
-        enginePackProgress = EnginePackProgress(step: .unpacking)
+        enginePackProgress = EnginePackProgress(step: .unpacking, afterDownload: bundled == nil)
         defer {
             isInstallingEngine = false
             enginePackProgress = nil
@@ -980,14 +1010,15 @@ final class AppModel {
 
     /// Downloads Valve's installer and installs Steam into `bottle`; Steam then shows up in the library.
     /// An offline isolated bottle gets internet first: Steam doesn't work without it.
-    func installSteam(into bottle: Bottle) async {
-        guard !steamInstalls.contains(bottle.id) else { return }
+    @discardableResult
+    func installSteam(into bottle: Bottle) async -> Bool {
+        guard !steamInstalls.contains(bottle.id) else { return false }
         steamInstalls.insert(bottle.id)
         defer { steamInstalls.remove(bottle.id) }
         let paths = self.paths
         // One installer per bottle, so two installs at once don't share a file.
         let installer = paths.cachesRoot.appending(path: "Downloads/SteamSetup-\(bottle.id.uuidString).exe")
-        await perform("Installing Steam into \"\(bottle.name)\"… (it downloads about 240 MB the first time)") {
+        let installed: URL? = await perform("Installing Steam into \"\(bottle.name)\"… (it downloads about 240 MB the first time)") {
             defer { try? FileManager.default.removeItem(at: installer) }
             // The saved copy, which may be newer than the one shown.
             let store = BottleStore(paths: paths)
@@ -1001,8 +1032,9 @@ final class AppModel {
                 throw AppError("Add a Wine runtime first.")
             }
             let log = paths.logsRoot.appending(path: "bottles/\(target.id.uuidString)/steam-install.log")
-            try await Steam.install(installer: installer, bottle: target, engine: engine, paths: paths, log: log)
+            return try await Steam.install(installer: installer, bottle: target, engine: engine, paths: paths, log: log)
         }
+        return installed != nil
     }
 
     func importGPTK(dmg: URL) {
@@ -1076,13 +1108,26 @@ final class AppModel {
     }
 }
 
+/// The steps the one-click setup goes through, in order.
+enum SetupStep: CaseIterable { case rosetta, engine, steam, protectedGames }
+
 /// How far the engine pack's download, or its checksum and unpack, has got.
 struct EnginePackProgress: Equatable {
     enum Step { case downloading, unpacking }
     var step: Step
     var fraction: Double = 0
 
+    /// Unpacking after a download (the pack wasn't inside the app): the download is the first half.
+    var afterDownload = false
+
     var title: String { "\(step == .downloading ? "Downloading" : "Unpacking") Wine… \(Int(fraction * 100))%" }
+    /// How far the whole engine pack step is, download included.
+    var overall: Double {
+        switch step {
+        case .downloading: fraction * 0.5
+        case .unpacking: afterDownload ? 0.5 + fraction * 0.5 : fraction
+        }
+    }
 }
 
 struct AppError: Error, CustomStringConvertible {
