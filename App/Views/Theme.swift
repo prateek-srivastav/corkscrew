@@ -1,6 +1,7 @@
+import GameCore
 import SwiftUI
 
-/// The app's look: a dark game launcher with soft cards, pill buttons and an icon rail.
+/// The app's look: a dark game launcher with soft cards, pill buttons and a sidebar of places.
 enum Theme {
     static let background = Color(red: 0.055, green: 0.058, blue: 0.066)
     static let panel = Color(red: 0.085, green: 0.088, blue: 0.098)
@@ -10,6 +11,19 @@ enum Theme {
     static let isolated = Color.orange
     static let running = Color.green
     static let online = Color.green
+    /// Steam's blue, from its logo.
+    static let steam = Color(red: 0.10, green: 0.60, blue: 1.0)
+
+    /// A sidebar place's colour, also the glow of its page: the Library white, Steam blue, Offline
+    /// Games orange, Online Games green, other bottles grey.
+    static func tint(for bottle: Bottle?) -> Color {
+        switch bottle?.role {
+        case nil: bottle == nil ? .white : .gray
+        case .steam: steam
+        case .sandbox: isolated
+        case .sandboxOnline: online
+        }
+    }
 
     /// The Advanced mode default: shows each game's launch settings and logs, and the runtime tools.
     static let advancedModeKey = "AdvancedMode"
@@ -54,12 +68,12 @@ struct Chip: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(.ultraThinMaterial, in: .capsule)
-            .overlay { Capsule().strokeBorder(Theme.stroke) }
+            .glassEffect(.regular, in: .capsule)
     }
 }
 
-/// Capsule buttons: white for the main action (Play), translucent for the rest.
+/// Capsule buttons: white for the main action (Play), Liquid Glass for the rest (tinted red when
+/// they stop something).
 struct PillButtonStyle: ButtonStyle {
     var prominent = false
     var destructive = false
@@ -74,19 +88,20 @@ struct PillButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .foregroundStyle(prominent ? Color.black : destructive ? Color.red : Color.primary)
-            .background(background(isPressed: configuration.isPressed), in: .capsule)
-            .overlay { Capsule().strokeBorder(prominent ? .clear : Theme.stroke) }
+            .background {
+                if prominent {
+                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.8 : isHovering ? 0.92 : 1))
+                } else if isHovering || configuration.isPressed {
+                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.14 : 0.08))
+                }
+            }
+            .glassEffect(prominent ? .identity : destructive ? .regular.tint(.red.opacity(0.18)) : .regular, in: .capsule)
             // A busy button stays readable: it says what it's doing.
             .opacity(isEnabled ? 1 : isBusy ? 0.75 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .contentShape(.capsule)
             .onHover { isHovering = $0 }
             .animation(.snappy(duration: 0.15), value: configuration.isPressed)
-    }
-
-    private func background(isPressed: Bool) -> AnyShapeStyle {
-        if prominent { return AnyShapeStyle(Color.white.opacity(isPressed ? 0.8 : isHovering ? 0.92 : 1)) }
-        return isHovering || isPressed ? AnyShapeStyle(Color.white.opacity(0.16)) : AnyShapeStyle(.ultraThinMaterial)
     }
 }
 
@@ -151,9 +166,8 @@ struct CircleButtonStyle: ButtonStyle {
             .labelStyle(.iconOnly)
             .font(.system(size: size * 0.4, weight: .semibold))
             .frame(width: size, height: size)
-            .background(isHovering || configuration.isPressed ? AnyShapeStyle(Color.white.opacity(0.16)) : AnyShapeStyle(.ultraThinMaterial),
-                        in: .circle)
-            .overlay { Circle().strokeBorder(Theme.stroke) }
+            .background { if isHovering || configuration.isPressed { Circle().fill(.white.opacity(configuration.isPressed ? 0.14 : 0.08)) } }
+            .glassEffect(.regular, in: .circle)
             .contentShape(.circle)
             .onHover { isHovering = $0 }
     }
@@ -208,5 +222,96 @@ extension View {
     /// Grouped forms on the dark panels, without their own grey backdrop.
     func panelForm() -> some View {
         formStyle(.grouped).scrollContentBackground(.hidden)
+    }
+}
+
+/// A Liquid Glass search field for a page's top bar. ⌘F puts the cursor in it, Esc clears it.
+struct SearchField: View {
+    @Binding var text: String
+    let prompt: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .focusEffectDisabled()
+                .focused($isFocused)
+                .frame(width: 170)
+                .onKeyPress(.escape) {
+                    text = ""
+                    isFocused = false
+                    return .handled
+                }
+            if !text.isEmpty {
+                Button("Clear", systemImage: "xmark.circle.fill") { text = "" }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .overlay { if isFocused { Capsule().strokeBorder(.white.opacity(0.35)) } }
+        .glassEffect(.regular, in: .capsule)
+        .background {
+            Button("Search") { isFocused = true }
+                .keyboardShortcut("f")
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+/// A page's top bar that stays in place while the page scrolls under it. The bar has no
+/// background: its glass search field and buttons float on the page.
+enum FloatingBar {
+    /// The bar's height; a page leaves this much space at its top for it.
+    static let height: CGFloat = 36
+}
+
+extension View {
+    /// Pins `bar` over the top of this scroll view (see `FloatingBar`).
+    func floatingBar(@ViewBuilder _ bar: () -> some View) -> some View {
+        modifier(FloatingBarModifier(bar: bar()))
+    }
+}
+
+private struct FloatingBarModifier<Bar: View>: ViewModifier {
+    let bar: Bar
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                GlassEffectContainer(spacing: 12) {
+                    bar.frame(height: FloatingBar.height)
+                }
+                .padding(.horizontal, 40)
+                .padding(.top, 20)
+                .ignoresSafeArea(.container, edges: .top)
+            }
+    }
+}
+
+extension View {
+    /// Fades the view in and lifts it a little the first time it shows; `delay` staggers a row.
+    func appearEffect(delay: Double = 0) -> some View {
+        modifier(AppearEffect(delay: delay))
+    }
+}
+
+private struct AppearEffect: ViewModifier {
+    let delay: Double
+    @State private var isShown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isShown ? 1 : 0)
+            .offset(y: isShown ? 0 : 10)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.35).delay(delay)) { isShown = true }
+            }
     }
 }

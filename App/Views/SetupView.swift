@@ -20,7 +20,7 @@ struct SetupView: View {
                             step(1, "Rosetta", systemImage: "cpu", done: model.hasRosetta)
                             step(2, "Wine and graphics", systemImage: "wineglass", done: !model.runtimes.isEmpty)
                             step(3, "Steam", systemImage: "gamecontroller", done: model.hasSteam)
-                            step(4, "Sandboxes", systemImage: "lock.shield",
+                            step(4, "Protected Games", systemImage: "lock.shield",
                                  done: model.bottle(role: .sandbox) != nil && model.bottle(role: .sandboxOnline) != nil)
                         }
                     }
@@ -148,8 +148,8 @@ struct SetupView: View {
     @ViewBuilder
     private var status: some View {
         Text("One click sets up everything: Rosetta if your Mac needs it, Wine with its graphics translators "
-             + "(D3DMetal, DXMT and DXVK), a Steam bottle (a Windows drive) with Steam, and two sandboxes for "
-             + "other programs: one offline, one with internet.")
+             + "(D3DMetal, DXMT and DXVK), a Steam bottle (a Windows drive) with Steam, and two protected places "
+             + "for other games, which can't see your files: Offline Games, without internet, and Online Games.")
             .foregroundStyle(.secondary)
         if model.isSettingUp {
             HStack(spacing: 12) {

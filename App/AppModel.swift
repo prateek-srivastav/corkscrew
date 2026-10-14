@@ -137,6 +137,16 @@ final class AppModel {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// The Library page: the signed-in account's Steam games and every program in another bottle,
+    /// without the launchers themselves.
+    var allGames: [Game] {
+        let steam = steamAccount == nil ? [] : steamGames
+        let others = games.filter { $0.bottleID != launcherBottle?.id }
+        return (steam + others)
+            .filter { !($0.store != nil && $0.store?.appID == nil) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     /// Steam itself, in the Steam bottle.
     var steamClient: Game? {
         guard let launcher = launcherBottle else { return nil }
@@ -179,7 +189,7 @@ final class AppModel {
         do {
             library = try LibraryStore(paths: paths).load()
             bottles = try BottleStore(paths: paths).list()
-            try adoptLegacyLauncher()
+            try adoptRoleBottles()
         } catch {
             errorMessage = Self.describe(error)
         }
@@ -238,6 +248,7 @@ final class AppModel {
         let task = Task {
             _ = await previous?.value
             for role in roles where bottle(role: role) == nil {
+                if (try? adoptRoleBottles()) != nil, bottle(role: role) != nil { continue }
                 guard await createBottleNow(name: role.defaultName, kind: role.kind, allowNetwork: role.isolation.allowNetwork, role: role) != nil
                 else { return false }
             }
@@ -247,15 +258,32 @@ final class AppModel {
         return await task.value
     }
 
-    /// Setups before bottle roles made a standard bottle named "Games" for Steam: it becomes the
-    /// Steam bottle, with its games and settings.
-    private func adoptLegacyLauncher() throws {
-        guard launcherBottle == nil,
-              let index = bottles.firstIndex(where: { $0.kind == .standard && $0.role == nil && $0.name.caseInsensitiveCompare("Games") == .orderedSame })
-        else { return }
-        bottles[index].role = .steam
-        bottles[index].name = Bottle.Role.steam.defaultName
-        try BottleStore(paths: paths).save(bottles[index])
+    /// Gives each missing role to a bottle the user already has, so setup doesn't make a second one:
+    /// for Steam a standard bottle named "Games" (what setups before roles made), for the two
+    /// protected ones an isolated bottle with the same internet setting (the one with the most
+    /// programs). Role bottles that still have a former default name get the current one.
+    private func adoptRoleBottles() throws {
+        let store = BottleStore(paths: paths)
+        for role in Bottle.Role.allCases where bottle(role: role) == nil {
+            let candidates = bottles.indices.filter { index in
+                let bottle = bottles[index]
+                guard bottle.role == nil, bottle.kind == role.kind else { return false }
+                if role == .steam { return bottle.name.caseInsensitiveCompare("Games") == .orderedSame }
+                return bottle.isolation.allowNetwork == role.isolation.allowNetwork
+            }
+            let programs = { (index: Int) in self.games.count { $0.bottleID == self.bottles[index].id } }
+            guard let index = candidates.max(by: { programs($0) < programs($1) }) else { continue }
+            bottles[index].role = role
+            bottles[index].name = role.defaultName
+            try store.save(bottles[index])
+        }
+        for index in bottles.indices {
+            guard let role = bottles[index].role, bottles[index].name != role.defaultName,
+                  role.formerNames.contains(where: { bottles[index].name.caseInsensitiveCompare($0) == .orderedSame })
+            else { continue }
+            bottles[index].name = role.defaultName
+            try store.save(bottles[index])
+        }
     }
 
     /// `<repo>/build` when the app runs from a checkout that has built the runtime (the app itself is

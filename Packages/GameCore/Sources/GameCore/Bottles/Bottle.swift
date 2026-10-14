@@ -27,8 +27,17 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         public var defaultName: String {
             switch self {
             case .steam: "Steam"
-            case .sandbox: "Sandbox"
-            case .sandboxOnline: "Sandbox Online"
+            case .sandbox: "Offline Games"
+            case .sandboxOnline: "Online Games"
+            }
+        }
+
+        /// Names earlier versions gave the bottle; it gets `defaultName` instead.
+        public var formerNames: [String] {
+            switch self {
+            case .steam: ["Games"]
+            case .sandbox: ["Sandbox"]
+            case .sandboxOnline: ["Sandbox Online"]
             }
         }
 

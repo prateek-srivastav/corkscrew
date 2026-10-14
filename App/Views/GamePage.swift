@@ -23,9 +23,9 @@ struct GamePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .top) {
-                    HeroBackdrop(game: game)
+                    HeroBackdrop(game: game, tint: Theme.tint(for: model.bottle(for: game)))
                     VStack(alignment: .leading, spacing: 0) {
-                        topBar
+                        Color.clear.frame(height: FloatingBar.height)
                         Spacer(minLength: 24)
                         GameHero(game: game,
                                  showSettings: inLibrary ? { showsSettings = true } : nil,
@@ -44,6 +44,7 @@ struct GamePage: View {
             }
         }
         .ignoresSafeArea(.container, edges: .top)
+        .floatingBar { topBar }
         .overlay { if let screenshot { enlarged(screenshot) } }
         .sidePanel(isPresented: advancedMode && showsSettings && inLibrary, title: "Game Settings", close: { showsSettings = false }) {
             GameDetailView(game: game)
@@ -113,6 +114,7 @@ struct GamePage: View {
                             .padding(.bottom, 8)
                         }
                         .scrollIndicators(.hidden)
+                        .swipesScrollFirst()
                     }
                 }
             }

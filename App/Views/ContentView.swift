@@ -8,11 +8,12 @@ enum SidebarItem: Hashable {
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
+    @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 0) {
-            NavigationRail(selection: Binding(get: { navigator.route.section }, set: { navigator.go($0) }))
+            Sidebar()
             Group {
                 switch navigator.route.section {
                 case .library: LibraryView(openSetup: { navigator.go(.setup) })
@@ -20,7 +21,13 @@ struct ContentView: View {
                 case .setup: SetupView()
                 }
             }
+            .id(navigator.route.section)
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.2), value: navigator.route.section)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Pages that slide sideways stay off the sidebar.
+            .clipped()
+            .ignoresSafeArea(.container, edges: .top)
         }
         .background(Theme.background)
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
@@ -36,67 +43,9 @@ struct ContentView: View {
             Text(model.errorMessage ?? "")
         }
         .swipeNavigation(navigator)
+        // Bottles is an Advanced page; turning Advanced off leaves it, and Back doesn't return to it.
+        .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
         .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
-    }
-}
-
-/// The slim column of round buttons on the left: pages, Add Program and Setup.
-private struct NavigationRail: View {
-    @Environment(AppModel.self) private var model
-    @Binding var selection: SidebarItem
-
-    var body: some View {
-        VStack(spacing: 10) {
-            item(.library, "Library", "square.grid.2x2.fill")
-            item(.bottles, "Bottles", "shippingbox.fill")
-            Capsule().fill(Theme.stroke).frame(width: 22, height: 2).padding(.vertical, 4)
-            Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs()) }
-                .buttonStyle(RailButtonStyle(isSelected: false))
-                .disabled(!model.isSetUp)
-                .help("Add Program… (⌘O)")
-            Spacer()
-            item(.setup, "Setup", "gearshape.fill")
-                .overlay(alignment: .topTrailing) {
-                    if !model.isReady {
-                        Circle().fill(.red).frame(width: 9, height: 9).offset(x: -2, y: 2)
-                    }
-                }
-        }
-        // Clears the window's close, minimize and zoom buttons.
-        .padding(.top, 52)
-        .padding(.bottom, 18)
-        .frame(width: 76)
-        .frame(maxHeight: .infinity)
-        .background(Color.black.opacity(0.25).gesture(WindowDragGesture()))
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.stroke).frame(width: 1) }
-        .ignoresSafeArea(.container, edges: .top)
-    }
-
-    private func item(_ page: SidebarItem, _ title: String, _ systemImage: String) -> some View {
-        Button(title, systemImage: systemImage) { selection = page }
-            .buttonStyle(RailButtonStyle(isSelected: selection == page))
-            .help(title)
-    }
-}
-
-private struct RailButtonStyle: ButtonStyle {
-    let isSelected: Bool
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var isHovering = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .labelStyle(.iconOnly)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(isSelected ? Color.black : Color.primary)
-            .frame(width: 44, height: 44)
-            .background(isSelected ? Color.white : isHovering ? Theme.surfaceHover : Theme.surface, in: .circle)
-            .overlay { Circle().strokeBorder(isSelected ? .clear : Theme.stroke) }
-            .opacity(isEnabled ? 1 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .contentShape(.circle)
-            .onHover { isHovering = $0 }
-            .animation(.snappy(duration: 0.15), value: isSelected)
     }
 }
 
@@ -123,9 +72,7 @@ private struct ActivityBar: View {
                 .font(.callout)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.regularMaterial, in: .capsule)
-                .overlay { Capsule().strokeBorder(Theme.stroke) }
-                .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+                .glassEffect(.regular, in: .capsule)
                 .padding(.horizontal, 100)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }

@@ -15,11 +15,11 @@ struct CorkscrewApp: App {
             ContentView()
                 .environment(model)
                 .environment(navigator)
-                .frame(minWidth: 980, minHeight: 620)
+                .frame(minWidth: 1080, minHeight: 620)
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
-        .defaultSize(width: 1240, height: 800)
+        .defaultSize(width: 1340, height: 820)
         .commands {
             CommandGroup(before: .sidebar) {
                 Button("Back") { navigator.back() }

@@ -1,14 +1,15 @@
 import GameCore
 import SwiftUI
 
-/// Where the Library is: the overview of launchers and bottles, or one of them.
-enum LibraryPage: Hashable {
-    case overview
+/// A page of the Library: every game, one place's games, or a game.
+indirect enum LibraryPage: Hashable {
+    /// Every game: the Steam library and the programs in all bottles.
+    case all
     case bottle(Bottle.ID)
     /// Games whose bottle was deleted.
     case noBottle
-    /// A game's page, opened from its bottle's page (nil: No Bottle).
-    case game(Game.ID, bottle: Bottle.ID?)
+    /// A game's page, opened from `from`.
+    case game(Game.ID, from: LibraryPage)
 }
 
 struct LibraryView: View {
@@ -16,338 +17,176 @@ struct LibraryView: View {
     @Environment(Navigator.self) private var navigator
     let openSetup: () -> Void
 
-    private var page: LibraryPage { navigator.route.library }
-
     var body: some View {
+        let page = navigator.route.library
         Group {
-            switch page {
-            case .overview:
-                LibraryOverview(open: { navigator.go(library: $0) }, openSetup: openSetup)
-            case .bottle(let id):
-                if let bottle = model.bottles.first(where: { $0.id == id }) {
-                    bottlePage(bottle)
-                } else {
-                    LibraryOverview(open: { navigator.go(library: $0) }, openSetup: openSetup)
-                }
-            case .noBottle:
-                bottlePage(nil)
-            case .game(let id, let bottleID):
-                let from = bottleID.flatMap { id in model.bottles.first { $0.id == id } }
-                if let game = model.game(id: id) {
-                    GamePage(game: game, backTitle: from?.name ?? "No Bottle") { navigator.goUp(to: from.map { .bottle($0.id) } ?? .noBottle) }
-                } else {
-                    // Removed, or gone from the Steam library.
-                    bottlePage(from)
-                }
+            if case .game(let id, let from) = page, let game = model.game(id: id) {
+                GamePage(game: game, backTitle: title(of: from)) { navigator.goUp(to: from) }
+            } else if case .game(_, let from) = page {
+                // Removed, or gone from the Steam library.
+                gamesPage(from)
+            } else {
+                gamesPage(page)
             }
         }
         .id(page)
-        .transition(.opacity)
-        .animation(.easeInOut(duration: 0.2), value: page)
+        .transition(PageTransition(navigator: navigator))
+        .animation(.smooth(duration: 0.35), value: page)
     }
 
-    private func back() { navigator.goUp(to: .overview) }
+    /// Another place fades up a little; inside a place, pages slide sideways: a game's page in from
+    /// the right, Back from the left. It reads the move when it runs, so the page that leaves goes
+    /// the same way as the page that comes in.
+    private struct PageTransition: Transition {
+        let navigator: Navigator
 
-    private func bottlePage(_ bottle: Bottle?) -> some View {
-        BottlePage(bottle: bottle, back: back, openSetup: openSetup) { navigator.go(library: .game($0.id, bottle: bottle?.id)) }
+        func body(content: Content, phase: TransitionPhase) -> some View {
+            let sideways: CGFloat = switch navigator.move {
+            case .push: -phase.value * 90
+            case .pop: phase.value * 90
+            case .place: 0
+            }
+            content
+                .opacity(phase.isIdentity ? 1 : 0)
+                .offset(x: sideways, y: navigator.move == .place && !phase.isIdentity ? 8 : 0)
+        }
+    }
+
+    private func gamesPage(_ page: LibraryPage) -> some View {
+        let scope: GamesPage.Scope = switch page {
+        case .bottle(let id): model.bottles.first { $0.id == id }.map(GamesPage.Scope.bottle) ?? .all
+        case .noBottle: .noBottle
+        case .all, .game: .all
+        }
+        let shown: LibraryPage = switch scope {
+        case .all: .all
+        case .bottle(let bottle): .bottle(bottle.id)
+        case .noBottle: .noBottle
+        }
+        return GamesPage(scope: scope, openSetup: openSetup) { navigator.go(library: .game($0.id, from: shown)) }
+    }
+
+    private func title(of page: LibraryPage) -> String {
+        switch page {
+        case .all, .game: "Library"
+        case .bottle(let id): model.bottles.first { $0.id == id }?.name ?? "Library"
+        case .noBottle: "No Bottle"
+        }
     }
 }
 
-/// Every launcher and bottle as a card: Steam, the two sandboxes, then the bottles the user made.
-private struct LibraryOverview: View {
+/// A page of games: every game (the Library), or one place's. The Steam bottle shows the
+/// signed-in account's Steam library and nothing else; other bottles take any Windows program.
+private struct GamesPage: View {
+    enum Scope {
+        case all
+        case bottle(Bottle)
+        /// Games whose bottle was deleted.
+        case noBottle
+    }
+
     @Environment(AppModel.self) private var model
-    let open: (LibraryPage) -> Void
-    let openSetup: () -> Void
-
-    private let columns = [GridItem(.adaptive(minimum: 280, maximum: 420), spacing: 18, alignment: .top)]
-    private let gameColumns = [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 22, alignment: .top)]
-
-    var body: some View {
-        let others = model.bottles.filter { $0.role == nil }
-        let orphans = model.games.filter { game in !model.bottles.contains { $0.id == game.bottleID } }
-        ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
-                if !model.isReady {
-                    setUpCard
-                }
-                if !model.transientSessions.isEmpty {
-                    section("Running now") {
-                        LazyVGrid(columns: gameColumns, alignment: .leading, spacing: 26) {
-                            ForEach(model.transientSessions, id: \.game.id) { session in
-                                GameCard(game: session.game, isSelected: false, showsBottle: true)
-                                    .contextMenu {
-                                        busyItem("Stop", "Stopping…", model.isPending(.stop(session.game.id))) { model.stop(session.game) }
-                                    }
-                            }
-                        }
-                    }
-                }
-                if let launcher = model.launcherBottle {
-                    section("Launchers") {
-                        SteamCard(bottle: launcher) { open(.bottle(launcher.id)) }
-                    }
-                }
-                let sandboxes = [Bottle.Role.sandbox, .sandboxOnline].compactMap(model.bottle(role:))
-                if !sandboxes.isEmpty {
-                    section("Sandboxes") { bottleGrid(sandboxes) }
-                }
-                if !others.isEmpty || !orphans.isEmpty {
-                    section("Other Bottles") {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                            ForEach(others) { bottle in
-                                Button { open(.bottle(bottle.id)) } label: { BottleCard(bottle: bottle) }
-                                    .buttonStyle(.plain)
-                            }
-                            if !orphans.isEmpty {
-                                Button { open(.noBottle) } label: {
-                                    HubCard(systemImage: "questionmark.folder", title: "No Bottle",
-                                            detail: "\(count(orphans.count)) whose bottle was deleted", tint: .secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-            }
-            .pageHeader("Library")
-            .padding(.horizontal, 40)
-            .padding(.top, 52)
-            .padding(.bottom, 48)
-        }
-        .ignoresSafeArea(.container, edges: .top)
-        .background { Color.clear.contentShape(.rect).gesture(WindowDragGesture()) }
-    }
-
-    private var setUpCard: some View {
-        Card(padding: 22) {
-            HStack(spacing: 16) {
-                Image(systemName: "sparkles").font(.title2)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.isSettingUp ? "Setting up Corkscrew…" : "Finish setting up Corkscrew").font(.headline)
-                    Text("Setup gets Wine, the Steam bottle with Steam, and two sandboxes for other programs.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Open Setup", action: openSetup).buttonStyle(.prominentPill)
-            }
-        }
-    }
-
-    private func bottleGrid(_ bottles: [Bottle]) -> some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-            ForEach(bottles) { bottle in
-                Button { open(.bottle(bottle.id)) } label: { BottleCard(bottle: bottle) }
-                    .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionLabel(title)
-            content()
-        }
-    }
-}
-
-private func count(_ programs: Int) -> String { programs == 1 ? "1 program" : "\(programs) programs" }
-
-/// Steam: its own icon on Steam's colours, the account, covers of the games played last, and
-/// Open Steam / Quit Steam right on the card. The rest of the card opens Steam's page.
-private struct SteamCard: View {
-    @Environment(AppModel.self) private var model
-    let bottle: Bottle
-    let open: () -> Void
-    @State private var isHovering = false
-
-    /// Steam's navy, from its own window.
-    static let colors = [Color(red: 0.09, green: 0.16, blue: 0.25), Color(red: 0.06, green: 0.09, blue: 0.15)]
-
-    var body: some View {
-        let games = model.steamAccount == nil ? [] : model.steamGames
-        let recent = Array(games.filter { model.installState(of: $0) == .installed }
-            .sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }.prefix(4))
-        let isRunning = model.steamRunning.contains(bottle.id)
-        HStack(spacing: 24) {
-            steamIcon
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("Steam").font(.system(size: 34, weight: .heavy))
-                    if isRunning { Chip(title: "Running", systemImage: "circle.fill", tint: Theme.running) }
-                }
-                Text(status(games: games)).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                HStack(spacing: 10) {
-                    if model.hasSteam(in: bottle) {
-                        BusyButton("Open Steam", systemImage: "arrow.up.forward.app", busyTitle: "Opening…",
-                                   isBusy: model.isPending(.openSteam)) { model.openSteam() }
-                            .buttonStyle(.prominentPill)
-                    }
-                    if isRunning || model.isPending(.quitSteam) {
-                        BusyButton("Quit Steam", systemImage: "stop.fill", busyTitle: "Quitting…", isBusy: model.isPending(.quitSteam)) {
-                            model.quitSteam()
-                        }
-                        .buttonStyle(.destructivePill)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            Spacer(minLength: 0)
-            // The games played last, fanned out.
-            ZStack {
-                ForEach(Array(recent.enumerated().reversed()), id: \.element.id) { offset, game in
-                    SteamArt(game: game, kind: .cover) { Theme.surface }
-                        .frame(width: 84, height: 126)
-                        .clipShape(.rect(cornerRadius: 10))
-                        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke) }
-                        .shadow(color: .black.opacity(0.5), radius: 8, y: 4)
-                        .rotationEffect(.degrees(Double(offset) * 6 - 4))
-                        .offset(x: CGFloat(offset) * -38)
-                }
-            }
-            .padding(.trailing, 8)
-            Image(systemName: "chevron.right").font(.title3.weight(.semibold)).foregroundStyle(.secondary)
-        }
-        .padding(24)
-        .frame(height: 200)
-        .background {
-            LinearGradient(colors: Self.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-                .overlay(alignment: .leading) {
-                    // The icon's glow behind it.
-                    steamIcon.scaleEffect(2.2).blur(radius: 40).opacity(0.45).offset(x: 20)
-                }
-        }
-        .clipShape(.rect(cornerRadius: 20))
-        .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(isHovering ? Color.white.opacity(0.3) : Theme.stroke) }
-        .contentShape(.rect(cornerRadius: 20))
-        .onTapGesture(perform: open)
-        .onHover { isHovering = $0 }
-        .animation(.snappy(duration: 0.2), value: isHovering)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: "Open Steam's Page", open)
-    }
-
-    /// Steam's own icon, from its program in the bottle.
-    @ViewBuilder
-    private var steamIcon: some View {
-        if let client = model.steamClient, let icon = model.icon(for: client) {
-            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 96, height: 96)
-                .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
-        } else {
-            Image(systemName: "gamecontroller.fill").font(.system(size: 54)).frame(width: 96, height: 96)
-        }
-    }
-
-    private func status(games: [Game]) -> String {
-        if model.steamInstalls.contains(bottle.id) { return "Installing Steam…" }
-        guard model.hasSteam(in: bottle) else { return "Steam isn't installed yet" }
-        guard let account = model.steamAccount else { return "Not signed in" }
-        let name = account.personaName.isEmpty ? account.accountName : account.personaName
-        return "Signed in as \(name) · " + (games.count == 1 ? "1 game" : "\(games.count) games")
-    }
-}
-
-/// A sandbox or another bottle: its kind, internet and how many programs it has.
-private struct BottleCard: View {
-    @Environment(AppModel.self) private var model
-    let bottle: Bottle
-
-    var body: some View {
-        let online = isOnline(bottle)
-        let programs = model.games.filter { $0.bottleID == bottle.id }.count
-        HubCard(systemImage: bottle.kind == .isolated ? "lock.shield.fill" : "shippingbox.fill", title: bottle.name,
-                // The icon tells isolated (lock) from standard (box).
-                detail: [online ? "Internet on" : "Offline", count(programs)].joined(separator: " · "),
-                tint: bottle.kind == .isolated ? Theme.isolated : .primary,
-                isRunning: model.runningBottles.contains(bottle.id))
-    }
-}
-
-private struct HubCard: View {
-    let systemImage: String
-    let title: String
-    let detail: String
-    var tint: Color = .primary
-    var isRunning = false
-    @State private var isHovering = false
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.title2)
-                .foregroundStyle(tint)
-                .frame(width: 48, height: 48)
-                .background(Theme.surface, in: .rect(cornerRadius: 12))
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(title).font(.headline).lineLimit(1)
-                    if isRunning { Circle().fill(Theme.running).frame(width: 7, height: 7) }
-                }
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .background(isHovering ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.stroke) }
-        .contentShape(.rect(cornerRadius: 18))
-        .onHover { isHovering = $0 }
-    }
-}
-
-/// One bottle's games. The Steam bottle shows the signed-in account's Steam library and nothing
-/// else; other bottles take any Windows program.
-private struct BottlePage: View {
-    @Environment(AppModel.self) private var model
-    /// Nil for games whose bottle was deleted.
-    let bottle: Bottle?
-    let back: () -> Void
+    let scope: Scope
     let openSetup: () -> Void
     let openGame: (Game) -> Void
     @State private var isDropTargeted = false
+    @State private var query = ""
+    /// The carousel's game.
+    @State private var shown: Game.ID?
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 22, alignment: .top)]
 
+    private var bottle: Bottle? {
+        if case .bottle(let bottle) = scope { return bottle }
+        return nil
+    }
+
     private var isSteam: Bool { bottle?.role == .steam }
+    private var isAll: Bool {
+        if case .all = scope { return true }
+        return false
+    }
+
+    private var title: String {
+        switch scope {
+        case .all: "Library"
+        case .bottle(let bottle): bottle.name
+        case .noBottle: "No Bottle"
+        }
+    }
 
     /// The Steam bottle's games while signed in; every program in another bottle.
     private var games: [Game] {
-        if isSteam { return model.steamAccount == nil ? [] : model.steamGames }
-        guard let bottle else { return model.games.filter { game in !model.bottles.contains { $0.id == game.bottleID } } }
-        return model.games.filter { $0.bottleID == bottle.id }
+        switch scope {
+        case .all: return model.allGames
+        case .noBottle: return model.games.filter { game in !model.bottles.contains { $0.id == game.bottleID } }
+        case .bottle(let bottle):
+            if isSteam { return model.steamAccount == nil ? [] : model.steamGames }
+            return model.games.filter { $0.bottleID == bottle.id }
+        }
     }
+
+    /// "Run once" programs running in this place.
+    private var running: [Game] {
+        model.transientSessions.map(\.game).filter { game in
+            switch scope {
+            case .all: true
+            case .bottle(let bottle): game.bottleID == bottle.id
+            case .noBottle: false
+            }
+        }
+    }
+
+    private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         let games = games
         let featured = featuredGames(in: games)
+        let found = isSearching ? games.filter { $0.name.localizedStandardContains(query.trimmingCharacters(in: .whitespaces)) } : games
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Group {
-                    if featured.isEmpty {
-                        ZStack(alignment: .top) {
-                            HeroBackdrop(game: nil)
-                            VStack(alignment: .leading, spacing: 0) {
-                                topBar
-                                Spacer(minLength: 24)
+                ZStack(alignment: .top) {
+                    HeroBackdrop(game: isSearching ? nil : featured.first { $0.id == shown } ?? featured.first,
+                                 tint: Theme.tint(for: bottle), drifts: true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Color.clear.frame(height: FloatingBar.height)
+                        if isSearching {
+                            Text(title).font(.system(size: 34, weight: .heavy)).padding(.top, 28)
+                        } else {
+                            Spacer(minLength: 24)
+                            if featured.isEmpty {
                                 if isSteam { steamHero } else { emptyHero }
+                            } else {
+                                GameCarousel(games: featured, current: $shown, open: openGame)
                             }
-                            .padding(.horizontal, 40)
-                            .padding(.top, 20)
-                            .padding(.bottom, 28)
                         }
-                    } else {
-                        GameCarousel(games: featured, open: openGame) { topBar }
                     }
-                }
-                .frame(height: 460)
-
-                VStack(alignment: .leading, spacing: 32) { content(games) }
                     .padding(.horizontal, 40)
-                    .padding(.top, 8)
-                    .padding(.bottom, 48)
+                    .padding(.top, 20)
+                    .padding(.bottom, 28)
+                }
+                .frame(height: isSearching ? nil : 460)
+                .animation(.snappy(duration: 0.3), value: isSearching)
+
+                VStack(alignment: .leading, spacing: 32) {
+                    if isSearching && found.isEmpty {
+                        Text("No games match “\(query.trimmingCharacters(in: .whitespaces))”.")
+                            .font(.title3).foregroundStyle(.secondary)
+                    }
+                    if !running.isEmpty && !isSearching {
+                        shelf("Running now") { cards(running, showsBottle: isAll) }
+                    }
+                    content(found)
+                }
+                .animation(.snappy(duration: 0.25), value: found.map(\.id))
+                .padding(.horizontal, 40)
+                .padding(.top, 8)
+                .padding(.bottom, 48)
             }
         }
         .ignoresSafeArea(.container, edges: .top)
+        // Outside the scroll view, so it stays put and typing in the search field never loses it.
+        .floatingBar { topBar }
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
@@ -356,11 +195,12 @@ private struct BottlePage: View {
                     .allowsHitTesting(false)
             }
         }
-        // Programs go to other bottles; the Steam bottle only has Steam's games.
+        // Programs go to other bottles; the Steam bottle only has Steam's games. On the Library
+        // page, the Open sheet asks which bottle.
         .dropDestination(for: URL.self) { urls, _ in
             model.open(urls, in: bottle)
             return true
-        } isTargeted: { isDropTargeted = $0 && !isSteam }
+        } isTargeted: { isDropTargeted = $0 && !isSteam && model.isSetUp }
     }
 
     /// The carousel: installed games, the ones played last first (at most 8); else what there is.
@@ -372,11 +212,9 @@ private struct BottlePage: View {
 
     private var topBar: some View {
         HStack(spacing: 12) {
-            Button("Library", systemImage: "chevron.left", action: back)
-                .buttonStyle(.pill)
-                .help("Back to the Library")
             if let bottle { BottleSummary(bottle: bottle) }
             Spacer(minLength: 0)
+            SearchField(text: $query, prompt: isAll ? "Search all games" : "Search \(title)")
             if isSteam {
                 // Signed out, the page's own Open Steam button is enough.
                 if let bottle, model.hasSteam(in: bottle), model.steamAccount != nil {
@@ -390,7 +228,7 @@ private struct BottlePage: View {
                     }
                     .buttonStyle(.destructivePill)
                 }
-            } else if bottle != nil {
+            } else if bottle != nil || isAll {
                 Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
                     .buttonStyle(.pill)
                     .disabled(!model.isSetUp)
@@ -428,20 +266,39 @@ private struct BottlePage: View {
         }
     }
 
+    @ViewBuilder
     private var emptyHero: some View {
-        heroMessage(bottle.map { "No programs in \($0.name)" } ?? "No programs",
-                    "Drop a Windows program (.exe) or installer (.msi) here, open one from Finder, or add one.") {
-            if bottle != nil {
-                Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
-                    .buttonStyle(.prominentPill)
+        if isAll && !model.isReady {
+            heroMessage(model.isSettingUp ? "Setting up Corkscrew…" : "Finish setting up Corkscrew",
+                        "Setup gets Wine, Steam, and two protected places for other Windows programs.") {
+                Button("Open Setup", systemImage: "sparkles", action: openSetup).buttonStyle(.prominentPill)
+            }
+        } else if isAll {
+            heroMessage("No games yet", "Sign in to Steam, or drop a Windows program (.exe) or installer (.msi) here.") {
+                if let steam = model.launcherBottle, model.hasSteam(in: steam) {
+                    BusyButton("Open Steam", systemImage: "arrow.up.forward.app", busyTitle: "Opening…",
+                               isBusy: model.isPending(.openSteam)) { model.openSteam() }
+                        .buttonStyle(.prominentPill)
+                }
+                Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs()) }
+                    .buttonStyle(.pill)
                     .disabled(!model.isSetUp)
+            }
+        } else {
+            heroMessage(bottle.map { "No programs in \($0.name)" } ?? "No programs",
+                        "Drop a Windows program (.exe) or installer (.msi) here, open one from Finder, or add one.") {
+                if bottle != nil {
+                    Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
+                        .buttonStyle(.prominentPill)
+                        .disabled(!model.isSetUp)
+                }
             }
         }
     }
 
     private func heroMessage(_ title: String, _ message: String, @ViewBuilder action: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionLabel(bottle?.name ?? "No Bottle")
+            SectionLabel(title)
             Text(title).font(.system(size: 46, weight: .heavy))
             Text(message)
                 .font(.title3).foregroundStyle(.secondary)
@@ -456,18 +313,21 @@ private struct BottlePage: View {
         let installed = games.filter { model.installState(of: $0) == .installed && !(isSteam && isStoreClient($0)) }
         let notDownloaded = games.filter { model.installState(of: $0) != .installed }
         if !installed.isEmpty {
-            shelf(isSteam ? "Installed" : "Programs") { cards(installed) }
+            shelf(isSteam || isAll ? "Installed" : "Programs") { cards(installed, showsBottle: isAll) }
         }
         if !notDownloaded.isEmpty {
-            shelf(isSteam ? "Not Installed" : "Not Downloaded") { cards(notDownloaded) }
+            shelf(isSteam || isAll ? "Not Installed" : "Not Downloaded") { cards(notDownloaded, showsBottle: isAll) }
         }
     }
 
-    private func cards(_ games: [Game]) -> some View {
-        ForEach(games) { game in
-            GameCard(game: game, isSelected: false)
+    private func cards(_ games: [Game], showsBottle: Bool = false) -> some View {
+        ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
+            GameCard(game: game, isSelected: false, showsBottle: showsBottle)
                 .onTapGesture { openGame(game) }
                 .contextMenu { menu(for: game) }
+                // The first cards come in one after another.
+                .appearEffect(delay: Double(min(index, 12)) * 0.035)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
         }
     }
 
@@ -488,7 +348,8 @@ private struct BottlePage: View {
             busyItem("Play", "Starting…", model.isPending(.launch(game.id))) { model.play(game) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.iconSource ?? game.executable]) }
         }
-        if !isSteam {
+        // Steam's games come from the account's library.
+        if model.bottle(for: game)?.role != .steam, model.games.contains(where: { $0.id == game.id }) {
             Divider()
             Button("Remove from Library", role: .destructive) { remove(game) }
         }
@@ -515,7 +376,7 @@ private struct BottleSummary: View {
         HStack(spacing: 8) {
             // A launcher's bottle is always standard and online; the chips only matter for bottles.
             if bottle.role != .steam {
-                Chip(title: bottle.kind == .isolated ? "Isolated" : "Standard",
+                Chip(title: bottle.kind == .isolated ? "Protected" : "Standard",
                      systemImage: bottle.kind == .isolated ? "lock.shield" : "shippingbox",
                      tint: bottle.kind == .isolated ? Theme.isolated : .secondary)
                 Chip(title: online ? "Internet on" : "Offline", systemImage: online ? "wifi" : "wifi.slash",
@@ -523,6 +384,8 @@ private struct BottleSummary: View {
             }
             if model.runningBottles.contains(bottle.id) {
                 Chip(title: "Running", systemImage: "circle.fill", tint: Theme.running)
+                    .symbolEffect(.pulse)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
     }
@@ -531,17 +394,24 @@ private struct BottleSummary: View {
 /// The featured game's art behind the top of the page, fading into the background.
 struct HeroBackdrop: View {
     let game: Game?
+    /// The glow at the top right when there's no art: the place's colour.
+    var tint: Color = .accentColor
+    /// Zooms the art in slowly while it shows (the carousel).
+    var drifts = false
 
     var body: some View {
         // The art fills the hero without setting its size.
         Theme.background
             .overlay {
                 if let game {
-                    SteamArt(game: game, kind: .hero) { IconGlow(game: game, size: 520) }
-                        .id(game.id)
-                        .transition(.opacity)
+                    DriftingArt(drifts: drifts) {
+                        SteamArt(game: game, kind: .hero) { IconGlow(game: game, size: 520) }
+                    }
+                    .id(game.id)
+                    .transition(.opacity)
                 } else {
-                    RadialGradient(colors: [Color.accentColor.opacity(0.35), .clear], center: .topTrailing, startRadius: 40, endRadius: 700)
+                    RadialGradient(colors: [tint.opacity(0.32), .clear], center: .topTrailing, startRadius: 40, endRadius: 700)
+                        .transition(.opacity)
                 }
             }
             .clipped()
@@ -556,6 +426,22 @@ struct HeroBackdrop: View {
                            startPoint: .top, endPoint: .bottom)
         }
         .gesture(WindowDragGesture())
+    }
+}
+
+/// Art that zooms in a little over a few seconds, so the carousel doesn't stand still.
+private struct DriftingArt<Content: View>: View {
+    let drifts: Bool
+    @ViewBuilder var content: Content
+    @State private var isZoomed = false
+
+    var body: some View {
+        content
+            .scaleEffect(isZoomed ? 1.05 : 1, anchor: .topTrailing)
+            .onAppear {
+                guard drifts else { return }
+                withAnimation(.easeInOut(duration: 14)) { isZoomed = true }
+            }
     }
 }
 
@@ -585,8 +471,6 @@ struct GameHero: View {
     let showSettings: (() -> Void)?
     /// Nil on the Steam page, which lists the account's library as it is.
     let remove: (() -> Void)?
-    /// In the carousel: opens the game's page (its name and a Details button lead there).
-    var openDetails: (() -> Void)? = nil
 
     var body: some View {
         let session = model.session(for: game)
@@ -605,8 +489,6 @@ struct GameHero: View {
                     .shadow(color: .black.opacity(0.5), radius: 12)
             }
             .frame(maxWidth: 560, alignment: .leading)
-            .contentShape(.rect)
-            .onTapGesture { openDetails?() }
 
             HStack(spacing: 10) {
                 if model.isPending(.launch(game.id)) {
@@ -627,15 +509,11 @@ struct GameHero: View {
                     BusyButton("Play", systemImage: "play.fill", busyTitle: "Starting…", isBusy: false) { model.play(game) }
                         .buttonStyle(.prominentPill)
                 }
-                if let openDetails {
-                    Button("Details", systemImage: "info.circle", action: openDetails)
-                        .buttonStyle(.pill)
-                }
                 if advancedMode, let showSettings {
                     Button("Settings", systemImage: "slider.horizontal.3", action: showSettings)
                         .buttonStyle(.pill)
                 }
-                if openDetails == nil { moreMenu(state: state, isActive: isActive) }
+                moreMenu(state: state, isActive: isActive)
                 if let session {
                     HStack(spacing: 6) {
                         if isActive { Circle().fill(Theme.running).frame(width: 8, height: 8) }
@@ -747,6 +625,7 @@ struct GameCard: View {
                         .padding(8)
                     } else if model.isRunning(game) {
                         Label("Running", systemImage: "circle.fill")
+                            .symbolEffect(.pulse)
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(Theme.running)
                             .padding(.horizontal, 8).padding(.vertical, 4)

@@ -20,6 +20,7 @@ struct LogView: View {
                 Color.clear.frame(height: 1).id("end")
             }
             .background(.background.secondary, in: .rect(cornerRadius: 6))
+            .swipesScrollFirst()
             .task(id: "\(file.path) \(isLive)") {
                 repeat {
                     let latest = Self.read(file)
