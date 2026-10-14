@@ -12,7 +12,7 @@ struct OpenProgramSheet: View {
     @State private var icon: NSImage?
 
     var body: some View {
-        let bottle = model.bottles.first { $0.id == bottleID }
+        let bottle = model.programBottles.first { $0.id == bottleID }
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Image(nsImage: icon ?? NSWorkspace.shared.icon(forFile: program.path))
@@ -27,7 +27,7 @@ struct OpenProgramSheet: View {
             Form {
                 TextField("Name in Library", text: $name)
                 Picker("Bottle", selection: $bottleID) {
-                    ForEach(model.bottles) { bottle in
+                    ForEach(model.programBottles) { bottle in
                         Text(bottle.kind == .isolated ? "\(bottle.name) (isolated)" : bottle.name).tag(Optional(bottle.id))
                     }
                 }
@@ -52,7 +52,7 @@ struct OpenProgramSheet: View {
                       systemImage: "lock.shield")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if model.bottles.isEmpty {
+            if model.programBottles.isEmpty {
                 Label("Create a bottle under Setup first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
 

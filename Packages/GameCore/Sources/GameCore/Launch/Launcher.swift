@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Everything between "Play" and the program starting, shared by the app and `gamecore-cli`:
 /// inspect the program, harden and update the bottle, set up the Rockstar launcher when a game needs
@@ -18,6 +19,9 @@ public enum Launcher {
         /// Set when this launch starts Steam itself: the Windows path of `tools/visible-windows` in
         /// the bottle, which `run` uses to quit Steam once its window is closed.
         public var steamWindowCounter: String?
+        /// Set when this launch starts `steam.exe` with the web helper wrapper: `run` keeps it in
+        /// front of Steam's helper while Steam runs (Steam installs updates at startup).
+        public var steamWebHelperWrapper: URL? = nil
     }
 
     /// A game started with `steam.exe -applaunch <id>`. Steam, and launchers like Rockstar's, keep
@@ -136,7 +140,8 @@ public enum Launcher {
             notes.append("Sized Red Dead Redemption 2's window to the \(desktop.width)×\(desktop.height) desktop.")
         }
         return Prepared(plan: plan, context: context, log: logs.appending(path: LaunchLogs.fileName(startedAt: startedAt)),
-                        inspection: inspection, notes: notes, steamGame: steamGame, steamWindowCounter: steamWindowCounter)
+                        inspection: inspection, notes: notes, steamGame: steamGame, steamWindowCounter: steamWindowCounter,
+                        steamWebHelperWrapper: Steam.isClient(executable) ? steamWebHelperWrapper : nil)
     }
 
     /// Copies the helper onto the bottle's own drive, where isolated bottles can run it too, and
@@ -171,6 +176,11 @@ public enum Launcher {
     /// game's launch lasts until the game quits, then closes what it started.
     public static func run(_ prepared: Prepared) async throws -> RunResult {
         let wineserver = prepared.context.engine.wineserver
+        if let wrapper = prepared.steamWebHelperWrapper,
+           let steam = prepared.plan.arguments.first(where: { $0.lowercased().hasSuffix("steam.exe") }) {
+            guardWebHelperWrapper(wrapper, steamRoot: URL(fileURLWithPath: steam).deletingLastPathComponent(),
+                                  prefix: prepared.context.location.prefix)
+        }
         guard let game = prepared.steamGame else {
             guard let counter = prepared.steamWindowCounter else {
                 return try await ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
@@ -272,17 +282,29 @@ public enum Launcher {
     /// Asks Steam to quit (so it saves its state), then stops the rest of the bottle: the Rockstar
     /// Games Launcher and its helpers, which would keep running.
     static func closeSteam(_ prepared: Prepared) async throws {
-        let context = prepared.context
         let steam = prepared.plan.arguments.first { $0.lowercased().hasSuffix("steam.exe") } ?? "steam.exe"
+        try await closeSteam(steam, context: prepared.context,
+                             log: prepared.log.deletingLastPathComponent().appending(path: "steam-shutdown.log"))
+    }
+
+    /// Quits Steam in the bottle as its own Exit does (it saves its state and signs nothing out),
+    /// then stops whatever else runs there.
+    public static func quitSteam(in bottle: Bottle, steam: URL, engine: Engine, paths: AppPaths, log: URL,
+                                 hostEnvironment: [String: String] = ProcessInfo.processInfo.environment) async throws {
+        let context = WineContext(engine: engine, bottle: bottle, location: BottleLocation(bottleID: bottle.id, paths: paths),
+                                  paths: paths, hostEnvironment: hostEnvironment)
+        try await closeSteam(steam.path, context: context, log: log)
+    }
+
+    private static func closeSteam(_ steam: String, context: WineContext, log: URL) async throws {
         let plan = try LaunchPlanner.plan(wineArguments: [steam, "-shutdown"], in: context)
-        _ = try await ProcessRunner.run(plan, log: prepared.log.deletingLastPathComponent().appending(path: "steam-shutdown.log"),
-                                        wineserver: context.engine.wineserver)
+        _ = try await ProcessRunner.run(plan, log: log, wineserver: context.engine.wineserver)
         let clock = ContinuousClock()
         let deadline = clock.now + .seconds(30)
         while clock.now < deadline, BottleProcesses.isSteamRunning(prefix: context.location.prefix) {
             try await Task.sleep(for: pollInterval)
         }
-        ProcessRunner.stopSession(environment: prepared.plan.environment, wineserver: context.engine.wineserver)
+        ProcessRunner.stopSession(environment: plan.environment, wineserver: context.engine.wineserver)
     }
 
     /// Closes the Rockstar Games Launcher while Steam keeps running. `taskkill /f` ends it without
@@ -292,6 +314,61 @@ public enum Launcher {
             wineArguments: ["taskkill", "/f", "/im", "Launcher.exe", "/im", "SocialClubHelper.exe"], in: prepared.context)
         _ = try await ProcessRunner.run(plan, log: prepared.log.deletingLastPathComponent().appending(path: "rockstar-close.log"),
                                         wineserver: prepared.context.engine.wineserver)
+    }
+
+    static let wrapperPoll: Duration = .seconds(1)
+    /// Prefixes whose web helper is being guarded: one guard per bottle.
+    private static let guardedPrefixes = Mutex<Set<String>>([])
+
+    /// Keeps the web helper wrapper in front of Steam's helper while Steam runs in the bottle (past
+    /// this launch: the `steam.exe` started here exits when Steam restarts itself).
+    static func guardWebHelperWrapper(_ wrapper: URL, steamRoot: URL, prefix: URL) {
+        let key = prefix.standardizedFileURL.path
+        guard guardedPrefixes.withLock({ $0.insert(key).inserted }) else { return }
+        Task.detached(priority: .utility) {
+            defer { _ = guardedPrefixes.withLock { $0.remove(key) } }
+            await keepWebHelperWrapper(wrapper, steamRoot: steamRoot, prefix: prefix)
+        }
+    }
+
+    /// Keeps the web helper wrapper in front of Steam's helper until Steam has been gone from the
+    /// bottle for `gone` (a restart leaves a short gap), or Steam never starts within `startup`.
+    /// Steam installs an update it downloaded earlier when it starts, which puts its own helper back,
+    /// then restarts (about 10 s before its window starts): the wrapper goes back in before that. When
+    /// Steam's own helper started anyway (its window is black), it's stopped so Steam starts it again,
+    /// through the wrapper.
+    static func keepWebHelperWrapper(
+        _ wrapper: URL, steamRoot: URL, prefix: URL, poll: Duration = wrapperPoll,
+        startup: Duration = .seconds(60), gone: Duration = .seconds(5)
+    ) async {
+        let clock = ContinuousClock()
+        let started = clock.now
+        var lastSeen: ContinuousClock.Instant?
+        var restarts = 0
+        while !Task.isCancelled {
+            let processes = BottleProcesses.list(prefix: prefix)
+            if processes.contains(where: { BottleProcesses.isSteamClient($0.program) }) {
+                lastSeen = clock.now
+            } else if clock.now - (lastSeen ?? started) >= (lastSeen == nil ? startup : gone) {
+                return
+            }
+            if (try? Steam.installWebHelperWrapper(steamRoot: steamRoot, wrapper: wrapper)) != nil, restarts < 3 {
+                let unwrapped = unwrappedWebHelpers(processes)
+                if !unwrapped.isEmpty {
+                    restarts += 1
+                    for process in unwrapped { kill(process.pid, SIGKILL) }
+                }
+            }
+            try? await Task.sleep(for: poll)
+        }
+    }
+
+    /// Steam's own web helper, when it runs without the wrapper: all `steamwebhelper.exe` processes,
+    /// once one of them is a Chromium child (`--type=…`). Through the wrapper, the children are
+    /// `steamwebhelper_real.exe`, and the one `steamwebhelper.exe` is the wrapper.
+    static func unwrappedWebHelpers(_ processes: [BottleProcesses.Entry]) -> [BottleProcesses.Entry] {
+        let helpers = processes.filter { $0.program.hasSuffix("\\steamwebhelper.exe") }
+        return helpers.contains { $0.arguments.contains { $0.hasPrefix("--type=") } } ? helpers : []
     }
 
     /// Whether anything runs in the bottle (its wineserver is up).

@@ -9,37 +9,49 @@ struct BottlesView: View {
     @State private var bottleForSteam: Bottle?
     @State private var bottleToDelete: Bottle?
 
+    private let columns = [GridItem(.adaptive(minimum: 280, maximum: 420), spacing: 18, alignment: .top)]
+
     var body: some View {
-        List(selection: $selection) {
-            ForEach(model.bottles) { bottle in
-                BottleRow(bottle: bottle)
-                    .contextMenu { actions(for: bottle) }
+        ScrollView {
+            Group {
+                if model.bottles.isEmpty {
+                    ContentUnavailableView("No bottles", systemImage: "shippingbox",
+                                           description: Text("A bottle is a Windows drive with its own settings and programs."))
+                        .padding(.top, 60)
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                        ForEach(model.bottles) { bottle in
+                            BottleCard(bottle: bottle, isSelected: selection == bottle.id)
+                                .onTapGesture { selection = selection == bottle.id ? nil : bottle.id }
+                                .contextMenu { actions(for: bottle) }
+                        }
+                    }
+                }
             }
-        }
-        .overlay {
-            if model.bottles.isEmpty {
-                ContentUnavailableView("No bottles", systemImage: "shippingbox",
-                                       description: Text("A bottle is a Windows drive with its own settings and programs."))
-            }
-        }
-        .navigationTitle("Bottles")
-        .toolbar {
-            ToolbarItemGroup {
-                Button("Add Existing Bottle…", systemImage: "square.and.arrow.down") {
+            .pageHeader("Bottles", subtitle: "Windows drives, each with its own settings and programs.") {
+                BusyButton("Add Existing…", systemImage: "square.and.arrow.down", busyTitle: "Adding…",
+                           isBusy: model.isPending(.importBottle)) {
                     if let folder = Pickers.folder("Choose a bottle folder (it holds bottle.json and prefix).") {
                         model.importBottle(from: folder)
                     }
                 }
-                Button("New Bottle…", systemImage: "plus") { isCreating = true }
+                .buttonStyle(.pill)
+                .help("Add Existing Bottle…")
+                BusyButton("New Bottle…", systemImage: "plus", busyTitle: "Creating…", isBusy: model.isPending(.createBottle)) {
+                    isCreating = true
+                }
+                .buttonStyle(.prominentPill)
                     .disabled(model.runtimes.isEmpty)
             }
+            .padding(.horizontal, 40)
+            .padding(.top, 52)
+            .padding(.bottom, 40)
         }
-        .inspector(isPresented: Binding(get: { selectedBottle != nil }, set: { if !$0 { selection = nil } })) {
+        .ignoresSafeArea(.container, edges: .top)
+        .sidePanel(isPresented: selectedBottle != nil, title: selectedBottle?.name ?? "", close: { selection = nil }) {
             if let bottle = selectedBottle {
                 BottleDetail(bottle: bottle, reset: { bottleToReset = bottle }, installSteam: { installSteam(into: bottle) },
                              delete: { bottleToDelete = bottle })
-                    .inspectorColumnWidth(min: 280, ideal: 320)
-                    .inspectorCloseButton { selection = nil }
             }
         }
         .sheet(isPresented: $isCreating) { NewBottleSheet() }
@@ -71,20 +83,23 @@ struct BottlesView: View {
 
     @ViewBuilder
     private func actions(for bottle: Bottle) -> some View {
-        Button("Run Program…") { runProgram(in: bottle) }
+        // The Steam bottle only has Steam's games.
+        if bottle.role != .steam {
+            Button("Run Program…") { runProgram(in: bottle) }
+        }
         Button("Show C: Drive in Finder") { NSWorkspace.shared.open(model.driveC(of: bottle)) }
         if !model.hasSteam(in: bottle) {
-            Button(bottle.kind == .isolated ? "Install Steam…" : "Install Steam") { installSteam(into: bottle) }
-                .disabled(model.steamInstalls.contains(bottle.id))
+            busyItem(bottle.kind == .isolated ? "Install Steam…" : "Install Steam", "Installing Steam…",
+                     model.steamInstalls.contains(bottle.id)) { installSteam(into: bottle) }
         }
         if model.runningBottles.contains(bottle.id) {
-            Button("Stop Everything in It") { model.stop(bottle) }
+            busyItem("Stop Everything in It", "Stopping…", model.isPending(.stopBottle(bottle.id))) { model.stop(bottle) }
         }
         Divider()
         if bottle.kind == .isolated {
-            Button("Reset to Clean…", role: .destructive) { bottleToReset = bottle }
+            busyItem("Reset to Clean…", "Resetting…", model.isPending(.resetBottle(bottle.id))) { bottleToReset = bottle }
         }
-        Button("Delete Bottle…", role: .destructive) { bottleToDelete = bottle }
+        busyItem("Delete Bottle…", "Moving to Trash…", model.isPending(.deleteBottle(bottle.id))) { bottleToDelete = bottle }
     }
 
     private func deleteMessage(for bottle: Bottle) -> String {
@@ -109,27 +124,45 @@ struct BottlesView: View {
     }
 }
 
-private struct BottleRow: View {
+private struct BottleCard: View {
     @Environment(AppModel.self) private var model
     let bottle: Bottle
+    let isSelected: Bool
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: bottle.kind == .isolated ? "lock.shield.fill" : "shippingbox.fill")
-                .font(.title2)
-                .foregroundStyle(bottle.kind == .isolated ? Color.orange : Color.accentColor)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bottle.name).font(.headline)
-                Text(summary).font(.caption).foregroundStyle(.secondary)
+        let isolated = bottle.kind == .isolated
+        let tint = isolated ? Theme.isolated : Color.accentColor
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                Image(systemName: isolated ? "lock.shield.fill" : "shippingbox.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 48, height: 48)
+                    .background(tint.opacity(0.16), in: .rect(cornerRadius: 14))
+                Spacer()
+                if model.runningBottles.contains(bottle.id) {
+                    Chip(title: "Running", systemImage: "circle.fill", tint: Theme.running)
+                }
             }
-            Spacer()
-            if model.runningBottles.contains(bottle.id) {
-                Label("Running", systemImage: "circle.fill").labelStyle(.titleAndIcon).font(.caption)
-                    .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(bottle.name).font(.title3.weight(.bold)).lineLimit(1)
+                Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .padding(.vertical, 4)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isHovering || isSelected ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: 20))
+        .background(alignment: .topTrailing) {
+            Circle().fill(tint.opacity(0.18)).frame(width: 160, height: 160).blur(radius: 50).offset(x: 30, y: -50)
+        }
+        .clipShape(.rect(cornerRadius: 20))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? Color.white : Theme.stroke, lineWidth: isSelected ? 2 : 1)
+        }
+        .contentShape(.rect(cornerRadius: 20))
+        .onHover { isHovering = $0 }
+        .animation(.snappy(duration: 0.15), value: isHovering)
     }
 
     private var summary: String {
@@ -153,6 +186,9 @@ private struct BottleDetail: View {
         Form {
             Section {
                 LabeledContent("Kind", value: bottle.kind == .isolated ? "Isolated (macOS sandbox)" : "Standard")
+                if bottle.role != nil {
+                    LabeledContent("Made by", value: "Setup")
+                }
                 if bottle.kind == .isolated {
                     LabeledContent("Internet", value: bottle.isolation.allowNetwork ? "Allowed" : "Blocked")
                     LabeledContent("Clipboard", value: bottle.isolation.allowClipboard ? "Allowed" : "Blocked")
@@ -177,7 +213,9 @@ private struct BottleDetail: View {
                 }
             }
             Section {
-                Button("Run Program…") { model.open(Pickers.programs(), in: bottle) }
+                if bottle.role != .steam {
+                    Button("Run Program…") { model.open(Pickers.programs(), in: bottle) }
+                }
                 Button("Show C: Drive in Finder") { NSWorkspace.shared.open(model.driveC(of: bottle)) }
                 if model.steamInstalls.contains(bottle.id) {
                     HStack {
@@ -187,16 +225,19 @@ private struct BottleDetail: View {
                 } else if !model.hasSteam(in: bottle) {
                     Button(bottle.kind == .isolated ? "Install Steam…" : "Install Steam", action: installSteam)
                 }
-                Button("Stop Everything in It") { model.stop(bottle) }
-                    .disabled(!model.runningBottles.contains(bottle.id))
-                if bottle.kind == .isolated {
-                    Button("Reset to Clean…", role: .destructive, action: reset)
+                BusyButton("Stop Everything in It", busyTitle: "Stopping…", isBusy: model.isPending(.stopBottle(bottle.id))) {
+                    model.stop(bottle)
                 }
-                Button("Delete Bottle…", role: .destructive, action: delete)
+                .disabled(!model.runningBottles.contains(bottle.id))
+                if bottle.kind == .isolated {
+                    BusyButton("Reset to Clean…", busyTitle: "Resetting…", isBusy: model.isPending(.resetBottle(bottle.id)), action: reset)
+                        .foregroundStyle(.red)
+                }
+                BusyButton("Delete Bottle…", busyTitle: "Moving to Trash…", isBusy: model.isPending(.deleteBottle(bottle.id)), action: delete)
+                    .foregroundStyle(.red)
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle(bottle.name)
+        .panelForm()
     }
 }
 
@@ -210,7 +251,7 @@ struct NewBottleSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Bottle").font(.title2.weight(.semibold))
+            Text("New Bottle").font(.title2.weight(.bold))
             Form {
                 TextField("Name", text: $name, prompt: Text(kind == .isolated ? "Untrusted" : "Games"))
                 Picker("Kind", selection: $kind) {

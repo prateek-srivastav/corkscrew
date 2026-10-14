@@ -1,6 +1,7 @@
 import GameCore
 import SwiftUI
 
+/// A game's launch settings and logs: the side panel in Advanced mode. Play and the launch status are in the Library's hero.
 struct GameDetailView: View {
     @Environment(AppModel.self) private var model
     let game: Game
@@ -24,27 +25,9 @@ struct GameDetailView: View {
                             .help((game.iconSource ?? game.executable).path)
                     }
                 }
-                HStack {
-                    if isActive {
-                        Button("Stop", systemImage: "stop.fill", role: .destructive) { model.stop(game) }
-                    } else if state != .installed {
-                        Button("Open in Steam", systemImage: "arrow.down.circle") { model.openInSteam(game) }
-                            .buttonStyle(.borderedProminent)
-                    } else {
-                        Button("Play", systemImage: "play.fill") { model.play(game) }
-                            .buttonStyle(.borderedProminent)
-                    }
-                    if let session { Text(session.status.text).font(.callout).foregroundStyle(.secondary).lineLimit(3) }
-                }
-                if state != .installed {
-                    Label(state == .downloading
-                          ? "Downloading in Steam. It's ready to play once Steam finishes."
-                          : "Not downloaded. Steam's page for it has the Install button; these settings are kept for when it's back.",
-                          systemImage: "arrow.down.circle")
+                if isActive {
+                    Label("Settings are locked while it runs.", systemImage: "lock")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                ForEach(session?.notes ?? [], id: \.self) { note in
-                    Label(note, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -100,7 +83,7 @@ struct GameDetailView: View {
                     .disabled(isActive)
             }
         }
-        .formStyle(.grouped)
+        .panelForm()
         .onAppear {
             arguments = ArgumentText.join(game.profile.arguments)
             refreshLogs()

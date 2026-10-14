@@ -14,6 +14,28 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         case isolated
     }
 
+    /// The ready-made bottles every setup has, whatever the user named them.
+    public enum Role: String, Codable, Sendable, CaseIterable {
+        /// Standard bottle for Steam and the games in its library; no other programs.
+        case steam
+        /// Isolated, offline: for programs you don't trust.
+        case sandbox
+        /// Isolated, internet on: for programs you don't trust that need the internet.
+        case sandboxOnline
+
+        /// The name the bottle gets when it's created.
+        public var defaultName: String {
+            switch self {
+            case .steam: "Steam"
+            case .sandbox: "Sandbox"
+            case .sandboxOnline: "Sandbox Online"
+            }
+        }
+
+        public var kind: Kind { self == .steam ? .standard : .isolated }
+        public var isolation: IsolationPolicy { IsolationPolicy(allowNetwork: self == .sandboxOnline) }
+    }
+
     public var id: UUID
     public var name: String
     public var kind: Kind
@@ -25,6 +47,8 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
     /// `RuntimeModules.fingerprint` of the runtime the prefix was last booted with (`wineboot`); nil
     /// for bottles that predate it or were reset to a snapshot, so the next launch updates them.
     public var runtimeModules: String?
+    /// Nil for bottles the user made.
+    public var role: Role?
 
     public init(
         id: UUID = UUID(),
@@ -34,7 +58,8 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         windowsVersion: WindowsVersion = .windows10,
         isolation: IsolationPolicy = IsolationPolicy(),
         createdAt: Date = .now,
-        runtimeModules: String? = nil
+        runtimeModules: String? = nil,
+        role: Role? = nil
     ) {
         self.id = id
         self.name = name
@@ -44,6 +69,7 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         self.isolation = isolation
         self.createdAt = createdAt
         self.runtimeModules = runtimeModules
+        self.role = role
     }
 }
 

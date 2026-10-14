@@ -7,14 +7,33 @@ import UniformTypeIdentifiers
 struct CorkscrewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel.shared
+    @State private var navigator = Navigator()
+    @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
     var body: some Scene {
         Window("Corkscrew", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 860, minHeight: 540)
+                .environment(navigator)
+                .frame(minWidth: 980, minHeight: 620)
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowBackgroundDragBehavior(.enabled)
+        .defaultSize(width: 1240, height: 800)
         .commands {
+            CommandGroup(before: .sidebar) {
+                Button("Back") { navigator.back() }
+                    .keyboardShortcut("[")
+                    .disabled(!navigator.canGoBack)
+                Button("Forward") { navigator.forward() }
+                    .keyboardShortcut("]")
+                    .disabled(!navigator.canGoForward)
+                Divider()
+            }
+            CommandGroup(after: .toolbar) {
+                Toggle("Advanced Mode", isOn: $advancedMode)
+                    .keyboardShortcut("a", modifiers: [.command, .option])
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About Corkscrew") { AboutPanel.show() }
             }
