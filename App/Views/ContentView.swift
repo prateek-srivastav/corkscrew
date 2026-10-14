@@ -10,24 +10,37 @@ struct ContentView: View {
     @Environment(Navigator.self) private var navigator
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
+    private var pageShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: Theme.windowCornerRadius, bottomLeadingRadius: Theme.windowCornerRadius,
+                               style: .continuous)
+    }
+
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 0) {
             Sidebar()
-            Group {
-                switch navigator.route.section {
-                case .library: LibraryView(openSetup: { navigator.go(.setup) })
-                case .bottles: BottlesView()
-                case .setup: SetupView()
+            // The container animates, so the section that leaves stays while the new one comes in.
+            ZStack {
+                Group {
+                    switch navigator.route.section {
+                    case .library: LibraryView(openSetup: { navigator.go(.setup) })
+                    case .bottles: BottlesView()
+                    case .setup: SetupView()
+                    }
                 }
+                .id(navigator.route.section)
+                .transition(CoverTransition(opaque: true))
             }
-            .id(navigator.route.section)
-            .transition(.opacity)
-            .animation(.easeInOut(duration: 0.2), value: navigator.route.section)
+            .animation(.smooth(duration: 0.3), value: navigator.route.section)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Pages that slide sideways stay off the sidebar.
-            .clipped()
+            .clipShape(pageShape)
+            // The page lies over the sidebar: a sharp edge with a shadow on the sidebar, and left
+            // corners as round as the window's.
+            .background { pageShape.fill(Theme.background).shadow(color: .black.opacity(0.55), radius: 18, x: -4) }
+            .overlay { pageShape.strokeBorder(.white.opacity(0.07)) }
             .ignoresSafeArea(.container, edges: .top)
+            .zIndex(1)
         }
         .background(Theme.background)
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
@@ -46,6 +59,13 @@ struct ContentView: View {
         // Bottles is an Advanced page; turning Advanced off leaves it, and Back doesn't return to it.
         .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
         .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
+        // Loads the art pages open with, so a page doesn't show dark while its art loads.
+        .task(id: model.allGames.map(\.id)) {
+            for game in model.allGames.prefix(40) {
+                _ = await SteamArtwork.load(.hero, for: game, model: model)
+                _ = await SteamArtwork.load(.logo, for: game, model: model)
+            }
+        }
     }
 }
 
@@ -59,8 +79,8 @@ private struct ActivityBar: View {
                 Group {
                     if let progress = model.enginePackProgress {
                         HStack(spacing: 10) {
-                            ProgressView(value: progress).frame(width: 90)
-                            Text("Downloading Wine… \(Int(progress * 100))%").lineLimit(1)
+                            ProgressView(value: progress.fraction).frame(width: 90)
+                            Text(progress.title).lineLimit(1)
                         }
                     } else if let activity = model.activity {
                         HStack(spacing: 10) {

@@ -13,12 +13,16 @@ enum Theme {
     static let online = Color.green
     /// Steam's blue, from its logo.
     static let steam = Color(red: 0.10, green: 0.60, blue: 1.0)
+    /// The Library: every game.
+    static let library = Color(red: 0.62, green: 0.38, blue: 1.0)
+    /// The window's corner radius (macOS 26, no toolbar); the page's left corners match it.
+    static let windowCornerRadius: CGFloat = 16
 
-    /// A sidebar place's colour, also the glow of its page: the Library white, Steam blue, Offline
+    /// A sidebar place's colour, also the glow of its page: the Library purple, Steam blue, Offline
     /// Games orange, Online Games green, other bottles grey.
     static func tint(for bottle: Bottle?) -> Color {
         switch bottle?.role {
-        case nil: bottle == nil ? .white : .gray
+        case nil: bottle == nil ? library : .gray
         case .steam: steam
         case .sandbox: isolated
         case .sandboxOnline: online
@@ -295,23 +299,26 @@ private struct FloatingBarModifier<Bar: View>: ViewModifier {
     }
 }
 
-extension View {
-    /// Fades the view in and lifts it a little the first time it shows; `delay` staggers a row.
-    func appearEffect(delay: Double = 0) -> some View {
-        modifier(AppearEffect(delay: delay))
+/// The new view fades in over the old one, which stays in place until it's covered, so nothing
+/// dark shows between the two (two views fading at once let the window's black through).
+struct CoverTransition: Transition {
+    /// Where the new view comes in from.
+    var offset: CGSize = .zero
+    /// Gives the views the window's background, for pages that are partly see-through.
+    var opaque = false
+
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        content.cover(phase, from: offset, opaque: opaque)
     }
 }
 
-private struct AppearEffect: ViewModifier {
-    let delay: Double
-    @State private var isShown = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isShown ? 1 : 0)
-            .offset(y: isShown ? 0 : 10)
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.35).delay(delay)) { isShown = true }
-            }
+extension View {
+    /// How a view looks at a `CoverTransition` phase.
+    func cover(_ phase: TransitionPhase, from offset: CGSize = .zero, opaque: Bool = false) -> some View {
+        background(opaque ? Theme.background : .clear)
+            // The old view changes a hair, so it stays until the animation ends.
+            .opacity(phase.value < 0 ? 0 : phase.value > 0 ? 0.99 : 1)
+            .offset(phase.value < 0 ? offset : .zero)
+            .zIndex(phase.value > 0 ? 0 : 1)
     }
 }

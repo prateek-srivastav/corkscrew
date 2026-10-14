@@ -108,25 +108,60 @@ public struct RuntimeStore: Sendable {
         return try JSONDecoder().decode(RuntimeManifest.self, from: Data(contentsOf: manifest))
     }
 
-    static func sha256(of file: URL) throws -> String {
+    /// The file's SHA-256, in hex. `progress` gets the fraction read so far (0…1).
+    static func sha256(of file: URL, progress: (Double) -> Void = { _ in }) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
+        let size = fileSize(of: file)
         var hasher = SHA256()
-        while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        var read: Int64 = 0
+        while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+            read += Int64(chunk.count)
+            if size > 0 { progress(min(Double(read) / Double(size), 1)) }
+        }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Unpacks a tar archive (any compression `tar` knows) into `folder`.
+    static func fileSize(of file: URL) -> Int64 {
+        Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+
+    /// Unpacks a tar archive (any compression `tar` knows) into `folder`. `progress` gets the
+    /// fraction of the archive unpacked so far (0…1): the archive goes to `tar` through a pipe, so
+    /// the bytes sent measure it.
     ///
     /// macOS's `tar` gives every file the archive's quarantine flag, and the engine pack inside a
     /// downloaded DMG has one. Gatekeeper could then refuse to run Wine's programs and libraries,
     /// which aren't notarized; callers check the archive's SHA-256 first, so the flag comes off.
-    static func unpack(_ archive: URL, into folder: URL) throws {
+    static func unpack(_ archive: URL, into folder: URL, progress: (Double) -> Void = { _ in }) throws {
+        let input = try FileHandle(forReadingFrom: archive)
+        defer { try? input.close() }
+        let size = fileSize(of: archive)
+        let pipe = Pipe()
+        let writer = pipe.fileHandleForWriting
+        // When tar stops reading early (a damaged archive), a write must fail, not end the app with SIGPIPE.
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
         let tar = Process()
         tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        tar.arguments = ["-xf", archive.path, "-C", folder.path]
+        tar.arguments = ["-xf", "-", "-C", folder.path]
+        tar.standardInput = pipe
         try tar.run()
+
+        var readError: Error?
+        var sent: Int64 = 0
+        do {
+            while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+                guard (try? writer.write(contentsOf: chunk)) != nil else { break }  // tar's status says why
+                sent += Int64(chunk.count)
+                if size > 0 { progress(min(Double(sent) / Double(size), 1)) }
+            }
+        } catch {
+            readError = error
+        }
+        try? writer.close()
         tar.waitUntilExit()
+        if let readError { throw readError }
         guard tar.terminationStatus == 0 else { throw StoreError.extractFailed(status: tar.terminationStatus) }
         removeQuarantine(in: folder)
     }

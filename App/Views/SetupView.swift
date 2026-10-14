@@ -154,8 +154,10 @@ struct SetupView: View {
         if model.isSettingUp {
             HStack(spacing: 12) {
                 if let progress = model.enginePackProgress {
-                    ProgressView(value: progress) {
-                        Text("Downloading Wine… \(Int(progress * 100))% of \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file))")
+                    ProgressView(value: progress.fraction) {
+                        Text(progress.step == .downloading
+                             ? "\(progress.title) of \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file))"
+                             : progress.title)
                     }
                 } else {
                     ProgressView().controlSize(.small)

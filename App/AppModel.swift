@@ -85,8 +85,8 @@ final class AppModel {
 
     /// Whether x86_64 programs run; the Wine runtime needs Rosetta.
     private(set) var hasRosetta = true
-    /// The engine pack download's progress (0…1), nil when it isn't downloading.
-    private(set) var enginePackProgress: Double?
+    /// The engine pack's download or unpack, while one runs.
+    private(set) var enginePackProgress: EnginePackProgress?
     /// The one-click setup (`setUp()`), while it runs.
     @ObservationIgnored private var setupTask: Task<Void, Never>?
     private(set) var isSettingUp = false
@@ -938,13 +938,10 @@ final class AppModel {
         let bundled = Self.bundledEnginePack
         let archive = bundled ?? paths.cachesRoot.appending(path: "Downloads/\(pack.url.lastPathComponent)")
         if bundled == nil {
-            enginePackProgress = 0
+            enginePackProgress = EnginePackProgress(step: .downloading)
             do {
                 try await Downloader.download(pack.url, to: archive) { fraction in
-                    Task { @MainActor in
-                        // Late updates after the download ended are dropped.
-                        if let progress = self.enginePackProgress { self.enginePackProgress = max(progress, fraction) }
-                    }
+                    Task { @MainActor in self.advanceEnginePack(.downloading, to: fraction) }
                 }
                 enginePackProgress = nil
             } catch {
@@ -954,13 +951,26 @@ final class AppModel {
             }
         }
         isInstallingEngine = true
-        defer { isInstallingEngine = false }
+        enginePackProgress = EnginePackProgress(step: .unpacking)
+        defer {
+            isInstallingEngine = false
+            enginePackProgress = nil
+        }
         let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…") {
             // The copy inside the app stays: it's sealed by the app's signature.
             defer { if bundled == nil { try? FileManager.default.removeItem(at: archive) } }
-            return try pack.install(archive: archive, paths: paths)
+            return try pack.install(archive: archive, paths: paths) { fraction in
+                Task { @MainActor in self.advanceEnginePack(.unpacking, to: fraction) }
+            }
         }
         return installed != nil
+    }
+
+    /// Late updates, after their step ended, are dropped.
+    private func advanceEnginePack(_ step: EnginePackProgress.Step, to fraction: Double) {
+        guard var progress = enginePackProgress, progress.step == step else { return }
+        progress.fraction = max(progress.fraction, fraction)
+        enginePackProgress = progress
     }
 
     /// Whether Steam's files are in the bottle, listed in the library or not.
@@ -1064,6 +1074,15 @@ final class AppModel {
         }
         return String(describing: error)
     }
+}
+
+/// How far the engine pack's download, or its checksum and unpack, has got.
+struct EnginePackProgress: Equatable {
+    enum Step { case downloading, unpacking }
+    var step: Step
+    var fraction: Double = 0
+
+    var title: String { "\(step == .downloading ? "Downloading" : "Unpacking") Wine… \(Int(fraction * 100))%" }
 }
 
 struct AppError: Error, CustomStringConvertible {

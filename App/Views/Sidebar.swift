@@ -3,7 +3,8 @@ import GameCore
 import SwiftUI
 
 /// The column on the left: the Library with every game, Steam, the two protected bottles (and any
-/// others the user made), Add Program and Setup. The open place shows in its own colour.
+/// others the user made), Add Program and Setup. The column takes the open place's colour, faded
+/// and grainy; the page lies over it.
 struct Sidebar: View {
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
@@ -66,11 +67,27 @@ struct Sidebar: View {
         .padding(.bottom, 14)
         .frame(width: Self.width)
         .frame(maxHeight: .infinity)
-        .background(Color.black.opacity(0.25).gesture(WindowDragGesture()))
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.stroke).frame(width: 1) }
+        .background(Color.clear.contentShape(.rect).gesture(WindowDragGesture()))
+        // Reaches under the page's round corners, so they show the sidebar, not the window's black.
+        .background(alignment: .leading) {
+            SidebarBackdrop(tint: openTint)
+                .frame(width: Self.width + Theme.windowCornerRadius)
+                .allowsHitTesting(false)
+                .animation(.smooth(duration: 0.5), value: openTint)
+        }
         .ignoresSafeArea(.container, edges: .top)
         .environment(\.sidebarSelection, selection)
         .animation(.snappy(duration: 0.3), value: navigator.route.place)
+    }
+
+    /// The colour of the open place; white for the pages that aren't places (Setup, Bottles).
+    private var openTint: Color {
+        guard navigator.route.section == .library else { return .white }
+        switch navigator.route.library.place {
+        case .bottle(let id): return Theme.tint(for: model.bottles.first { $0.id == id })
+        case .noBottle: return .gray
+        case .all, .game: return Theme.library
+        }
     }
 
     private func isOpen(_ page: LibraryPage) -> Bool {
@@ -207,10 +224,10 @@ struct SidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// Liquid Glass in the place's colour.
+    /// Plain Liquid Glass: the column around it already has the place's colour.
     @ViewBuilder
     private var highlight: some View {
-        let glass = Color.clear.glassEffect(.regular.tint(tint.opacity(tint == .white ? 0.05 : 0.14)), in: .rect(cornerRadius: 10))
+        let glass = Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 10))
         if let selection {
             glass.matchedGeometryEffect(id: "selection", in: selection)
         } else {
@@ -236,6 +253,40 @@ struct SidebarRow: View {
         .frame(width: 32, height: 32)
         .overlay(alignment: .topTrailing) {
             if needsAttention { Circle().fill(.red).frame(width: 9, height: 9).offset(x: 3, y: -3) }
+        }
+    }
+}
+
+/// The sidebar's backdrop: the window's own dark, washed from the top with the open place's
+/// colour, with a fine grain.
+private struct SidebarBackdrop: View {
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [tint.opacity(tint == .white ? 0.07 : 0.2), tint.opacity(tint == .white ? 0.02 : 0.05)],
+                           startPoint: .top, endPoint: .bottom)
+            Grain().opacity(0.06).blendMode(.plusLighter)
+        }
+    }
+}
+
+/// Fine film grain: the same specks every time, so it doesn't shimmer when the view redraws.
+private struct Grain: View {
+    var body: some View {
+        Canvas { context, size in
+            var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+            func next() -> Double {
+                seed &+= 0x9E37_79B9_7F4A_7C15
+                var z = seed
+                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+                return Double(z ^ (z >> 31)) / Double(UInt64.max)
+            }
+            for _ in 0..<Int(size.width * size.height / 14) {
+                let rect = CGRect(x: next() * size.width, y: next() * size.height, width: 1, height: 1)
+                context.fill(Path(rect), with: .color(.white.opacity(next())))
+            }
         }
     }
 }

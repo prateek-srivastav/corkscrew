@@ -19,36 +19,37 @@ struct LibraryView: View {
 
     var body: some View {
         let page = navigator.route.library
-        Group {
-            if case .game(let id, let from) = page, let game = model.game(id: id) {
-                GamePage(game: game, backTitle: title(of: from)) { navigator.goUp(to: from) }
-            } else if case .game(_, let from) = page {
-                // Removed, or gone from the Steam library.
-                gamesPage(from)
-            } else {
-                gamesPage(page)
+        // The container animates, so the page that leaves stays while the new one comes in.
+        ZStack {
+            Group {
+                if case .game(let id, let from) = page, let game = model.game(id: id) {
+                    GamePage(game: game, backTitle: title(of: from)) { navigator.goUp(to: from) }
+                } else if case .game(_, let from) = page {
+                    // Removed, or gone from the Steam library.
+                    gamesPage(from)
+                } else {
+                    gamesPage(page)
+                }
             }
+            .id(page)
+            .transition(PageTransition(navigator: navigator))
         }
-        .id(page)
-        .transition(PageTransition(navigator: navigator))
         .animation(.smooth(duration: 0.35), value: page)
     }
 
-    /// Another place fades up a little; inside a place, pages slide sideways: a game's page in from
-    /// the right, Back from the left. It reads the move when it runs, so the page that leaves goes
-    /// the same way as the page that comes in.
+    /// The new page fades in over the old one (`CoverTransition`): another place rises a little;
+    /// inside a place, a game's page comes in from the right and Back from the left. It reads the
+    /// move when it runs, not when the page was made.
     private struct PageTransition: Transition {
         let navigator: Navigator
 
         func body(content: Content, phase: TransitionPhase) -> some View {
-            let sideways: CGFloat = switch navigator.move {
-            case .push: -phase.value * 90
-            case .pop: phase.value * 90
-            case .place: 0
+            let offset = switch navigator.move {
+            case .push: CGSize(width: 90, height: 0)
+            case .pop: CGSize(width: -90, height: 0)
+            case .place: CGSize(width: 0, height: 8)
             }
-            content
-                .opacity(phase.isIdentity ? 1 : 0)
-                .offset(x: sideways, y: navigator.move == .place && !phase.isIdentity ? 8 : 0)
+            content.cover(phase, from: offset, opaque: true)
         }
     }
 
@@ -321,12 +322,10 @@ private struct GamesPage: View {
     }
 
     private func cards(_ games: [Game], showsBottle: Bool = false) -> some View {
-        ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
+        ForEach(games) { game in
             GameCard(game: game, isSelected: false, showsBottle: showsBottle)
                 .onTapGesture { openGame(game) }
                 .contextMenu { menu(for: game) }
-                // The first cards come in one after another.
-                .appearEffect(delay: Double(min(index, 12)) * 0.035)
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
         }
     }
@@ -408,10 +407,10 @@ struct HeroBackdrop: View {
                         SteamArt(game: game, kind: .hero) { IconGlow(game: game, size: 520) }
                     }
                     .id(game.id)
-                    .transition(.opacity)
+                    .transition(CoverTransition())
                 } else {
                     RadialGradient(colors: [tint.opacity(0.32), .clear], center: .topTrailing, startRadius: 40, endRadius: 700)
-                        .transition(.opacity)
+                        .transition(CoverTransition())
                 }
             }
             .clipped()

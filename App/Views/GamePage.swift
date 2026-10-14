@@ -23,7 +23,7 @@ struct GamePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .top) {
-                    HeroBackdrop(game: game, tint: Theme.tint(for: model.bottle(for: game)))
+                    HeroBackdrop(game: game, tint: model.bottle(for: game).map(Theme.tint) ?? .gray)
                     VStack(alignment: .leading, spacing: 0) {
                         Color.clear.frame(height: FloatingBar.height)
                         Spacer(minLength: 24)
