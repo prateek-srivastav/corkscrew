@@ -1,11 +1,12 @@
 import GameCore
 import SwiftUI
 
-/// First-run setup, and where runtimes and graphics components are managed later.
+/// Settings: first-run setup, Advanced mode, runtimes and graphics components, and uninstalling.
 struct SetupView: View {
     @Environment(AppModel.self) private var model
     @State private var archiveSHA256 = ""
     @State private var isCreatingBottle = false
+    @State private var confirmsUninstall = false
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
     static let gameportingToolkitPage = URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!
@@ -33,7 +34,7 @@ struct SetupView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Advanced mode").font(.headline)
                             Text("Corkscrew picks tested settings for each game. Turn this on to change them: graphics, "
-                                 + "overlays, arguments and launch logs. Setup then also shows what's installed, the bottles "
+                                 + "overlays, arguments and launch logs. Settings then also shows what's installed, the bottles "
                                  + "and data folders, and lets you add your own runtimes and components.")
                                 .font(.body).foregroundStyle(.secondary)
                         }
@@ -136,15 +137,39 @@ struct SetupView: View {
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+
+                Card {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Clean Up and Uninstall").font(.headline)
+                            Text("Deletes every bottle with the games installed in it, Wine, your library, logs, caches "
+                                 + "and settings, then Corkscrew itself.")
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        BusyButton("Uninstall…", systemImage: "trash", busyTitle: "Uninstalling…",
+                                   isBusy: model.isPending(.uninstall)) { confirmsUninstall = true }
+                            .buttonStyle(.destructivePill)
+                    }
+                }
             }
             .animation(.snappy, value: advancedMode)
-            .pageHeader("Setup", subtitle: "Corkscrew runs Windows games with Wine.")
+            .pageHeader("Settings", subtitle: "Corkscrew runs Windows games with Wine.")
             .padding(.horizontal, 40)
             .padding(.top, 52)
             .padding(.bottom, 40)
         }
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $isCreatingBottle) { NewBottleSheet() }
+        .alert("Delete all games and uninstall Corkscrew?", isPresented: $confirmsUninstall) {
+            Button("Delete Everything and Uninstall", role: .destructive) { model.uninstall() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every game installed in Corkscrew's bottles is deleted from this Mac, with saves that are only in "
+                 + "a bottle. Wine, your library, logs, caches and settings are deleted, and Corkscrew is uninstalled "
+                 + "and quits. You can't undo this. Files outside Corkscrew's folders stay.\n\n"
+                 + "Data folder: \(model.paths.supportRoot.path)")
+        }
     }
 
     @ViewBuilder

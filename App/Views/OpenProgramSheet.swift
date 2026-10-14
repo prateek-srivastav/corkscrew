@@ -53,7 +53,7 @@ struct OpenProgramSheet: View {
                     .font(.body).foregroundStyle(.secondary)
             }
             if model.programBottles.isEmpty {
-                Label("Create a bottle under Setup first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                Label("Create a bottle in Settings first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
 
             HStack {

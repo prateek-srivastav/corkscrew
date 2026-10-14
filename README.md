@@ -118,6 +118,7 @@ Open it from there the first time: it finds the runtime and components in `build
 - **Per-game settings:** graphics backend, MetalFX, Retina mode, Metal HUD, performance overlay, Steam overlay, launch arguments and logs.
 - **Untrusted programs:** create an **Isolated** bottle under Bottles → New Bottle. Turn on **Install Steam** if a game needs Steam; use a second Steam account there, because programs in the bottle can read its sign-in.
 - **Data** lives in `~/Library/{Application Support,Logs,Caches}/Corkscrew`; pass `-DataRoot <folder>` to keep it in one folder.
+- **Uninstall:** **Settings → Clean Up and Uninstall** stops every bottle, deletes the bottles with the games in them, Wine, the library, logs, caches and settings, then deletes the app.
 - **CLI** (`swift build` in `Packages/GameCore`, run from the repository root): `gamecore-cli bottle create <name> [--isolated]`, `inspect <exe>`, and `run --bottle <name> [--backend d3dmetal] [--metalfx] [--hud] [--retina] [--verbose] [--env KEY=VALUE] <exe>`.
 
 If something doesn't work, check [Known issues](#known-issues), then the game's log under **Logs** in its panel.

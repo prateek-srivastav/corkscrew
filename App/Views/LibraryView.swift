@@ -273,7 +273,7 @@ private struct GamesPage: View {
         if isAll && !model.isReady {
             heroMessage(model.isSettingUp ? "Setting up Corkscrew…" : "Finish setting up Corkscrew",
                         "Setup gets Wine, Steam, and two protected places for other Windows programs.") {
-                Button("Open Setup", systemImage: "sparkles", action: openSetup).buttonStyle(.prominentPill)
+                Button("Open Settings", systemImage: "sparkles", action: openSetup).buttonStyle(.prominentPill)
             }
         } else if isAll {
             heroMessage("No games yet", "Sign in to Steam, or drop a Windows program (.exe) or installer (.msi) here.") {

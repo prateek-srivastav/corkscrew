@@ -63,6 +63,7 @@ final class AppModel {
         case addRuntime
         case addComponents
         case importToolkit
+        case uninstall
     }
 
     private(set) var pending: Set<Pending> = []
@@ -636,7 +637,7 @@ final class AppModel {
         sessions[game.id]?.task = Task { [weak self] in
             do {
                 guard let engine = try RuntimeStore(paths: paths).engine(id: bottle.engineID) else {
-                    throw AppError("No Wine runtime is installed. Add one under Setup.")
+                    throw AppError("No Wine runtime is installed. Add one in Settings.")
                 }
                 let prepared = try await Launcher.prepare(gameID: game.id, executable: game.executable, profile: game.profile,
                                                           bottle: bottle, engine: engine, paths: paths,
@@ -675,7 +676,7 @@ final class AppModel {
             defer { ended.isSet = true }
             do {
                 guard let engine = try RuntimeStore(paths: paths).engine(id: bottle.engineID) else {
-                    throw AppError("No Wine runtime is installed. Add one under Setup.")
+                    throw AppError("No Wine runtime is installed. Add one in Settings.")
                 }
                 let prepared = try await Launcher.prepare(gameID: game.id, executable: game.executable, profile: game.profile,
                                                           bottle: bottle, engine: engine, paths: paths)
@@ -831,6 +832,38 @@ final class AppModel {
                 icons[game.id] = nil
             }
             saveLibrary()
+        }
+    }
+
+    /// Clean Up and Uninstall: stops every bottle, deletes all of Corkscrew's files (the bottles with
+    /// the games in them, runtimes, library, logs, caches, settings) and the app, then quits.
+    func uninstall() {
+        guard !isPending(.uninstall) else { return }
+        pending.insert(.uninstall)
+        cancelSetUp()
+        for (id, session) in sessions where session.isActive { sessions[id]?.task?.cancel() }
+        let bundleID = Bundle.main.bundleIdentifier ?? "io.github.prateek-srivastav.Corkscrew"
+        let uninstaller = Uninstaller(paths: paths, bundleIdentifier: bundleID)
+        let app = Bundle.main.bundleURL
+        // Before the files go, so cfprefsd doesn't write the preferences back.
+        UserDefaults.standard.removePersistentDomain(forName: bundleID)
+        CFPreferencesAppSynchronize(bundleID as CFString)
+        Task {
+            let (left, appRemoved) = await Task.detached(priority: .userInitiated) {
+                uninstaller.stopBottles()
+                return (uninstaller.removeFiles(), uninstaller.removeApp(at: app))
+            }.value
+            if !left.isEmpty || !appRemoved {
+                let alert = NSAlert()
+                alert.messageText = "Some files are still there"
+                alert.informativeText = "Corkscrew couldn't delete these. Finder shows them; move them to the Trash.\n\n"
+                    + (left + (appRemoved ? [] : [app])).map(\.path).joined(separator: "\n")
+                alert.addButton(withTitle: "Quit")
+                alert.runModal()
+                NSWorkspace.shared.activateFileViewerSelecting(left + (appRemoved ? [] : [app]))
+            }
+            // Not `terminate`: quitting normally saves window state again.
+            exit(0)
         }
     }
 

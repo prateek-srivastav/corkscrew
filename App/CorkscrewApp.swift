@@ -41,6 +41,10 @@ struct CorkscrewApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About Corkscrew") { AboutPanel.show() }
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { navigator.go(.setup) }
+                    .keyboardShortcut(",")
+            }
             CommandGroup(after: .newItem) {
                 Button("Add Program…") { model.open(Pickers.programs()) }
                     .keyboardShortcut("o")
