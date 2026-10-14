@@ -642,7 +642,8 @@ final class AppModel {
                 let prepared = try await Launcher.prepare(gameID: game.id, executable: game.executable, profile: game.profile,
                                                           bottle: bottle, engine: engine, paths: paths,
                                                           steamWebHelperWrapper: Self.steamWebHelperWrapper,
-                                                          visibleWindowsHelper: Self.visibleWindowsHelper)
+                                                          visibleWindowsHelper: Self.visibleWindowsHelper,
+                                                          depthEqualShim: Self.depthEqualShim)
                 try Task.checkCancellation()
                 self?.sessions[game.id]?.log = prepared.log
                 self?.sessions[game.id]?.notes = prepared.notes
@@ -775,6 +776,8 @@ final class AppModel {
     private static let steamWebHelperWrapper = Bundle.main.url(forResource: "steamwebhelper-wrapper", withExtension: "exe")
     /// Built from `tools/visible-windows` into the app's resources (see project.yml).
     private static let visibleWindowsHelper = Bundle.main.url(forResource: "visible-windows", withExtension: "exe")
+    /// Built from `tools/depth-equal-fix` into the app's resources (see project.yml).
+    private static let depthEqualShim = Bundle.main.url(forResource: "depth-equal-fix", withExtension: "dll")
 
     private static func startOverlay(prefix: URL) {
         guard let tool = Bundle.main.url(forAuxiliaryExecutable: "perf-overlay") else { return }

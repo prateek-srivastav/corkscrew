@@ -67,6 +67,21 @@ targets:
           - $(SRCROOT)/tools/visible-windows/visible-windows.c
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/visible-windows.exe
+      # God of War's white specks: a d3d11.dll in front of DXMT that the launch puts next to the game.
+      - name: Build depth-equal fix
+        script: |
+          set -e
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "error: mingw-w64 is missing: run scripts/bootstrap.sh"; exit 1; }
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          x86_64-w64-mingw32-gcc -O2 -Wall -s -shared \
+            -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/depth-equal-fix.dll" \
+            "$SRCROOT/tools/depth-equal-fix/depth-equal-fix.c" "$SRCROOT/tools/depth-equal-fix/d3d11.def"
+        inputFiles:
+          - $(SRCROOT)/tools/depth-equal-fix/depth-equal-fix.c
+          - $(SRCROOT)/tools/depth-equal-fix/d3d11.def
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/depth-equal-fix.dll
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.prateek-srivastav.Corkscrew

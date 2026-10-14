@@ -25,16 +25,20 @@ public struct GameLaunch: Sendable {
     public var detectedAPIs: Set<GraphicsAPI>
     /// The game's CPU architecture; D3DMetal only exists for 64-bit games.
     public var machine: PEFile.Machine
+    /// The `tools/depth-equal-fix` shim is at hand (the app ships it), so games that need it
+    /// (`DepthEqualFix`) can get it.
+    public var depthEqualFixAvailable: Bool
 
     public init(
         gameID: UUID, executable: URL, profile: GameProfile, detectedAPIs: Set<GraphicsAPI>,
-        machine: PEFile.Machine = .x86_64
+        machine: PEFile.Machine = .x86_64, depthEqualFixAvailable: Bool = false
     ) {
         self.gameID = gameID
         self.executable = executable
         self.profile = profile
         self.detectedAPIs = detectedAPIs
         self.machine = machine
+        self.depthEqualFixAvailable = depthEqualFixAvailable
     }
 }
 
@@ -50,6 +54,8 @@ public struct LaunchPlan: Sendable, Equatable {
     /// The backend the game's settings or detection asked for, when it isn't installed and
     /// `backend` stands in for it.
     public var unavailableBackend: GraphicsBackend? = nil
+    /// The launch runs DXMT through the depth-equal shim, which must be put next to the game first.
+    public var depthEqualFix = false
 }
 
 public enum LaunchError: Error, Equatable {
@@ -103,7 +109,12 @@ public enum LaunchPlanner {
         // A backend that isn't installed (D3DMetal in a build without the Game Porting Toolkit) would
         // leave the game on WineD3D's DLLs while Wine is told otherwise; use the best installed one.
         let available = ComponentCatalog.availableBackends(of: context.engine)
-        let wanted = game.profile.backendOverride ?? .recommended(for: game.detectedAPIs, machine: game.machine)
+        // Auto sends games that need the depth-equal shim to DXMT, which the shim wraps.
+        let depthEqualFix = game.depthEqualFixAvailable && DepthEqualFix.applies(to: game.executable)
+            && (game.profile.backendOverride ?? .dxmt) == .dxmt && available.contains(.dxmt)
+            && DepthEqualFix.canInstall(nextTo: game.executable)
+        let wanted = game.profile.backendOverride
+            ?? (depthEqualFix ? .dxmt : .recommended(for: game.detectedAPIs, machine: game.machine))
         let backend = available.contains(wanted)
             ? wanted : .recommended(for: game.detectedAPIs, machine: game.machine, available: available)
         let isolated = context.bottle.kind == .isolated
@@ -142,6 +153,8 @@ public enum LaunchPlanner {
         let onlineFix = onlineFixOverrides(for: game.executable)
         if let onlineFix { overrides.merge(onlineFix) { engine, _ in engine } }
         if !game.profile.steamOverlay && onlineFix == nil { overrides.merge(steamOverlayOff) { engine, _ in engine } }
+        // Without it Wine's builtin d3d11 wins over the shim next to the game.
+        if depthEqualFix { overrides[DepthEqualFix.module] = "n,b" }
         env["WINEDLLOVERRIDES"] = dllOverrides(overrides)
         env.merge(game.profile.environment) { _, user in user }
 
@@ -157,6 +170,7 @@ public enum LaunchPlanner {
             context: context
         )
         if backend != wanted { plan.unavailableBackend = wanted }
+        plan.depthEqualFix = depthEqualFix
         return plan
     }
 

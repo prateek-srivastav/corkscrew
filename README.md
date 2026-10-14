@@ -45,7 +45,7 @@ Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 
 |---|---|---|
 | **Red Dead Redemption 2** | Steam → Rockstar Games Launcher, DX12 on D3DMetal | Plays at about 50 FPS (25 in Retina mode) with the tested settings: Ultra textures, High shadows and lighting, DLSS as MetalFX. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX on D3DMetal | 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964. |
-| **God of War (2018)** | Isolated bottle, internet off, DX11 on D3DMetal | Plays. White specks on Kratos's skin are still open ([#14](https://github.com/Prateek-Srivastav/corkscrew/issues/14)). |
+| **God of War (2018)** | Isolated bottle, internet off, DX11 on DXMT with a depth-test fix | Plays with the tested settings (Ultra preset, HDR off, no film grain), with no white specks on the characters ([#14](https://github.com/Prateek-Srivastav/corkscrew/issues/14)). |
 | **Last Pirates Die Together** | Isolated bottle, internet on, with its own Steam; DX11 on D3DMetal | Plays; online co-op works. |
 | **Emily is Away** | 32-bit, DX11 on DXVK | Runs |
 
@@ -59,7 +59,7 @@ Corkscrew.app (SwiftUI) · gamecore-cli
             └─ D3DMetal · DXMT · DXVK + MoltenVK · WineD3D → Metal
 ```
 
-- **Graphics per launch.** Backend DLLs live outside Wine's own folder; each launch points `WINEDLLPATH` at the chosen one. 64-bit DX12/11 games get D3DMetal, other DX11/10 games DXMT.
+- **Graphics per launch.** Backend DLLs live outside Wine's own folder; each launch points `WINEDLLPATH` at the chosen one. 64-bit DX12/11 games get D3DMetal, other DX11/10 games DXMT. God of War gets DXMT behind a small d3d11.dll (`tools/depth-equal-fix`) that fixes its depth test; the launch puts it next to the game.
 - **Tuned for speed.** msync instead of wineserver waits, no Wine debug output, Game Mode, Steam's overlay off unless a game needs it, background shader compiles. `scripts/bench.sh` measures the overhead.
 - **Bottles stay current.** A bottle is updated (`wineboot --update`) when the runtime changes.
 - **Isolated bottles** run everything under a generated Seatbelt profile:

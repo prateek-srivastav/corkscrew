@@ -49,10 +49,12 @@ public enum Launcher {
     /// first puts it back in front of Steam's web helper (Steam updates remove it).
     /// `visibleWindowsHelper`: the built `tools/visible-windows`; when given, a launch that starts
     /// Steam quits it once its window is closed.
+    /// `depthEqualShim`: the built `tools/depth-equal-fix`; when given, games that need it
+    /// (`DepthEqualFix`) run DXMT through it.
     public static func prepare(
         gameID: UUID, executable: URL, profile: GameProfile, bottle: Bottle, engine: Engine, paths: AppPaths,
         hostEnvironment: [String: String] = ProcessInfo.processInfo.environment, startedAt: Date = .now,
-        steamWebHelperWrapper: URL? = nil, visibleWindowsHelper: URL? = nil
+        steamWebHelperWrapper: URL? = nil, visibleWindowsHelper: URL? = nil, depthEqualShim: URL? = nil
     ) async throws -> Prepared {
         let inspection = isInstallerPackage(executable) ? nil : try GameDetector.inspect(executable: executable)
         let store = BottleStore(paths: paths, hostEnvironment: hostEnvironment)
@@ -95,9 +97,12 @@ public enum Launcher {
                 notes.append("Closing Steam's window quits Steam (on Windows it would keep running in the tray).")
             }
             // Every launch of Steam, not only this game's: games also start from Steam's own window.
-            for app in Steam.installedApps(steamRoot: root, prefix: context.location.prefix) where app.appID == WukongSettings.appID {
-                if try WukongSettings.apply(installFolder: app.installFolder) {
+            for app in Steam.installedApps(steamRoot: root, prefix: context.location.prefix) {
+                if app.appID == WukongSettings.appID, try WukongSettings.apply(installFolder: app.installFolder) {
                     notes.append("Turned off Frame Generation for \(app.name); with it on, the game crashes or stays black on D3DMetal.")
+                }
+                if app.appID == GodOfWarSettings.appID, try GodOfWarSettings.apply(installFolder: app.installFolder) {
+                    notes.append(GodOfWarSettings.note)
                 }
             }
             if !Steam.isBootstrapped(steamRoot: root) {
@@ -107,9 +112,20 @@ public enum Launcher {
         }
         let plan = try LaunchPlanner.plan(
             GameLaunch(gameID: gameID, executable: executable, profile: profile,
-                       detectedAPIs: inspection?.graphicsAPIs ?? [], machine: inspection?.machine ?? .x86_64),
+                       detectedAPIs: inspection?.graphicsAPIs ?? [], machine: inspection?.machine ?? .x86_64,
+                       depthEqualFixAvailable: depthEqualShim != nil),
             in: context
         )
+        if GodOfWarSettings.isGame(executable),
+           try GodOfWarSettings.apply(installFolder: executable.deletingLastPathComponent()) {
+            notes.append(GodOfWarSettings.note)
+        }
+        if plan.depthEqualFix, let shim = depthEqualShim, let dxmt = engine.backendDLLPaths[.dxmt]?.first {
+            try DepthEqualFix.install(shim: shim, dxmt: dxmt, nextTo: executable)
+            notes.append("Runs on DXMT with a depth-test fix that removes the white specks on characters.")
+        } else if try DepthEqualFix.remove(nextTo: executable) {
+            notes.append("Took the depth-test fix out of the game folder: it only works with DXMT.")
+        }
         if LaunchPlanner.usesOnlineFix(executable) {
             notes.append("OnlineFix found: the game's own loader DLL is used, and Steam's overlay stays on because OnlineFix needs it.")
         }
