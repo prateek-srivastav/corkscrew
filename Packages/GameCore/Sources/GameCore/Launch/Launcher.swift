@@ -50,7 +50,7 @@ public enum Launcher {
     /// `visibleWindowsHelper`: the built `tools/visible-windows`; when given, a launch that starts
     /// Steam quits it once its window is closed.
     /// `depthEqualShim`: the built `tools/depth-equal-fix`; when given, games that need it
-    /// (`DepthEqualFix`) run DXMT through it.
+    /// (`DepthEqualFix`) run DXMT or D3DMetal through it.
     public static func prepare(
         gameID: UUID, executable: URL, profile: GameProfile, bottle: Bottle, engine: Engine, paths: AppPaths,
         hostEnvironment: [String: String] = ProcessInfo.processInfo.environment, startedAt: Date = .now,
@@ -120,11 +120,12 @@ public enum Launcher {
            try GodOfWarSettings.apply(installFolder: executable.deletingLastPathComponent()) {
             notes.append(GodOfWarSettings.note)
         }
-        if plan.depthEqualFix, let shim = depthEqualShim, let dxmt = engine.backendDLLPaths[.dxmt]?.first {
-            try DepthEqualFix.install(shim: shim, dxmt: dxmt, nextTo: executable)
-            notes.append("Runs on DXMT with a depth-test fix that removes the white specks on characters.")
+        if plan.depthEqualFix, let shim = depthEqualShim, let backend = plan.backend,
+           let folder = engine.backendDLLPaths[backend]?.first {
+            try DepthEqualFix.install(shim: shim, backend: folder, nextTo: executable)
+            notes.append("Runs on \(backend.displayName) with a depth-test fix that removes the white specks on characters.")
         } else if try DepthEqualFix.remove(nextTo: executable) {
-            notes.append("Took the depth-test fix out of the game folder: it only works with DXMT.")
+            notes.append("Took the depth-test fix out of the game folder: it only works with DXMT and D3DMetal.")
         }
         if LaunchPlanner.usesOnlineFix(executable) {
             notes.append("OnlineFix found: the game's own loader DLL is used, and Steam's overlay stays on because OnlineFix needs it.")

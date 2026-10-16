@@ -1,7 +1,8 @@
-; DXMT's d3d11 exports. The two that create devices go through the fix; the rest go straight to DXMT.
+; The backend's d3d11 exports (DXMT has all four, D3DMetal no D3D11CoreCreateDevice). The two that
+; create devices go through the fix; the rest go straight to the backend.
 LIBRARY d3d11.dll
 EXPORTS
     D3D11CreateDevice = shim_D3D11CreateDevice
     D3D11CreateDeviceAndSwapChain = shim_D3D11CreateDeviceAndSwapChain
-    D3D11CoreCreateDevice = corkscrew_dxmt_d3d11.D3D11CoreCreateDevice
-    D3D11On12CreateDevice = corkscrew_dxmt_d3d11.D3D11On12CreateDevice
+    D3D11CoreCreateDevice = corkscrew_d3d11.D3D11CoreCreateDevice
+    D3D11On12CreateDevice = corkscrew_d3d11.D3D11On12CreateDevice

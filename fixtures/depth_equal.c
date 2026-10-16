@@ -1,6 +1,6 @@
 /* Checks tools/depth-equal-fix: creates a depth-stencil state with an EQUAL depth test and prints
- * the depth test the device kept. Prints "depth_func=GREATER_EQUAL" with the fix in front of DXMT,
- * "depth_func=EQUAL" without it. Exits 0 when a device and the state were created. */
+ * the depth test the device kept. Prints "depth_func=GREATER_EQUAL" with the fix in front of DXMT or
+ * D3DMetal, "depth_func=EQUAL" without it. Exits 0 when a device and the state were created. */
 #define COBJMACROS
 #include <windows.h>
 #include <d3d11.h>

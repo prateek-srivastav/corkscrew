@@ -10,9 +10,9 @@ enum GodOfWarSettings {
 
     static func settingsFile(installFolder: URL) -> URL { installFolder.appending(path: "settings.ini") }
 
-    /// As tested on a 14" MacBook Pro (M4, 16 GB) on DXMT with `DepthEqualFix` (2026-10-15): Ultra
-    /// preset and textures, High occlusion, the rest Original, Borderless at the 1512×982 desktop, no
-    /// upscaling, HDR off, Film Grain 0. No white specks on the characters. Written only before the
+    /// As tested on a 14" MacBook Pro (M4, 16 GB) with `DepthEqualFix` on DXMT, then on D3DMetal
+    /// (2026-10-15): Ultra preset and textures, High occlusion, the rest Original, Borderless at the
+    /// 1512×982 desktop, no upscaling, HDR off, Film Grain 0. No white specks on the characters. Written only before the
     /// game's first launch, so a player's own settings are never replaced.
     ///
     /// Left out so the game fills it in for each Mac: `VideoDevice`, the adapter's name.

@@ -54,7 +54,8 @@ public struct LaunchPlan: Sendable, Equatable {
     /// The backend the game's settings or detection asked for, when it isn't installed and
     /// `backend` stands in for it.
     public var unavailableBackend: GraphicsBackend? = nil
-    /// The launch runs DXMT through the depth-equal shim, which must be put next to the game first.
+    /// The launch runs DXMT or D3DMetal through the depth-equal shim, which must be put next to the
+    /// game first.
     public var depthEqualFix = false
 }
 
@@ -109,12 +110,15 @@ public enum LaunchPlanner {
         // A backend that isn't installed (D3DMetal in a build without the Game Porting Toolkit) would
         // leave the game on WineD3D's DLLs while Wine is told otherwise; use the best installed one.
         let available = ComponentCatalog.availableBackends(of: context.engine)
-        // Auto sends games that need the depth-equal shim to DXMT, which the shim wraps.
+        // Games that need the depth-equal shim run D3DMetal through it on Auto (DXMT's auto exposure
+        // pumps in God of War), or DXMT without the Game Porting Toolkit or when picked by hand.
+        let shimBackend = game.profile.backendOverride
+            ?? DepthEqualFix.preferredBackends.first(where: available.contains) ?? .d3dmetal
         let depthEqualFix = game.depthEqualFixAvailable && DepthEqualFix.applies(to: game.executable)
-            && (game.profile.backendOverride ?? .dxmt) == .dxmt && available.contains(.dxmt)
+            && DepthEqualFix.preferredBackends.contains(shimBackend) && available.contains(shimBackend)
             && DepthEqualFix.canInstall(nextTo: game.executable)
         let wanted = game.profile.backendOverride
-            ?? (depthEqualFix ? .dxmt : .recommended(for: game.detectedAPIs, machine: game.machine))
+            ?? (depthEqualFix ? shimBackend : .recommended(for: game.detectedAPIs, machine: game.machine))
         let backend = available.contains(wanted)
             ? wanted : .recommended(for: game.detectedAPIs, machine: game.machine, available: available)
         let isolated = context.bottle.kind == .isolated

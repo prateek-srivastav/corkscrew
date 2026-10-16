@@ -1,4 +1,4 @@
-/* d3d11.dll for God of War (2018) on DXMT: turns EQUAL depth tests into GREATER_EQUAL.
+/* d3d11.dll for God of War (2018) on DXMT or D3DMetal: turns EQUAL depth tests into GREATER_EQUAL.
  *
  * The game fills its G-buffer after a depth prepass, with an EQUAL depth test and depth writes off.
  * On Metal the two passes don't always compute bit-identical vertex positions, so some of Kratos's
@@ -6,21 +6,24 @@
  * Z, so GREATER_EQUAL lets those pixels pass. The prepass already holds the nearest depth, so only
  * geometry missing from the prepass could now draw where EQUAL would hide it.
  *
- * Corkscrew puts this file next to the game as d3d11.dll, and DXMT's own d3d11.dll next to it as
- * corkscrew_dxmt_d3d11.dll, which does all the work. CORKSCREW_DEPTH_EQUAL picks the replacement:
- * greater_equal (the default), less_equal (for games with standard Z) or off.
+ * Corkscrew puts this file next to the game as d3d11.dll, and the backend's own d3d11.dll (DXMT or
+ * D3DMetal) next to it as corkscrew_d3d11.dll, which does all the work. Both are Wine builtins, so
+ * Wine maps the one from WINEDLLPATH in its place, with its macOS side. CORKSCREW_DEPTH_EQUAL picks
+ * the replacement: greater_equal (the default), less_equal (for games with standard Z) or off.
  *
  * Cause found by a CrossOver user who bisected the game's shaders with a d3d11 proxy
  * (r/Codeweavers_Crossover, "God Of War 2018 White Dot Fix"). The root fix belongs in the shader
  * translator: positions must be invariant across shaders. */
 #define COBJMACROS
 #include <windows.h>
-#include <d3d11.h>
+/* Defines the device IIDs here, so the build needs no extra libraries. */
+#include <initguid.h>
+#include <d3d11_4.h>
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
 
-#define REAL_DLL L"corkscrew_dxmt_d3d11.dll"
+#define REAL_DLL L"corkscrew_d3d11.dll"
 
 /* Also how Corkscrew tells its own d3d11.dll from one a game or mod ships. */
 static const char banner[] = "Corkscrew depth-equal fix";
@@ -54,15 +57,39 @@ static HRESULT STDMETHODCALLTYPE create_state(ID3D11Device *device, const D3D11_
     return real_create_state(device, desc, state);
 }
 
+/* Methods in the newest device interface the device has, so a vtable copy holds all of them. */
+static size_t vtable_size(ID3D11Device *device)
+{
+    static const struct { const IID *iid; size_t size; } interfaces[] = {
+        {&IID_ID3D11Device5, sizeof(ID3D11Device5Vtbl)}, {&IID_ID3D11Device4, sizeof(ID3D11Device4Vtbl)},
+        {&IID_ID3D11Device3, sizeof(ID3D11Device3Vtbl)}, {&IID_ID3D11Device2, sizeof(ID3D11Device2Vtbl)},
+        {&IID_ID3D11Device1, sizeof(ID3D11Device1Vtbl)},
+    };
+    size_t i;
+
+    for (i = 0; i < ARRAYSIZE(interfaces); i++)
+    {
+        IUnknown *unknown;
+        if (FAILED(ID3D11Device_QueryInterface(device, interfaces[i].iid, (void **)&unknown))) continue;
+        IUnknown_Release(unknown);
+        return interfaces[i].size / sizeof(void *);
+    }
+    return sizeof(ID3D11DeviceVtbl) / sizeof(void *);
+}
+
 /* Points the device class's CreateDepthStencilState at create_state. Every DXMT device shares one
- * vtable, so this happens once. */
+ * vtable, so this happens once. D3DMetal keeps its vtables in macOS memory that VirtualProtect
+ * doesn't know, so there each device gets a copy of the vtable with create_state in it. */
 static void hook(ID3D11Device *device)
 {
+    static void *copy[sizeof(ID3D11Device5Vtbl) / sizeof(void *)];
+    static const void *copied_from;
     void **slot;
     DWORD old;
 
     if (!device || !replacement) return;
     AcquireSRWLockExclusive(&lock);
+    if ((void *)device->lpVtbl == copy) goto done;
     slot = (void **)&device->lpVtbl->CreateDepthStencilState;
     if (*slot == (void *)create_state) goto done;
     if (real_create_state && *slot != (void *)real_create_state)
@@ -70,14 +97,28 @@ static void hook(ID3D11Device *device)
         fprintf(stderr, "%s: a device with another vtable, left alone\n", banner);
         goto done;
     }
-    if (!VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &old))
+    if (VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &old))
     {
-        fprintf(stderr, "%s: can't patch the device vtable (error %lu)\n", banner, GetLastError());
-        goto done;
+        real_create_state = (create_state_fn)*slot;
+        *slot = (void *)create_state;
+        VirtualProtect(slot, sizeof(*slot), old, &old);
     }
-    real_create_state = (create_state_fn)*slot;
-    *slot = (void *)create_state;
-    VirtualProtect(slot, sizeof(*slot), old, &old);
+    else
+    {
+        if (copied_from && copied_from != device->lpVtbl)
+        {
+            fprintf(stderr, "%s: a device with another vtable, left alone\n", banner);
+            goto done;
+        }
+        if (!copied_from)
+        {
+            memcpy(copy, device->lpVtbl, vtable_size(device) * sizeof(void *));
+            copied_from = device->lpVtbl;
+            real_create_state = (create_state_fn)*slot;
+            ((ID3D11DeviceVtbl *)copy)->CreateDepthStencilState = create_state;
+        }
+        device->lpVtbl = (ID3D11DeviceVtbl *)copy;
+    }
     fprintf(stderr, "%s: on, EQUAL becomes %s\n", banner,
             replacement == D3D11_COMPARISON_GREATER_EQUAL ? "GREATER_EQUAL" : "LESS_EQUAL");
 done:
@@ -94,7 +135,7 @@ static void hook_context(ID3D11DeviceContext *context)
     if (device) ID3D11Device_Release(device);
 }
 
-/* DXMT's d3d11.dll from this DLL's own folder. */
+/* The backend's d3d11.dll from this DLL's own folder. */
 static FARPROC real_proc(const char *name)
 {
     if (!real)
