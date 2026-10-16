@@ -51,4 +51,15 @@ public enum LoaderBundles {
         process.waitUntilExit()
         return bundles
     }
+
+    /// Unregisters our bundles and deletes them, with their `winetemp-*` folder once it's empty.
+    /// For uninstalling; call it only when no bottle runs.
+    public static func removeAll(in temporary: URL? = temporaryDirectory) {
+        let fm = FileManager.default
+        for bundle in unregisterAll(in: temporary) {
+            try? fm.removeItem(at: bundle)
+            let folder = bundle.deletingLastPathComponent()
+            if (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true { try? fm.removeItem(at: folder) }
+        }
+    }
 }

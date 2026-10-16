@@ -46,6 +46,17 @@ struct RuntimeStoreTests {
         }
     }
 
+    /// The archive goes to tar through a pipe. A damaged one, bigger than the pipe's buffer, must
+    /// fail when tar gives up, not wait for tar to read the rest.
+    @Test func failsOnADamagedArchiveWithoutWaiting() throws {
+        try withTempDir { root in
+            let archive = root.appending(path: "damaged.tar.xz")
+            try archive.write(Data((0..<(4 << 20)).map { _ in UInt8.random(in: 0...255) }))
+            let staging = try root.appending(path: "staging").makeDirectory()
+            #expect(throws: RuntimeStore.StoreError.self) { try RuntimeStore.unpack(archive, into: staging) }
+        }
+    }
+
     @Test func installsALocalBuildAndRejectsOtherFolders() throws {
         try withTempDir { root in
             let build = root.appending(path: "build/runtime/winecx-test")

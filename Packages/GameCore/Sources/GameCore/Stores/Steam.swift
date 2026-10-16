@@ -211,6 +211,25 @@ public enum Steam {
         return apps
     }
 
+    /// The bottle's Steam games that have a program running, by app id, with their processes:
+    /// games started from Steam's own window count too.
+    public static func runningApps(prefix: URL, processes: [BottleProcesses.Entry]? = nil) -> [String: [pid_t]] {
+        guard let root = root(inPrefix: prefix) else { return [:] }
+        let processes = processes ?? BottleProcesses.list(prefix: prefix)
+        guard !processes.isEmpty else { return [:] }
+        var running: [String: [pid_t]] = [:]
+        for app in installedApps(steamRoot: root, prefix: prefix) {
+            let pids = processes.filter { BottleProcesses.isFromSteamGame($0.program, installDir: app.installFolder.lastPathComponent) }.map(\.pid)
+            if !pids.isEmpty { running[app.appID, default: []] += pids }
+        }
+        return running
+    }
+
+    /// Force-quits a Steam game's programs; Steam keeps running.
+    public static func stopApp(_ appID: String, prefix: URL) {
+        for pid in runningApps(prefix: prefix)[appID] ?? [] { kill(pid, SIGKILL) }
+    }
+
     /// The program that represents a game (for its icon and backend): a top-level `.exe` named like
     /// the game or its folder, otherwise the biggest one. Nil for tools without one (Steamworks Shared).
     public static func mainExecutable(of app: App) -> URL? {
@@ -242,18 +261,13 @@ public enum Steam {
         for app in installedApps(steamRoot: root, prefix: prefix) where app.isInstalled {
             let key = StoreItem(store: store, appID: app.appID).key(in: bottle.id)
             guard !known.contains(key), let program = mainExecutable(of: app) else { continue }
-            var profile = testedProfiles[app.appID] ?? detectedProfile(for: program)
-            profile.arguments = clientArguments + [silentArgument, "-applaunch", app.appID]
-            games.append(Game(name: app.name, executable: client, bottleID: bottle.id, profile: profile,
-                              store: StoreItem(store: store, appID: app.appID), iconSource: program))
+            games.append(entry(appID: app.appID, name: app.name, bottleID: bottle.id, steamRoot: root,
+                               profile: testedProfiles[app.appID] == nil ? detectedProfile(for: program) : GameProfile(), program: program))
         }
         if includeTested {
             let listed = Set(games.compactMap(\.store?.appID))
             for tested in testedGames where !listed.contains(tested.appID) {
-                var profile = testedProfiles[tested.appID] ?? GameProfile()
-                profile.arguments = clientArguments + [silentArgument, "-applaunch", tested.appID]
-                games.append(Game(name: tested.name, executable: client, bottleID: bottle.id, profile: profile,
-                                  store: StoreItem(store: store, appID: tested.appID)))
+                games.append(entry(appID: tested.appID, name: tested.name, bottleID: bottle.id, steamRoot: root))
             }
         }
         return games.filter { !known.contains($0.storeKey!) }

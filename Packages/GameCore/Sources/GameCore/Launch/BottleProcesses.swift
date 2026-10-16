@@ -13,6 +13,12 @@ public enum BottleProcesses {
         /// keeps its Mac path (`…/drive_c/Program Files (x86)/Steam/steam.exe`); the ones it starts
         /// show their Windows path.
         var program: String { arguments.first?.lowercased().replacingOccurrences(of: "/", with: "\\") ?? "" }
+
+        /// Steam's client (`steam.exe`).
+        public var isSteamClient: Bool { BottleProcesses.isSteamClient(program) }
+        /// Steam's interface (`steamwebhelper.exe`): its main and sign-in windows are this
+        /// program's. `steam.exe` only shows the small updater and start-up windows.
+        public var isSteamWebHelper: Bool { program.hasSuffix("\\steamwebhelper.exe") }
     }
 
     /// Our own processes whose environment has WINEPREFIX=prefix.
@@ -50,6 +56,20 @@ public enum BottleProcesses {
             (window[kCGWindowLayer as String] as? Int) == 0
                 && (window[kCGWindowOwnerPID as String] as? Int).map { pids.contains(pid_t($0)) } == true
         }
+    }
+
+    /// The numbers of the bottle's normal windows on screen (as `hasWindowOnScreen` counts them),
+    /// of the processes `include` picks: a number not there before is a window that opened, or one
+    /// shown again.
+    public static func windowsOnScreen(prefix: URL, of include: (Entry) -> Bool = { _ in true }) -> Set<Int> {
+        let pids = Set(list(prefix: prefix).filter(include).map(\.pid))
+        guard !pids.isEmpty else { return [] }
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(windows.compactMap { window in
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                  let owner = window[kCGWindowOwnerPID as String] as? Int, pids.contains(pid_t(owner)) else { return nil }
+            return window[kCGWindowNumber as String] as? Int
+        })
     }
 
     /// Programs started from a Steam game's folder (`steamapps\common\<installDir>\…`), on any drive.

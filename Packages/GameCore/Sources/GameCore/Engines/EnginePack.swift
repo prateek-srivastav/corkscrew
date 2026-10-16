@@ -77,16 +77,18 @@ public struct EnginePack: Sendable, Equatable {
     /// recorded) is replaced, with the pack's components: a pack revision fixes the build, not the
     /// Wine version, so the id stays. Bottles keep working (they name the runtime by id); one that
     /// is running stops the upgrade. Otherwise what's installed is kept.
+    ///
+    /// `progress` gets the fraction done (0…1): the checksum is the first tenth, unpacking the rest.
     @discardableResult
-    public func install(archive: URL, paths: AppPaths) throws -> RuntimeManifest {
-        let actual = try RuntimeStore.sha256(of: archive)
+    public func install(archive: URL, paths: AppPaths, progress: (Double) -> Void = { _ in }) throws -> RuntimeManifest {
+        let actual = try RuntimeStore.sha256(of: archive) { progress($0 * 0.1) }
         guard actual == sha256.lowercased() else {
             throw RuntimeStore.StoreError.checksumMismatch(expected: sha256.lowercased(), actual: actual)
         }
         let store = RuntimeStore(paths: paths)
         let staging = try store.stagingFolder()
         defer { try? FileManager.default.removeItem(at: staging) }
-        try RuntimeStore.unpack(archive, into: staging)
+        try RuntimeStore.unpack(archive, into: staging) { progress(0.1 + $0 * 0.9) }
 
         let fm = FileManager.default
         let top = (try? fm.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []

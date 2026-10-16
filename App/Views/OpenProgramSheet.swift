@@ -12,14 +12,14 @@ struct OpenProgramSheet: View {
     @State private var icon: NSImage?
 
     var body: some View {
-        let bottle = model.bottles.first { $0.id == bottleID }
+        let bottle = model.programBottles.first { $0.id == bottleID }
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Image(nsImage: icon ?? NSWorkspace.shared.icon(forFile: program.path))
                     .resizable().frame(width: 48, height: 48)
                 VStack(alignment: .leading) {
                     Text(program.lastPathComponent).font(.headline)
-                    Text(program.deletingLastPathComponent().path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(program.deletingLastPathComponent().path).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
@@ -27,7 +27,7 @@ struct OpenProgramSheet: View {
             Form {
                 TextField("Name in Library", text: $name)
                 Picker("Bottle", selection: $bottleID) {
-                    ForEach(model.bottles) { bottle in
+                    ForEach(model.programBottles) { bottle in
                         Text(bottle.kind == .isolated ? "\(bottle.name) (isolated)" : bottle.name).tag(Optional(bottle.id))
                     }
                 }
@@ -50,10 +50,10 @@ struct OpenProgramSheet: View {
                 Label("An isolated bottle only sees its own C: drive, so the program (and files next to it named like it) "
                       + "is copied into the bottle's Downloads folder. A game made of many files should be installed inside the bottle instead.",
                       systemImage: "lock.shield")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
             }
-            if model.bottles.isEmpty {
-                Label("Create a bottle under Setup first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            if model.programBottles.isEmpty {
+                Label("Create a bottle in Settings first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
 
             HStack {

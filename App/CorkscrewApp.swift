@@ -7,16 +7,43 @@ import UniformTypeIdentifiers
 struct CorkscrewApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel.shared
+    @State private var navigator = Navigator()
+    @AppStorage(Theme.advancedModeKey) private var advancedMode = false
+    @AppStorage(Theme.sidebarCollapsedKey) private var isSidebarCollapsed = false
 
     var body: some Scene {
         Window("Corkscrew", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 860, minHeight: 540)
+                .environment(navigator)
+                .frame(minWidth: 1080, minHeight: 620)
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowBackgroundDragBehavior(.enabled)
+        .defaultSize(width: 1340, height: 820)
         .commands {
+            CommandGroup(before: .sidebar) {
+                Button(isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar") { isSidebarCollapsed.toggle() }
+                    .keyboardShortcut("s", modifiers: [.control, .command])
+                Divider()
+                Button("Back") { navigator.back() }
+                    .keyboardShortcut("[")
+                    .disabled(!navigator.canGoBack)
+                Button("Forward") { navigator.forward() }
+                    .keyboardShortcut("]")
+                    .disabled(!navigator.canGoForward)
+                Divider()
+            }
+            CommandGroup(after: .toolbar) {
+                Toggle("Advanced Mode", isOn: $advancedMode)
+                    .keyboardShortcut("a", modifiers: [.command, .option])
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About Corkscrew") { AboutPanel.show() }
+            }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { navigator.go(.setup) }
+                    .keyboardShortcut(",")
             }
             CommandGroup(after: .newItem) {
                 Button("Add Program…") { model.open(Pickers.programs()) }

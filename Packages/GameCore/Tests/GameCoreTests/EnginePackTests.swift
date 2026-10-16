@@ -43,6 +43,19 @@ struct EnginePackTests {
         }
     }
 
+    /// Setup shows a progress bar while the pack is checked and unpacked: it only goes forward and ends full.
+    @Test func reportsProgressWhileInstalling() throws {
+        try withTempDir { root in
+            let archive = try Self.makePack(in: root)
+            var fractions: [Double] = []
+            try Self.pack("1-1", sha256: try RuntimeStore.sha256(of: archive))
+                .install(archive: archive, paths: RuntimeStoreTests.paths(root)) { fractions.append($0) }
+            #expect(fractions.first.map { $0 <= 0.1 } == true)
+            #expect(fractions == fractions.sorted())
+            #expect(fractions.last == 1)
+        }
+    }
+
     @Test func refusesAPackWithoutARuntime() throws {
         try withTempDir { root in
             try root.appending(path: "src/corkscrew-engine-test/components/dxmt-0.80/x86_64-windows/d3d11.dll").write("MZ")

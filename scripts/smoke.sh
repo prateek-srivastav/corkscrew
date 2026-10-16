@@ -60,6 +60,31 @@ else
   echo "  SKIP  d3dmetal (run install-components.sh with your Game Porting Toolkit image)"
 fi
 
+# tools/depth-equal-fix next to the program, in front of DXMT or D3DMetal, as Launcher sets it up for
+# God of War: an EQUAL depth test must come back as GREATER_EQUAL.
+# depth_check NAME BACKEND BACKEND_DIR [VAR=VALUE...]
+depth_check() {
+  local name=$1 backend=$2 dir=$3; shift 3
+  local fix="$WINEPREFIX/drive_c/$name" log="$LOGS/$name.log"
+  rm -rf "$fix"; mkdir -p "$fix"
+  cp "$FIXTURES/depth_equal.exe" "$fix/"
+  cp "$FIXTURES/depth-equal-fix.dll" "$fix/d3d11.dll"
+  cp "$dir/x86_64-windows/d3d11.dll" "$fix/corkscrew_d3d11.dll"
+  run_timeout 90 env "$@" CX_ACTIVE_GRAPHICS_BACKEND="$backend" WINEDLLPATH="$dir:$WINED3D" \
+    WINEDLLOVERRIDES="d3d11=n,b;winemenubuilder.exe=" "$WINE" "$fix/depth_equal.exe" >"$log" 2>&1
+  if grep -q "^depth_func=GREATER_EQUAL" "$log"; then
+    pass=$((pass + 1)); printf '  PASS  %-18s %s\n' "$name" "$(grep -h '^depth_func=' "$log")"
+  else
+    fail=$((fail + 1)); printf '  FAIL  %-18s see %s\n' "$name" "$log"
+  fi
+}
+
+log "Running the depth-equal fix"
+depth_check depth-equal-dxmt dxmt "$COMPONENTS/dxmt-$DXMT_VERSION"
+if [[ -d $D3DMETAL ]]; then
+  depth_check depth-equal-d3dm d3dmetal "$D3DMETAL/wine" "${gptk[@]}"
+fi
+
 "$RUNTIME/bin/wineserver" -k 2>/dev/null
 log "$pass passed, $fail failed (logs: $LOGS)"
 [[ $fail -eq 0 ]]

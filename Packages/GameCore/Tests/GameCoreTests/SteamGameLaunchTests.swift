@@ -9,6 +9,9 @@ struct SteamGameLaunchTests {
         // Steam as the app starts it: Wine keeps the Mac path of the program it was given.
         let started = BottleProcesses.Entry(pid: 1, arguments: ["/Users/me/Bottles/X/prefix/drive_c/Program Files (x86)/Steam/steam.exe", "-silent"])
         #expect(BottleProcesses.isSteamClient(started.program))
+        // Open Steam waits for the web helper's window, not the updater window steam.exe shows first.
+        #expect(BottleProcesses.Entry(pid: 2, arguments: [#"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe"#]).isSteamWebHelper)
+        #expect(!started.isSteamWebHelper)
         let rdr2 = "Red Dead Redemption 2"
         #expect(BottleProcesses.isFromSteamGame(
             #"c:\program files (x86)\steam\steamapps\common\red dead redemption 2\rdr2.exe"#, installDir: rdr2))
@@ -17,6 +20,18 @@ struct SteamGameLaunchTests {
         #expect(!BottleProcesses.isFromSteamGame(#"c:\program files\rockstar games\launcher\launcher.exe"#, installDir: rdr2))
         #expect(!BottleProcesses.isFromSteamGame(
             #"c:\program files (x86)\steam\steamapps\common\red dead redemption 2 extra\x.exe"#, installDir: rdr2))
+    }
+
+    @Test func findsSteamsWebHelperRunningWithoutTheWrapper() {
+        let cef = #"C:\Program Files (x86)\Steam\bin\cef\cef.win64\"#
+        let steam = BottleProcesses.Entry(pid: 1, arguments: [#"C:\Program Files (x86)\Steam\steam.exe"#])
+        let main = BottleProcesses.Entry(pid: 2, arguments: [cef + "steamwebhelper.exe", "-nocrashdialog", "-steampid=368"])
+        let gpu = BottleProcesses.Entry(pid: 3, arguments: [cef + "steamwebhelper.exe", "--type=gpu-process"])
+        let real = BottleProcesses.Entry(pid: 4, arguments: [cef + "steamwebhelper_real.exe", "-nocrashdialog", "--disable-gpu"])
+        let realChild = BottleProcesses.Entry(pid: 5, arguments: [cef + "steamwebhelper_real.exe", "--type=utility"])
+        #expect(Launcher.unwrappedWebHelpers([steam, main, gpu]) == [main, gpu])
+        #expect(Launcher.unwrappedWebHelpers([steam, main, real, realChild]).isEmpty, "through the wrapper")
+        #expect(Launcher.unwrappedWebHelpers([steam, main]).isEmpty, "the wrapper alone, before it starts the real helper")
     }
 
     @Test func readsAProcesssArgumentsAndEnvironment() throws {

@@ -13,13 +13,14 @@ struct LogView: View {
         ScrollViewReader { proxy in
             ScrollView([.vertical, .horizontal]) {
                 Text(text.isEmpty ? " " : text)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.subheadline, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                 Color.clear.frame(height: 1).id("end")
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 6))
+            .background(.background.secondary, in: .rect(cornerRadius: Theme.cornerRadius))
+            .swipesScrollFirst()
             .task(id: "\(file.path) \(isLive)") {
                 repeat {
                     let latest = Self.read(file)
