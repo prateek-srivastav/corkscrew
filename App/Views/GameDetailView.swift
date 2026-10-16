@@ -48,7 +48,11 @@ struct GameDetailView: View {
                 Toggle("Retina resolution", isOn: binding(\.profile.retinaMode))
                     .help("The game sees the display's full pixel resolution: sharper, much more GPU work. Applies to the whole bottle.")
                 Toggle("Metal HUD (FPS)", isOn: binding(\.profile.metalHUD))
+                    .help("Drawn by the game itself: no window over it, so it costs the game nothing more.")
+                // A window over a fullscreen game can stop macOS showing its frames directly (the HUD
+                // then says Composited instead of Direct).
                 Toggle("CPU / RAM / GPU overlay", isOn: binding(\.profile.performanceOverlay))
+                    .help("A small window over the game. It can cost a little speed; for FPS alone, the Metal HUD costs nothing.")
                 Toggle("Advertise AVX", isOn: binding(\.profile.advertiseAVX))
                 Toggle("Steam overlay (Shift-Tab)", isOn: binding(\.profile.steamOverlay))
                     .help("Steam's overlay sits between the game and the graphics layer and draws every frame. Off is faster. Games started from Steam's window follow the setting Steam was started with.")

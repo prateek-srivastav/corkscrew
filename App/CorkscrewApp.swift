@@ -63,6 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Games keep running when the window closes; quitting the app doesn't stop them either.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.restoreLaunchers()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // macOS takes a second or two to set a file panel up, during which the app can't respond:
         // do it while the app opens rather than on the first Add Program click.

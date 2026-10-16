@@ -10,6 +10,7 @@ struct GameCarousel: View {
     let open: (Game) -> Void
     @State private var isHovering = false
     @Environment(\.controlActiveState) private var activeState
+    @Environment(AppModel.self) private var model
 
     static var interval: Duration { .seconds(8) }
 
@@ -41,6 +42,13 @@ struct GameCarousel: View {
             try? await Task.sleep(for: Self.interval)
             guard !Task.isCancelled else { return }
             show(index + 1)
+        }
+        // The next game's art, decoded before it shows.
+        .task(id: game.id) {
+            guard games.count > 1 else { return }
+            let next = games[(index + 1) % games.count]
+            _ = await SteamArtwork.load(.hero, for: next, model: model)
+            _ = await SteamArtwork.load(.logo, for: next, model: model)
         }
     }
 

@@ -61,7 +61,11 @@ public enum Launcher {
         let context = WineContext(engine: engine, bottle: bottle, location: store.location(of: bottle),
                                   paths: paths, hostEnvironment: hostEnvironment)
         try store.ensureWineServerBase()
-        if bottle.kind == .isolated { try PrefixHardening.apply(prefix: context.location.prefix) }
+        if bottle.kind == .isolated {
+            try PrefixHardening.apply(prefix: context.location.prefix)
+            // For Game Mode; the game still starts without it.
+            _ = try? LoaderBundles.prepare(for: executable, engine: engine, in: LoaderBundles.prebuiltFolder(for: engine, paths: paths))
+        }
         var notes: [String] = []
         // Before anything below starts Wine in the bottle.
         let steamGame = steamGameLaunch(executable: executable, arguments: profile.arguments, prefix: context.location.prefix)

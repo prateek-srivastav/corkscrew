@@ -174,7 +174,7 @@ final class AppModel {
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
         reload()
-        if runningBottles.isEmpty { Self.unregisterLoaderBundles() }
+        if runningBottles.isEmpty { unregisterLoaderBundles() }
         removeInstallLeftovers()
         sweepWineLeftovers(in: bottles.filter { !runningBottles.contains($0.id) }, removeServerFolders: true)
         Task { await setUpAutomatically() }
@@ -183,6 +183,7 @@ final class AppModel {
             while let self {
                 self.refreshRunningBottles()
                 await self.refreshRunningPrograms()
+                self.updateWhilePlaying()
                 // While Steam may be installing or uninstalling games, look at its manifests now and then
                 // (not while a game runs: Steam doesn't download then, and the game needs the Mac).
                 tick += 1
@@ -192,8 +193,12 @@ final class AppModel {
         }
         // Back from Steam (or Finder): pick up games installed or uninstalled meanwhile.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncStores() }
+            MainActor.assumeIsolated {
+                self?.syncStores()
+                self?.updateBackupExclusions()
+            }
         }
+        updateBackupExclusions()
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -404,13 +409,57 @@ final class AppModel {
                 sweepWineLeftovers(in: bottles.filter { stopped.contains($0.id) && !runningBottles.contains($0.id) && !hasActiveSession(in: $0.id) })
             }
         }
-        if running.isEmpty { Self.unregisterLoaderBundles() }
+        if running.isEmpty { unregisterLoaderBundles() }
         syncStores()
     }
 
     /// Whether a game runs: a session other than a launcher's, or a Steam game started from Steam.
     private var isGameRunning: Bool {
         !runningSteamApps.isEmpty || sessions.values.contains { $0.isActive && !Steam.isClient($0.game.executable) }
+    }
+
+    /// Settings → "While you play": Steam and Rockstar's launcher at background priority during a game.
+    static let lowersLaunchersKey = "LowerLaunchersDuringGames"
+    /// Settings → "While you play": installed games left out of Time Machine backups.
+    static let excludesGamesFromBackupsKey = "ExcludeGamesFromBackups"
+
+    @ObservationIgnored private var wasGameRunning = false
+    @ObservationIgnored private var loweredPrograms: Set<pid_t> = []
+
+    /// Gives the Mac to a game while one runs: drops decoded art, and (when set) lowers the
+    /// launchers once the game is up. Puts the launchers back after.
+    private func updateWhilePlaying() {
+        let playing = isGameRunning
+        if playing != wasGameRunning {
+            wasGameRunning = playing
+            if playing { SteamArtwork.purge() }
+        }
+        // Not while a launch is pending: a game may wait on Steam as it starts.
+        if playing, pending.isEmpty, UserDefaults.standard.bool(forKey: Self.lowersLaunchersKey) {
+            let games = Set(sessions.values.filter { $0.isActive && !Steam.isClient($0.game.executable) }
+                .map { $0.game.executable.lastPathComponent.lowercased() })
+            for bottle in bottles where runningBottles.contains(bottle.id) {
+                loweredPrograms.formUnion(BackgroundPrograms.lower(prefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix, sparing: games))
+            }
+        } else if !playing || !UserDefaults.standard.bool(forKey: Self.lowersLaunchersKey) {
+            restoreLaunchers()
+        }
+    }
+
+    /// Normal priority again for the launchers lowered during a game (also when the app quits).
+    func restoreLaunchers() {
+        guard !loweredPrograms.isEmpty else { return }
+        BackgroundPrograms.restore(loweredPrograms)
+        loweredPrograms = []
+    }
+
+    /// Applies the backup setting to every bottle's game folders (new installs included).
+    func updateBackupExclusions() {
+        let excluded = UserDefaults.standard.bool(forKey: Self.excludesGamesFromBackupsKey)
+        let prefixes = bottles.map { BottleLocation(bottleID: $0.id, paths: paths).prefix }
+        Task.detached(priority: .background) {
+            for prefix in prefixes { BackupExclusion.apply(excluded, prefix: prefix) }
+        }
     }
 
     /// A session runs in the bottle, or any action is under way (a launch starts its programs a moment
@@ -458,8 +507,9 @@ final class AppModel {
 
     /// The bundles games run from (for Game Mode) are recorded as installed games while they run;
     /// once nothing runs, they're taken out of LaunchServices again.
-    private static func unregisterLoaderBundles() {
-        Task.detached(priority: .utility) { LoaderBundles.unregisterAll() }
+    private func unregisterLoaderBundles() {
+        let prebuilt = paths.gameModeBundles
+        Task.detached(priority: .utility) { LoaderBundles.unregisterAll(prebuilt: prebuilt) }
     }
 
     // MARK: Library

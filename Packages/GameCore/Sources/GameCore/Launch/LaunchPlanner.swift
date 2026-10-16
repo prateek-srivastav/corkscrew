@@ -197,11 +197,13 @@ public enum LaunchPlanner {
     }
 
     static func sandboxRules(for context: WineContext, extraWritable: [URL]) throws -> SandboxRules {
-        SandboxRules(
+        // Readable and runnable, not writable: the game can't change what it runs from.
+        let gameModeBundles = LoaderBundles.prebuiltFolder(for: context.engine, paths: context.paths)
+        return SandboxRules(
             hiddenRoots: [URL(fileURLWithPath: "/Users"), URL(fileURLWithPath: "/Volumes"), context.paths.userHome],
-            readOnly: context.engine.readOnlyRoots,
+            readOnly: context.engine.readOnlyRoots + [gameModeBundles],
             readWrite: [context.location.prefix, context.location.home] + extraWritable,
-            executableRoots: [context.engine.root],
+            executableRoots: [context.engine.root, gameModeBundles],
             wineServerBase: context.paths.wineServerDirectory,
             wineServerDirectory: try WineServer.directory(
                 forPrefix: context.location.prefix, base: context.paths.wineServerDirectory
@@ -221,8 +223,10 @@ public enum LaunchPlanner {
             env["HOME"] = context.location.home.path
             env["TMPDIR"] = context.location.home.path
             // Our Wine build otherwise re-runs itself through a game-named link in $TMPDIR (for the
-            // Dock), which the sandbox rightly refuses to run.
+            // Dock), which the sandbox rightly refuses to run. The game runs from the bundle the app
+            // made for it instead, so Game Mode still turns on.
             env["CORKSCREW_NO_LOADER_LINK"] = "1"
+            env["CORKSCREW_LOADER_BUNDLE_DIR"] = LoaderBundles.prebuiltFolder(for: context.engine, paths: context.paths).path
         }
         return env
     }

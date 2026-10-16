@@ -48,6 +48,8 @@ public struct AppPaths: Sendable, Equatable {
     public var runtimes: URL { supportRoot.appending(path: "Runtimes", directoryHint: .isDirectory) }
     public var components: URL { supportRoot.appending(path: "Components", directoryHint: .isDirectory) }
     public var bottles: URL { supportRoot.appending(path: "Bottles", directoryHint: .isDirectory) }
+    /// The app bundles isolated bottles' games run from, for Game Mode (see `LoaderBundles`).
+    public var gameModeBundles: URL { supportRoot.appending(path: "GameModeBundles", directoryHint: .isDirectory) }
 
     public func shaderCache(for gameID: UUID) -> URL {
         cachesRoot.appending(path: "ShaderCache/\(gameID.uuidString)", directoryHint: .isDirectory)

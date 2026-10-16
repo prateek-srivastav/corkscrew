@@ -54,6 +54,8 @@ public struct Uninstaller: Sendable {
             }
         }
         if let loaderBundles { LoaderBundles.removeAll(in: loaderBundles) }
+        // Deleted with the data folders; out of LaunchServices first.
+        LoaderBundles.unregisterAll(in: nil, prebuilt: paths.gameModeBundles)
     }
 
     /// Takes the app out of LaunchServices (Open With) and deletes it; to the Trash when it can't be

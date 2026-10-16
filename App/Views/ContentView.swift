@@ -76,11 +76,12 @@ struct ContentView: View {
         // Bottles is an Advanced page; turning Advanced off leaves it, and Back doesn't return to it.
         .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
         .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
-        // Loads the art pages open with, so a page doesn't show dark while its art loads.
+        // Fetches the art pages open with, so a page doesn't show dark while it downloads. Only
+        // fetched, not decoded: a page decodes its own art from disk in a few milliseconds.
         .task(id: model.allGames.map(\.id)) {
             for game in model.allGames.prefix(40) {
-                _ = await SteamArtwork.load(.hero, for: game, model: model)
-                _ = await SteamArtwork.load(.logo, for: game, model: model)
+                await SteamArtwork.prefetch(.hero, for: game, model: model)
+                await SteamArtwork.prefetch(.logo, for: game, model: model)
             }
         }
     }
