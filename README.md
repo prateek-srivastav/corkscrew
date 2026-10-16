@@ -5,6 +5,8 @@
 
 [![CI](https://github.com/Prateek-Srivastav/corkscrew/actions/workflows/ci.yml/badge.svg)](https://github.com/Prateek-Srivastav/corkscrew/actions/workflows/ci.yml) [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
+**[prateek-srivastav.github.io/corkscrew](https://prateek-srivastav.github.io/corkscrew/)**
+
 A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on Apple Silicon Macs. It builds its own Wine runtime, picks a graphics translation layer per game, keeps games in separate Wine prefixes ("bottles"), and can run untrusted programs inside a macOS sandbox.
 
 It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs games through their stores and launchers, and any Windows program you add. Corkscrew itself doesn't bypass DRM or copy protection. Contributions are welcome (see [Contributing](#contributing)).
@@ -17,12 +19,12 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs ga
 
 ## Install
 
-You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free space plus your games.
+You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free disk space, plus space for your games.
 
 1. Install it from Terminal:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/Prateek-Srivastav/corkscrew/main/scripts/install.sh | bash
+   curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash
    ```
 
    The [script](scripts/install.sh) downloads the latest DMG (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. Run it again to update.
