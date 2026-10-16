@@ -89,6 +89,7 @@ struct ContentView: View {
 /// What the app is busy with, floating at the bottom of the window.
 private struct ActivityBar: View {
     @Environment(AppModel.self) private var model
+    @State private var isHoveringShow = false
 
     var body: some View {
         let install = model.installer.isShown ? nil : model.installer.job
@@ -107,10 +108,11 @@ private struct ActivityBar: View {
                                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
                                 }
                                 Text(install.isWorking ? "Installing \(install.name)…" : "\(install.name) needs you").lineLimit(1)
-                                Text("Show").foregroundStyle(.secondary)
+                                Text("Show").foregroundStyle(isHoveringShow ? .primary : .secondary)
                             }
                         }
                         .buttonStyle(.plain)
+                        .onHover { isHoveringShow = $0 }
                     } else if let progress = model.enginePackProgress {
                         HStack(spacing: 10) {
                             ProgressView(value: progress.fraction).frame(width: 90)

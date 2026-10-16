@@ -255,6 +255,7 @@ private struct Option: View {
     let isSelected: Bool
     let text: String
     let action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
@@ -270,8 +271,13 @@ private struct Option: View {
             }
             .padding(12)
             .contentShape(.rect)
-            .background(isSelected ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
+            .background(isSelected || isHovering ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
+            .overlay {
+                if isSelected { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(Color.accentColor.opacity(0.6)) }
+            }
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 }

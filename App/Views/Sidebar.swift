@@ -13,6 +13,8 @@ struct Sidebar: View {
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
     static let width: CGFloat = 232
+    /// The open sidebar's margin around its rows; the floating bar keeps it at the window's right edge too.
+    static let inset: CGFloat = 12
     /// Collapsed: the window's close, minimize and zoom buttons fit with the same margin on both
     /// sides, and the icons sit under their middle.
     static let collapsedWidth = TopBar.windowButtonsWidth + 2 * TopBar.windowButtonsLeading
@@ -48,7 +50,7 @@ struct Sidebar: View {
                         }
                     }
                 }
-                .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : 12)
+                .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : Self.inset)
             }
             .scrollIndicators(.never)
             // The selection is drawn outside the scroll view; with room for every place, it stays put.
@@ -66,7 +68,7 @@ struct Sidebar: View {
                 }
                 section(.setup, title: "Settings", systemImage: "gearshape.fill", needsAttention: !model.isReady)
             }
-            .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : 12)
+            .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : Self.inset)
             .padding(.top, 8)
         }
         .environment(\.isSidebarCollapsed, isCollapsed)

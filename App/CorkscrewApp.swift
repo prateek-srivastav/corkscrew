@@ -64,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // macOS takes a second or two to set a file panel up, during which the app can't respond:
+        // do it while the app opens rather than on the first Add Program click.
+        Pickers.prepare()
         #if DEBUG
         WindowSnapshots.startIfRequested()
         // Development aid: `-DebugSetUp YES` starts the one-click setup, to test it without clicking.
@@ -132,26 +135,39 @@ enum AboutPanel {
 /// Open panels for the few files the app asks for.
 enum Pickers {
     static func programs() -> [URL] {
-        let panel = NSOpenPanel()
-        panel.message = "Choose Windows programs (.exe), installers (.msi), or a downloaded game (.zip, .rar, .7z, .iso)."
-        panel.allowedContentTypes = [.init("com.microsoft.windows-executable"), .init("com.microsoft.msi")].compactMap { $0 }
-            + ["zip", "rar", "7z", "iso", "001", "tar", "gz", "tgz", "xz", "bz2"].compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = true
+        let panel = configured("Choose Windows programs (.exe), installers (.msi), or a downloaded game (.zip, .rar, .7z, .iso).",
+                               types: [.init("com.microsoft.windows-executable"), .init("com.microsoft.msi")].compactMap { $0 }
+                                   + ["zip", "rar", "7z", "iso", "001", "tar", "gz", "tgz", "xz", "bz2"].compactMap { UTType(filenameExtension: $0) },
+                               multiple: true)
         return panel.runModal() == .OK ? panel.urls : []
     }
 
     static func folder(_ message: String) -> URL? {
-        let panel = NSOpenPanel()
-        panel.message = message
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
+        let panel = configured(message, folders: true)
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    static func file(_ message: String, extensions: [String]) -> URL? {
-        let panel = NSOpenPanel()
-        panel.message = message
-        panel.allowedContentTypes = extensions.compactMap { .init(filenameExtension: $0) }
+    static func file(_ message: String, extensions: [String], in directory: URL? = nil) -> URL? {
+        let panel = configured(message, types: extensions.compactMap { UTType(filenameExtension: $0) }, in: directory)
         return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    /// Sets the panel up now, so the first pick needn't wait for it.
+    static func prepare() { _ = shared }
+
+    /// One panel for every pick. macOS sets a new panel up in a separate process, and the app waits
+    /// for it (over a second at times); a panel used before opens at once.
+    private static let shared = NSOpenPanel()
+
+    private static func configured(_ message: String, types: [UTType] = [], folders: Bool = false, multiple: Bool = false,
+                                   in directory: URL? = nil) -> NSOpenPanel {
+        let panel = shared
+        panel.message = message
+        panel.allowedContentTypes = types
+        panel.canChooseFiles = !folders
+        panel.canChooseDirectories = folders
+        panel.allowsMultipleSelection = multiple
+        if let directory { panel.directoryURL = directory }
+        return panel
     }
 }

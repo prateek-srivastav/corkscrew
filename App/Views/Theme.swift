@@ -93,11 +93,23 @@ struct Chip: View {
 struct PillButtonStyle: ButtonStyle {
     var prominent = false
     var destructive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillButton(configuration: configuration, prominent: prominent, destructive: destructive)
+    }
+}
+
+/// The pill's look. A view of its own: SwiftUI keeps `@State` (the hover) only in a view, not in
+/// a button style.
+private struct PillButton: View {
+    let configuration: ButtonStyleConfiguration
+    let prominent: Bool
+    let destructive: Bool
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isBusy) private var isBusy
     @State private var isHovering = false
 
-    func makeBody(configuration: Configuration) -> some View {
+    var body: some View {
         configuration.label
             // A macOS button's 13 pt; the main action a little bolder.
             .font(.body.weight(prominent ? .semibold : .medium))
@@ -107,18 +119,21 @@ struct PillButtonStyle: ButtonStyle {
             .foregroundStyle(prominent ? Color.black : destructive ? Color.red : Color.primary)
             .background {
                 if prominent {
-                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.8 : isHovering ? 0.92 : 1))
-                } else if isHovering || configuration.isPressed {
-                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.14 : 0.08))
+                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.8 : isHovering ? 0.9 : 1))
+                } else if isEnabled && (isHovering || configuration.isPressed) {
+                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.16 : 0.1))
                 }
             }
-            .glassEffect(prominent ? .identity : destructive ? .regular.tint(.red.opacity(0.18)) : .regular, in: .capsule)
+            // Interactive glass lights up under the pointer and gives when pressed.
+            .glassEffect(prominent ? .identity : (destructive ? Glass.regular.tint(.red.opacity(0.18)) : .regular).interactive(isEnabled),
+                         in: .capsule)
             // A busy button stays readable: it says what it's doing.
             .opacity(isEnabled ? 1 : isBusy ? 0.75 : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .scaleEffect(configuration.isPressed ? 0.96 : isHovering && isEnabled ? 1.02 : 1)
             .contentShape(.capsule)
             .onHover { isHovering = $0 }
             .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 }
 
@@ -188,17 +203,36 @@ func busyItem(_ title: String, _ busyTitle: String, _ isBusy: Bool, action: @esc
 /// A round icon-only button, for "…" menus and the panel's close button.
 struct CircleButtonStyle: ButtonStyle {
     var size = Theme.controlHeight
-    @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
+        CircleButton(configuration: configuration, size: size)
+    }
+}
+
+/// The round button's look, a view of its own for its hover state (see `PillButton`).
+private struct CircleButton: View {
+    let configuration: ButtonStyleConfiguration
+    let size: CGFloat
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovering = false
+
+    var body: some View {
         configuration.label
             .labelStyle(.iconOnly)
             .font(.system(size: Theme.controlIconSize + 1, weight: .semibold))
             .frame(width: size, height: size)
-            .background { if isHovering || configuration.isPressed { Circle().fill(.white.opacity(configuration.isPressed ? 0.14 : 0.08)) } }
-            .glassEffect(.regular, in: .circle)
+            .background {
+                if isEnabled && (isHovering || configuration.isPressed) {
+                    Circle().fill(.white.opacity(configuration.isPressed ? 0.16 : 0.1))
+                }
+            }
+            .glassEffect(.regular.interactive(isEnabled), in: .circle)
+            .opacity(isEnabled ? 1 : 0.4)
+            .scaleEffect(configuration.isPressed ? 0.94 : isHovering && isEnabled ? 1.04 : 1)
             .contentShape(.circle)
             .onHover { isHovering = $0 }
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 }
 
@@ -274,6 +308,9 @@ struct SearchField: View {
     @Binding var text: String
     let prompt: String
     @FocusState private var isFocused: Bool
+    /// The field's frame in the window, to tell a click outside it.
+    @State private var frame = CGRect.zero
+    @State private var clickMonitor: Any?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -298,6 +335,11 @@ struct SearchField: View {
         .font(.body)
         .padding(.horizontal, 12)
         .frame(height: Theme.controlHeight)
+        // A click anywhere on the capsule, not only on the text, starts typing.
+        .background { Color.clear.contentShape(.capsule).onTapGesture { isFocused = true } }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+        .onChange(of: isFocused) { _, focused in focused ? watchClicks() : stopWatchingClicks() }
+        .onDisappear { stopWatchingClicks() }
         .overlay { if isFocused { Capsule().strokeBorder(.white.opacity(0.35)) } }
         .glassEffect(.regular, in: .capsule)
         .background {
@@ -306,6 +348,25 @@ struct SearchField: View {
                 .opacity(0)
                 .accessibilityHidden(true)
         }
+    }
+
+    /// A text field keeps the keyboard after a click elsewhere in the window; while typing, a
+    /// click outside the field ends it, as in Finder's or Music's search field.
+    private func watchClicks() {
+        stopWatchingClicks()
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            if let view = event.window?.contentView {
+                var point = view.convert(event.locationInWindow, from: nil)
+                if !view.isFlipped { point.y = view.bounds.height - point.y }
+                if !frame.contains(point) { isFocused = false }
+            }
+            return event
+        }
+    }
+
+    private func stopWatchingClicks() {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
     }
 }
 
@@ -336,7 +397,7 @@ private struct FloatingBarModifier<Bar: View>: ViewModifier {
                     bar.frame(height: FloatingBar.height)
                 }
                 .padding(.leading, FloatingBar.leading)
-                .padding(.trailing, 40)
+                .padding(.trailing, Sidebar.inset)
                 .padding(.top, FloatingBar.top)
                 .ignoresSafeArea(.container, edges: .top)
             }

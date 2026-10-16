@@ -259,11 +259,9 @@ final class ProgramInstaller {
     /// A program the user finds themselves, on the bottle's drive.
     func chooseProgram() {
         guard let bottle else { return }
-        let panel = NSOpenPanel()
-        panel.message = "Choose the game's program (.exe) in \(bottle.name)."
-        panel.directoryURL = model.driveC(of: bottle)
-        panel.allowedContentTypes = [.init("com.microsoft.windows-executable")].compactMap { $0 }
-        guard panel.runModal() == .OK, let program = panel.url else { return }
+        guard let program = Pickers.file("Choose the game's program (.exe) in \(bottle.name).", extensions: ["exe"],
+                                         in: model.driveC(of: bottle))
+        else { return }
         let outside = [setupFolder, prefix.map(DiscImage.folder(prefix:))].compactMap { $0?.path }
         guard model.bottle(containing: program)?.id == bottle.id, !outside.contains(where: { program.path.hasPrefix($0 + "/") }) else {
             job?.note = "Pick a program inside \(bottle.name) that isn't one of the setup files."

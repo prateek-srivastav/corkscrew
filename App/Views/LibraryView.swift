@@ -148,7 +148,7 @@ private struct GamesPage: View {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .top) {
                     HeroBackdrop(game: isSearching ? nil : featured.first { $0.id == shown } ?? featured.first,
-                                 tint: Theme.tint(for: bottle), drifts: true)
+                                 tint: Theme.tint(for: bottle))
                     VStack(alignment: .leading, spacing: 0) {
                         Color.clear.frame(height: FloatingBar.height)
                         if isSearching {
@@ -396,19 +396,15 @@ struct HeroBackdrop: View {
     let game: Game?
     /// The glow at the top right when there's no art: the place's colour.
     var tint: Color = .accentColor
-    /// Zooms the art in slowly while it shows (the carousel).
-    var drifts = false
 
     var body: some View {
         // The art fills the hero without setting its size.
         Theme.background
             .overlay {
                 if let game {
-                    DriftingArt(drifts: drifts) {
-                        SteamArt(game: game, kind: .hero) { IconGlow(game: game, size: 520) }
-                    }
-                    .id(game.id)
-                    .transition(CoverTransition())
+                    SteamArt(game: game, kind: .hero) { IconGlow(game: game, size: 520) }
+                        .id(game.id)
+                        .transition(CoverTransition())
                 } else {
                     RadialGradient(colors: [tint.opacity(0.32), .clear], center: .topTrailing, startRadius: 40, endRadius: 700)
                         .transition(CoverTransition())
@@ -432,22 +428,6 @@ struct HeroBackdrop: View {
             let pull = max(0, proxy.frame(in: .scrollView).minY)
             return content.scaleEffect(1 + pull / max(proxy.size.height, 1), anchor: .bottom)
         }
-    }
-}
-
-/// Art that zooms in a little over a few seconds, so the carousel doesn't stand still.
-private struct DriftingArt<Content: View>: View {
-    let drifts: Bool
-    @ViewBuilder var content: Content
-    @State private var isZoomed = false
-
-    var body: some View {
-        content
-            .scaleEffect(isZoomed ? 1.05 : 1, anchor: .topTrailing)
-            .onAppear {
-                guard drifts else { return }
-                withAnimation(.easeInOut(duration: 14)) { isZoomed = true }
-            }
     }
 }
 
