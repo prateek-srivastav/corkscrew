@@ -70,4 +70,6 @@ The app takes the same override: `-EnginePackURL <url>`.
 
 To build the DMG locally instead: `scripts/make-dmg.sh`. It takes the pack from `dist/runtime-<release>/` when it's there, and needs `CORKSCREW_TRY_DMG=1` while the pack isn't published yet.
 
+`scripts/install.sh` (the `curl … | bash` install in the README) installs the release that `releases/latest` points at, so it picks up a new version once the draft is published. It expects the assets to keep their names, `Corkscrew-<version>.dmg` and `Corkscrew-<version>.dmg.sha256`, on a `v<version>` tag. To try a DMG with it before publishing, serve a folder laid out as `download/v<version>/<assets>` and run `CORKSCREW_RELEASES=http://127.0.0.1:8765 CORKSCREW_VERSION=<version> CORKSCREW_APP_DIR=/tmp/apps scripts/install.sh`.
+
 The app is ad hoc signed, so users confirm it once with **Open Anyway**. Signing with a Developer ID and notarizing would remove that step; it needs an Apple Developer Program membership.

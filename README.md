@@ -19,8 +19,16 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs ga
 
 You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free space plus your games.
 
-1. Download `Corkscrew-<version>.dmg` (about 320 MB) from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest), open it, and drag Corkscrew to Applications.
-2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time: click **Done**, then **Open Anyway** in **System Settings → Privacy & Security**. You only do this once.
+1. Install it from Terminal:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Prateek-Srivastav/corkscrew/main/scripts/install.sh | bash
+   ```
+
+   The [script](scripts/install.sh) downloads the latest DMG (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. Run it again to update.
+
+   Or download `Corkscrew-<version>.dmg` from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest), open it, and drag Corkscrew to Applications.
+2. If you used the DMG: Corkscrew isn't signed with an Apple Developer ID yet, so macOS blocks it the first time. Click **Done**, then **Open Anyway** in **System Settings → Privacy & Security**. You only do this once. The Terminal install skips this step, because macOS only checks apps that a browser downloaded.
 3. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
 4. Open Steam from the Library, sign in, and install your games.
 
