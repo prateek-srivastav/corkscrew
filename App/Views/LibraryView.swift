@@ -276,7 +276,7 @@ private struct GamesPage: View {
                 Button("Open Settings", systemImage: "sparkles", action: openSetup).buttonStyle(.prominentPill)
             }
         } else if isAll {
-            heroMessage("No games yet", "Sign in to Steam, or drop a Windows program (.exe) or installer (.msi) here.") {
+            heroMessage("No games yet", "Sign in to Steam, or drop a Windows program (.exe), installer (.msi) or downloaded game (.zip, .rar, .iso) here.") {
                 if let steam = model.launcherBottle, model.hasSteam(in: steam) {
                     BusyButton("Open Steam", systemImage: "arrow.up.forward.app", busyTitle: "Opening…",
                                isBusy: model.isPending(.openSteam)) { model.openSteam() }
@@ -288,8 +288,8 @@ private struct GamesPage: View {
             }
         } else {
             heroMessage(hasLaunchers ? "No games yet" : bottle.map { "No programs in \($0.name)" } ?? "No programs",
-                        hasLaunchers ? "Get games with a launcher below, or drop a Windows program (.exe) or installer (.msi) here."
-                                     : "Drop a Windows program (.exe) or installer (.msi) here, open one from Finder, or add one.") {
+                        hasLaunchers ? "Get games with a launcher below, or drop a Windows program (.exe) or downloaded game (.zip, .rar, .iso) here."
+                                     : "Drop a Windows program (.exe), installer (.msi) or downloaded game (.zip, .rar, .iso) here, or add one.") {
                 if bottle != nil {
                     Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
                         .buttonStyle(.prominentPill)

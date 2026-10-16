@@ -112,6 +112,11 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Default
             LSItemContentTypes: [com.microsoft.msi]
+          # Downloaded games: Corkscrew is in Finder's Open With menu, but never the default app.
+          - CFBundleTypeName: Game Download
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive, com.rarlab.rar-archive, org.7-zip.7-zip-archive, public.iso-image, public.tar-archive, org.gnu.gnu-zip-archive]
         # corkscrew://launch/<game id> and corkscrew://stop/<game id>
         CFBundleURLTypes:
           - CFBundleURLName: io.github.prateek-srivastav.Corkscrew

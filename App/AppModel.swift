@@ -78,6 +78,8 @@ final class AppModel {
     var openRequests: [URL] = []
     /// The bottle to offer first for an opened program, when it was opened from that bottle.
     private(set) var openBottles: [URL: Bottle.ID] = [:]
+    /// Games installed from downloads (zip, rar, 7z, disc images), one at a time.
+    @ObservationIgnored private(set) lazy var installer = ProgramInstaller(model: self)
     /// What the app is busy with (shown at the bottom of the window), nil when idle.
     private(set) var activity: String?
     /// Everything `perform` is running, oldest first; `activity` shows the newest.
@@ -173,6 +175,7 @@ final class AppModel {
         self.paths = paths
         reload()
         if runningBottles.isEmpty { Self.unregisterLoaderBundles() }
+        removeInstallLeftovers()
         Task { await setUpAutomatically() }
         Task { [weak self] in
             var tick = 0
@@ -467,11 +470,16 @@ final class AppModel {
     // MARK: Opening programs
 
     /// Asks whether to run each program once or add it to the library; `bottle` is offered first.
+    /// Downloads (archives, disc images) go to the installer.
     func open(_ urls: [URL], in bottle: Bottle? = nil) {
         let files = urls.filter(\.isFileURL)
         for url in urls where url.scheme == "corkscrew" { handleLink(url) }
+        let downloads = files.filter(Archive.isArchive)
+        if !downloads.isEmpty { installer.enqueue(downloads, bottle: bottle?.role == .steam ? nil : bottle) }
         let programs = files.filter { ["exe", "msi"].contains($0.pathExtension.lowercased()) }
-        if programs.count < files.count { errorMessage = "Only Windows programs (.exe) and installers (.msi) can be opened." }
+        if programs.count + downloads.count < files.count {
+            errorMessage = "Only Windows programs (.exe), installers (.msi), archives (.zip, .rar, .7z) and disc images (.iso) can be opened."
+        }
         for program in programs { openBottles[program] = bottle?.role == .steam ? nil : bottle?.id }
         openRequests += programs.filter { !openRequests.contains($0) }
     }
@@ -540,6 +548,25 @@ final class AppModel {
         guard let executable = await prepareProgram(program, for: bottle) else { return }
         let game = Game(name: executable.deletingPathExtension().lastPathComponent, executable: executable, bottleID: bottle.id)
         play(game, transient: true)
+    }
+
+    /// Runs a setup from a download in the bottle, without adding it to the library; the session
+    /// under the returned entry's id follows it.
+    func runSetup(_ setup: URL, in bottle: Bottle, name: String) -> Game {
+        let game = Game(name: name, executable: setup, bottleID: bottle.id)
+        start(game, transient: true)
+        return game
+    }
+
+    /// Discs and setup files an install left in the bottles when the app quit during it.
+    private func removeInstallLeftovers() {
+        let prefixes = bottles.map { BottleLocation(bottleID: $0.id, paths: paths).prefix }
+        Task.detached(priority: .utility) {
+            for prefix in prefixes {
+                DiscImage.detachAll(prefix: prefix)
+                SetupFinder.removeLeftovers(prefix: prefix)
+            }
+        }
     }
 
     private func prepareProgram(_ program: URL, for bottle: Bottle) async -> URL? {
@@ -622,7 +649,7 @@ final class AppModel {
         BottleProcesses.isSteamRunning(prefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix)
     }
 
-    private func start(_ game: Game, transient: Bool) {
+    func start(_ game: Game, transient: Bool) {
         guard !isInstallingEngine else {
             errorMessage = "Corkscrew is updating Wine. Try again in a minute."
             return

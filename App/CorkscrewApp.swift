@@ -133,8 +133,9 @@ enum AboutPanel {
 enum Pickers {
     static func programs() -> [URL] {
         let panel = NSOpenPanel()
-        panel.message = "Choose Windows programs (.exe) or installers (.msi)."
+        panel.message = "Choose Windows programs (.exe), installers (.msi), or a downloaded game (.zip, .rar, .7z, .iso)."
         panel.allowedContentTypes = [.init("com.microsoft.windows-executable"), .init("com.microsoft.msi")].compactMap { $0 }
+            + ["zip", "rar", "7z", "iso", "001", "tar", "gz", "tgz", "xz", "bz2"].compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = true
         return panel.runModal() == .OK ? panel.urls : []
     }

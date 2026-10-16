@@ -60,6 +60,13 @@ struct ContentView: View {
                 OpenProgramSheet(program: program).id(program)
             }
         }
+        // Its own view: one view can't hold two sheets.
+        .background {
+            Color.clear.sheet(isPresented: Binding(get: { model.installer.isShown && model.openRequests.isEmpty },
+                                                   set: { if !$0 { model.installer.hide() } })) {
+                InstallSheet()
+            }
+        }
         .alert("Something went wrong", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: {
@@ -84,10 +91,27 @@ private struct ActivityBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        let install = model.installer.isShown ? nil : model.installer.job
         ZStack {
-            if model.enginePackProgress != nil || model.activity != nil {
+            if model.enginePackProgress != nil || model.activity != nil || install != nil {
                 Group {
-                    if let progress = model.enginePackProgress {
+                    if let install {
+                        // A hidden install: the bar brings its sheet back.
+                        Button { model.installer.show() } label: {
+                            HStack(spacing: 10) {
+                                if case .unpacking(let fraction) = install.step {
+                                    ProgressView(value: fraction).frame(width: 90)
+                                } else if install.isWorking {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                                }
+                                Text(install.isWorking ? "Installing \(install.name)…" : "\(install.name) needs you").lineLimit(1)
+                                Text("Show").foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } else if let progress = model.enginePackProgress {
                         HStack(spacing: 10) {
                             ProgressView(value: progress.fraction).frame(width: 90)
                             Text(progress.title).lineLimit(1)
@@ -108,6 +132,7 @@ private struct ActivityBar: View {
             }
         }
         .animation(.snappy, value: model.activity)
+        .animation(.snappy, value: model.installer.isShown)
     }
 }
 

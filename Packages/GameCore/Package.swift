@@ -13,7 +13,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     ],
     targets: [
-        .target(name: "GameCore"),
+        // libarchive's prototypes; the library is macOS's own.
+        .target(name: "CArchive", linkerSettings: [.linkedLibrary("archive")]),
+        .target(name: "GameCore", dependencies: ["CArchive"]),
         .executableTarget(
             name: "gamecore-cli",
             dependencies: ["GameCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]
