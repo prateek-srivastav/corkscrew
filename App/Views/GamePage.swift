@@ -103,7 +103,8 @@ struct GamePage: View {
                         ScrollView(.horizontal) {
                             LazyHStack(spacing: 14) {
                                 ForEach(details.screenshots, id: \.self) { url in
-                                    StoreImage(url: url)
+                                    // 1920×1080 decoded is 8 MB; a tile needs 640×360 pixels.
+                                    StoreImage(url: url, maxPixelSize: 640)
                                         .frame(width: 320, height: 180)
                                         .clipShape(.rect(cornerRadius: Theme.cornerRadius))
                                         .overlay { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(Theme.stroke) }
@@ -168,6 +169,8 @@ struct StoreImage: View {
     @Environment(AppModel.self) private var model
     let url: URL
     var contentMode: ContentMode = .fill
+    /// Decodes it this small (longest side, in pixels); nil: at full size.
+    var maxPixelSize: Int?
     @State private var image: NSImage?
 
     var body: some View {
@@ -181,8 +184,9 @@ struct StoreImage: View {
         .task(id: url) {
             let cache = model.storeCache
             let url = url
-            let data = await Task.detached(priority: .utility) { await SteamStore.image(at: url, cache: cache) }.value
-            image = data.flatMap(NSImage.init(data:))
+            guard let data = await Task.detached(priority: .utility, operation: { await SteamStore.image(at: url, cache: cache) }).value
+            else { return image = nil }
+            image = if let maxPixelSize { await SteamArtwork.downsampled(data, maxPixelSize: maxPixelSize)?.image } else { NSImage(data: data) }
         }
     }
 }

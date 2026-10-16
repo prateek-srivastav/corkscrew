@@ -10,6 +10,8 @@ struct Sidebar: View {
     let isCollapsed: Bool
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
+    /// Steam's icon, read off the main thread.
+    @State private var steamImage: NSImage?
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
 
     static let width: CGFloat = 232
@@ -33,6 +35,9 @@ struct Sidebar: View {
                     if let steam = model.launcherBottle {
                         header("Launchers")
                         place(.bottle(steam.id), title: steam.name, icon: steamIcon, tint: Theme.tint(for: steam)) { steamStatus(steam) }
+                            .task(id: model.steamClient?.iconSource ?? model.steamClient?.executable) {
+                                steamImage = if let client = model.steamClient { await model.loadIcon(for: client) } else { nil }
+                            }
                     }
                     let protected = [Bottle.Role.sandbox, .sandboxOnline].compactMap(model.bottle(role:))
                     if !protected.isEmpty {
@@ -160,7 +165,7 @@ struct Sidebar: View {
     }
 
     private var steamIcon: SidebarRow.Icon {
-        if let client = model.steamClient, let icon = model.icon(for: client) { return .image(icon) }
+        if let icon = steamImage ?? model.steamClient.flatMap(model.cachedIcon(for:)) { return .image(icon) }
         return .symbol("gamecontroller.fill")
     }
 
@@ -340,24 +345,42 @@ private struct SidebarBackdrop: View {
     }
 }
 
-/// Fine film grain: the same specks every time, so it doesn't shimmer when the view redraws.
+/// Fine film grain: the same specks every time, so it doesn't shimmer when the view redraws. One
+/// tile, drawn once and repeated: a redraw (each frame of the collapse, a live resize) only
+/// copies it.
 private struct Grain: View {
     var body: some View {
-        Canvas { context, size in
-            var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
-            func next() -> Double {
-                seed &+= 0x9E37_79B9_7F4A_7C15
-                var z = seed
-                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-                return Double(z ^ (z >> 31)) / Double(UInt64.max)
-            }
-            for _ in 0..<Int(size.width * size.height / 14) {
-                let rect = CGRect(x: next() * size.width, y: next() * size.height, width: 1, height: 1)
-                context.fill(Path(rect), with: .color(.white.opacity(next())))
-            }
+        if let tile = Self.tile {
+            Image(decorative: tile, scale: Self.scale).resizable(resizingMode: .tile)
         }
     }
+
+    /// Points per side of the tile, and pixels per point (specks are a point, as on screen).
+    private static let size = 128
+    private static let scale: CGFloat = 2
+
+    private static let tile: CGImage? = {
+        let pixels = Int(CGFloat(size) * scale)
+        guard let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+        func next() -> CGFloat {
+            seed &+= 0x9E37_79B9_7F4A_7C15
+            var z = seed
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return CGFloat(Double(z ^ (z >> 31)) / Double(UInt64.max))
+        }
+        // One speck per 14 square points.
+        for _ in 0..<(size * size / 14) {
+            let rect = CGRect(x: next() * CGFloat(size), y: next() * CGFloat(size), width: 1, height: 1)
+            context.setFillColor(gray: 1, alpha: next())
+            context.fill(rect)
+        }
+        return context.makeImage()
+    }()
 }
 
 /// Gives its content the size and place of `rect`, one frame at a time (see `GlassFollowingOffset`).

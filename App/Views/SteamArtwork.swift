@@ -48,13 +48,19 @@ enum SteamArtwork {
     static func load(_ kind: Kind, for game: Game, model: AppModel) async -> NSImage? {
         let key = key(kind, game) as NSString
         if let image = cache.object(forKey: key) { return image }
-        guard let data = await data(kind, for: game, model: model) else { return nil }
-        let maxPixelSize = kind.maxPixelSize
+        guard let data = await data(kind, for: game, model: model),
+              let (image, bytes) = await downsampled(data, maxPixelSize: kind.maxPixelSize) else { return nil }
+        cache.setObject(image, forKey: key, cost: bytes)
+        return image
+    }
+
+    /// Decodes a picture off the main thread, at most `maxPixelSize` on its longest side; with its
+    /// size in memory.
+    static func downsampled(_ data: Data, maxPixelSize: Int) async -> (image: NSImage, bytes: Int)? {
         guard let decoded = await Task.detached(priority: .utility, operation: { decode(data, maxPixelSize: maxPixelSize) }).value
         else { return nil }
-        let image = NSImage(cgImage: decoded.image, size: NSSize(width: decoded.image.width, height: decoded.image.height))
-        cache.setObject(image, forKey: key, cost: decoded.image.bytesPerRow * decoded.image.height)
-        return image
+        let image = decoded.image
+        return (NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height)), image.bytesPerRow * image.height)
     }
 
     /// Fetches art the store has for the game into the store's disk cache, without decoding it.

@@ -437,12 +437,20 @@ struct IconGlow: View {
     let game: Game
     var size: CGFloat
 
+    /// The icon is blurred this small, then scaled up: it looks the same as a blur at full size,
+    /// for a small part of the GPU work (the hero's blur was 86 points).
+    private static let blurredSize: CGFloat = 64
+
     var body: some View {
         LinearGradient(colors: [Color(white: 0.16), Color(white: 0.07)], startPoint: .topTrailing, endPoint: .bottomLeading)
             .overlay {
-                GameIcon(game: game, size: size)
-                    .blur(radius: size / 6)
+                GameIcon(game: game, size: Self.blurredSize)
+                    .blur(radius: Self.blurredSize / 6)
                     .saturation(1.6)
+                    // Room for the blur's edge, then one small layer that the scale only stretches.
+                    .padding(Self.blurredSize / 3)
+                    .drawingGroup()
+                    .scaleEffect(size / Self.blurredSize)
                     .opacity(0.6)
             }
             .clipped()

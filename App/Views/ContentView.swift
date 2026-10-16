@@ -144,17 +144,22 @@ struct GameIcon: View {
     @Environment(AppModel.self) private var model
     let game: Game
     var size: CGFloat = 64
+    /// What `loadIcon` gave; until then, the icon read before (nothing on the first show).
+    @State private var loaded: NSImage??
 
     var body: some View {
         Group {
-            if let image = model.icon(for: game) {
+            if let image = loaded ?? model.cachedIcon(for: game) {
                 Image(nsImage: image).resizable().interpolation(.high)
-            } else {
+            } else if loaded != nil {
                 Image(systemName: "app.dashed").resizable().fontWeight(.ultraLight).foregroundStyle(.secondary)
+            } else {
+                Color.clear
             }
         }
         .aspectRatio(contentMode: .fit)
         .frame(width: size, height: size)
+        .task(id: game.iconSource ?? game.executable) { loaded = .some(await model.loadIcon(for: game)) }
     }
 }
 

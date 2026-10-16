@@ -3,6 +3,26 @@ import Testing
 @testable import GameCore
 
 struct SteamStoreTests {
+    /// The cache keeps its newest files within the limit.
+    @Test func trimsTheOldestFilesFirst() throws {
+        try withTempDir { cache in
+            let fm = FileManager.default
+            let now = Date.now
+            var files: [URL] = []
+            for (index, folder) in ["details", "art/10", "images", "art/20"].enumerated() {
+                let file = cache.appending(path: "\(folder)/file\(index)")
+                try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 1, count: 64 << 10).write(to: file)
+                try fm.setAttributes([.modificationDate: now.addingTimeInterval(Double(index - 10) * 3600)], ofItemAtPath: file.path)
+                files.append(file)
+            }
+            let size = try #require(try files[0].resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize)
+            #expect(SteamStore.trim(cache: cache, limit: 2 * size) == 2 * size)
+            #expect(files.map { fm.fileExists(atPath: $0.path) } == [false, false, true, true])
+            #expect(SteamStore.trim(cache: cache, limit: 2 * size) == 0)
+        }
+    }
+
     @Test func readsAGamesStoreDetails() throws {
         let reply = """
         {"1174180":{"success":true,"data":{"type":"game","name":"Red Dead Redemption 2",

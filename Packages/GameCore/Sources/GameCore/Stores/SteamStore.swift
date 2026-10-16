@@ -250,6 +250,30 @@ public enum SteamStore {
 
     // MARK: Files and network
 
+    /// The cache's size limit: art and pages for a few hundred games.
+    public static let cacheLimit = 200 << 20
+
+    /// Deletes the cache's oldest files (by when they were fetched) until it holds at most `limit`
+    /// bytes; returns how many bytes it freed. What's gone is fetched again when a page needs it.
+    @discardableResult
+    public static func trim(cache: URL, limit: Int = cacheLimit) -> Int {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .totalFileAllocatedSizeKey]
+        guard let enumerator = FileManager.default.enumerator(at: cache, includingPropertiesForKeys: keys) else { return 0 }
+        var files: [(url: URL, date: Date, size: Int)] = []
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            files.append((url, values.contentModificationDate ?? .distantPast, values.totalFileAllocatedSize ?? 0))
+        }
+        var total = files.reduce(0) { $0 + $1.size }
+        var freed = 0
+        for file in files.sorted(by: { $0.date < $1.date }) where total > limit {
+            guard (try? FileManager.default.removeItem(at: file.url)) != nil else { continue }
+            total -= file.size
+            freed += file.size
+        }
+        return freed
+    }
+
     private static func age(of file: URL) -> TimeInterval {
         guard let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { return .infinity }
         return Date.now.timeIntervalSince(date)
@@ -261,11 +285,20 @@ public enum SteamStore {
         try? data.write(to: file, options: .atomic)
     }
 
+    /// The store's own connection, without URLCache: the store keeps its replies on disk itself,
+    /// and the shared session kept a second copy of each.
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     /// The body of a 200 reply; nil for anything else (offline, missing art).
     private static func fetch(_ url: URL) async -> Data? {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("Corkscrew", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return nil }
         return data
     }
