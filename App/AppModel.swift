@@ -176,15 +176,17 @@ final class AppModel {
         reload()
         if runningBottles.isEmpty { Self.unregisterLoaderBundles() }
         removeInstallLeftovers()
+        sweepWineLeftovers(in: bottles.filter { !runningBottles.contains($0.id) }, removeServerFolders: true)
         Task { await setUpAutomatically() }
         Task { [weak self] in
             var tick = 0
             while let self {
                 self.refreshRunningBottles()
                 await self.refreshRunningPrograms()
-                // While Steam may be installing or uninstalling games, look at its manifests now and then.
+                // While Steam may be installing or uninstalling games, look at its manifests now and then
+                // (not while a game runs: Steam doesn't download then, and the game needs the Mac).
                 tick += 1
-                if tick % 15 == 0, !self.runningBottles.isEmpty { self.syncStores() }
+                if tick % 15 == 0, !self.runningBottles.isEmpty, !self.isGameRunning { self.syncStores() }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -392,9 +394,43 @@ final class AppModel {
     private func refreshRunningBottles() {
         let running = Set(bottles.filter { Launcher.isRunning($0, paths: paths) }.map(\.id))
         guard running != runningBottles else { return }
+        let stopped = runningBottles.subtracting(running)
         runningBottles = running
+        if !stopped.isEmpty {
+            Task { [weak self] in
+                // Programs a session leaves behind outlive their server by a moment while they exit.
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                sweepWineLeftovers(in: bottles.filter { stopped.contains($0.id) && !runningBottles.contains($0.id) && !hasActiveSession(in: $0.id) })
+            }
+        }
         if running.isEmpty { Self.unregisterLoaderBundles() }
         syncStores()
+    }
+
+    /// Whether a game runs: a session other than a launcher's, or a Steam game started from Steam.
+    private var isGameRunning: Bool {
+        !runningSteamApps.isEmpty || sessions.values.contains { $0.isActive && !Steam.isClient($0.game.executable) }
+    }
+
+    /// A session runs in the bottle, or any action is under way (a launch starts its programs a moment
+    /// before their server).
+    private func hasActiveSession(in bottleID: Bottle.ID) -> Bool {
+        !pending.isEmpty || sessions.values.contains { $0.isActive && $0.game.bottleID == bottleID }
+    }
+
+    /// Stops programs left running in stopped bottles without their wineserver, and (at start)
+    /// removes the folders of servers that died.
+    private func sweepWineLeftovers(in bottles: [Bottle], removeServerFolders: Bool = false) {
+        let prefixes = bottles.map { BottleLocation(bottleID: $0.id, paths: paths).prefix }
+        let base = paths.wineServerDirectory
+        Task.detached(priority: .background) {
+            for prefix in prefixes {
+                let stopped = await WineServer.stopOrphans(prefix: prefix, base: base)
+                if !stopped.isEmpty { print("Stopped \(stopped.count) leftover Wine programs in \(prefix.path): \(stopped)") }
+            }
+            if removeServerFolders { WineServer.removeStaleDirectories(base: base) }
+        }
     }
 
     /// Which running bottles have Steam open, and which Steam games run (off the main thread: it
