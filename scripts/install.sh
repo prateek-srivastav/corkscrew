@@ -2,7 +2,8 @@
 # Installs the latest Corkscrew release into /Applications (or ~/Applications when /Applications isn't
 # writable), or replaces the one that's there. curl doesn't quarantine what it downloads, so the app
 # opens without the "Open Anyway" step that an ad hoc signed app needs after a browser download.
-# Usage: curl -fsSL https://raw.githubusercontent.com/Prateek-Srivastav/corkscrew/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash
+# (The Pages workflow publishes this file there; raw.githubusercontent.com/<repo>/main/scripts/install.sh works too.)
 # Environment: CORKSCREW_VERSION=0.5.0 to install that version instead of the latest,
 # CORKSCREW_APP_DIR=<folder> to install somewhere else, CORKSCREW_NO_OPEN=1 to not open the app after.
 # CORKSCREW_RELEASES=<url> replaces https://github.com/<repo>/releases (for testing; needs CORKSCREW_VERSION).
