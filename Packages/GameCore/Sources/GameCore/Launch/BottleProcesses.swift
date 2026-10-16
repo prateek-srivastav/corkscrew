@@ -1,6 +1,7 @@
 import CoreGraphics
 import Darwin
 import Foundation
+import Synchronization
 
 /// A bottle's running Wine processes, found by the `WINEPREFIX` in their environment. A Wine
 /// process's first argument is its Windows path (`C:\Program Files (x86)\Steam\steam.exe`).
@@ -21,23 +22,69 @@ public enum BottleProcesses {
         public var isSteamWebHelper: Bool { program.hasSuffix("\\steamwebhelper.exe") }
     }
 
-    /// Our own processes whose environment has WINEPREFIX=prefix.
-    public static func list(prefix: URL) -> [Entry] {
-        let prefix = prefix.standardizedFileURL.path
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return [] }
-        var all = [pid_t](repeating: 0, count: Int(count) + 64)
-        let filled = proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size))
-        let me = getuid()
-        return all.prefix(Int(max(filled, 0))).compactMap { pid in
-            guard pid > 0 else { return nil }
-            var info = proc_bsdshortinfo()
-            let size = Int32(MemoryLayout<proc_bsdshortinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 0, &info, size) == size, info.pbsi_uid == me,
-                  let process = processArguments(of: pid),
-                  process.environment["WINEPREFIX"].map({ URL(fileURLWithPath: $0).standardizedFileURL.path }) == prefix
-            else { return nil }
-            return Entry(pid: pid, arguments: process.arguments)
+    /// Our own processes whose environment has WINEPREFIX=prefix. Callers within `maxAge` of each
+    /// other share one scan (the app, the launcher and the web helper guard all poll while a game
+    /// runs).
+    public static func list(prefix: URL, maxAge: Duration = .seconds(1)) -> [Entry] {
+        snapshot(maxAge: maxAge)[prefix.standardizedFileURL.path] ?? []
+    }
+
+    /// Our Wine processes by their prefix (standardized path).
+    static func snapshot(maxAge: Duration = .seconds(1)) -> [String: [Entry]] {
+        scanner.withLock { scanner in
+            let now = ContinuousClock.now
+            if let last = scanner.last, now - last.time < maxAge { return last.entries }
+            let entries = scanner.scan()
+            scanner.last = (now, entries)
+            return entries
+        }
+    }
+
+    private static let scanner = Mutex(Scanner())
+
+    /// Finds the processes with a WINEPREFIX. Reading a process's environment (KERN_PROCARGS2) costs
+    /// far more than the rest, and the environment doesn't change after `exec`, so each process's
+    /// prefix (or none) is remembered by pid, start time and name: most processes are read once in
+    /// their life. The arguments of Wine processes are read on every scan: Wine rewrites them in
+    /// place after it starts.
+    struct Scanner {
+        struct Identity: Equatable {
+            var started: UInt64
+            var name: String
+        }
+        var known: [pid_t: (identity: Identity, prefix: String?)] = [:]
+        var last: (time: ContinuousClock.Instant, entries: [String: [Entry]])?
+
+        mutating func scan() -> [String: [Entry]] {
+            let count = proc_listallpids(nil, 0)
+            guard count > 0 else { return [:] }
+            var all = [pid_t](repeating: 0, count: Int(count) + 64)
+            let filled = proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size))
+            let me = getuid()
+            var result: [String: [Entry]] = [:]
+            var seen: [pid_t: (identity: Identity, prefix: String?)] = [:]
+            for pid in all.prefix(Int(max(filled, 0))) where pid > 0 {
+                var info = proc_bsdinfo()
+                let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+                guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_uid == me else { continue }
+                let identity = Identity(started: info.pbi_start_tvsec &* 1_000_000 &+ info.pbi_start_tvusec,
+                                        name: withUnsafeBytes(of: info.pbi_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })
+                var prefix: String?
+                var arguments: [String]?
+                if let cached = known[pid], cached.identity == identity {
+                    prefix = cached.prefix
+                } else {
+                    guard let process = BottleProcesses.processArguments(of: pid) else { continue }
+                    prefix = process.environment["WINEPREFIX"].map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+                    arguments = process.arguments
+                }
+                seen[pid] = (identity, prefix)
+                guard let prefix else { continue }
+                guard let arguments = arguments ?? BottleProcesses.processArguments(of: pid)?.arguments else { continue }
+                result[prefix, default: []].append(Entry(pid: pid, arguments: arguments))
+            }
+            known = seen
+            return result
         }
     }
 

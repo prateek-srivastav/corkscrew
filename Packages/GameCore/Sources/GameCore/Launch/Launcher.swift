@@ -334,6 +334,9 @@ public enum Launcher {
     }
 
     static let wrapperPoll: Duration = .seconds(1)
+    /// Once Steam has run through the wrapper for `settle`: an update only replaces the helper when
+    /// Steam starts, so a slower check is enough until Steam restarts.
+    static let wrapperSteadyPoll: Duration = .seconds(5)
     /// Prefixes whose web helper is being guarded: one guard per bottle.
     private static let guardedPrefixes = Mutex<Set<String>>([])
 
@@ -353,30 +356,40 @@ public enum Launcher {
     /// Steam installs an update it downloaded earlier when it starts, which puts its own helper back,
     /// then restarts (about 10 s before its window starts): the wrapper goes back in before that. When
     /// Steam's own helper started anyway (its window is black), it's stopped so Steam starts it again,
-    /// through the wrapper.
+    /// through the wrapper. Once Steam has run through the wrapper for `settle`, it checks every
+    /// `steadyPoll`, and every `poll` again when Steam's client goes away (a restart).
     static func keepWebHelperWrapper(
-        _ wrapper: URL, steamRoot: URL, prefix: URL, poll: Duration = wrapperPoll,
-        startup: Duration = .seconds(60), gone: Duration = .seconds(5)
+        _ wrapper: URL, steamRoot: URL, prefix: URL, poll: Duration = wrapperPoll, steadyPoll: Duration = wrapperSteadyPoll,
+        settle: Duration = .seconds(30), startup: Duration = .seconds(60), gone: Duration = .seconds(5)
     ) async {
         let clock = ContinuousClock()
         let started = clock.now
         var lastSeen: ContinuousClock.Instant?
+        var wrappedSince: ContinuousClock.Instant?
         var restarts = 0
         while !Task.isCancelled {
-            let processes = BottleProcesses.list(prefix: prefix)
-            if processes.contains(where: { BottleProcesses.isSteamClient($0.program) }) {
+            let processes = BottleProcesses.list(prefix: prefix, maxAge: poll / 2)
+            let steamRuns = processes.contains { BottleProcesses.isSteamClient($0.program) }
+            if steamRuns {
                 lastSeen = clock.now
             } else if clock.now - (lastSeen ?? started) >= (lastSeen == nil ? startup : gone) {
                 return
             }
+            var unwrapped: [BottleProcesses.Entry] = []
             if (try? Steam.installWebHelperWrapper(steamRoot: steamRoot, wrapper: wrapper)) != nil, restarts < 3 {
-                let unwrapped = unwrappedWebHelpers(processes)
+                unwrapped = unwrappedWebHelpers(processes)
                 if !unwrapped.isEmpty {
                     restarts += 1
                     for process in unwrapped { kill(process.pid, SIGKILL) }
                 }
             }
-            try? await Task.sleep(for: poll)
+            if steamRuns, unwrapped.isEmpty, processes.contains(where: { $0.program.hasSuffix("\\steamwebhelper_real.exe") }) {
+                wrappedSince = wrappedSince ?? clock.now
+            } else {
+                wrappedSince = nil
+            }
+            let steady = wrappedSince.map { clock.now - $0 >= settle } ?? false
+            try? await Task.sleep(for: steady ? steadyPoll : poll)
         }
     }
 

@@ -132,4 +132,29 @@ struct BottleProcessesTests {
             #expect(parsed.environment["WINEPREFIX"] == "/corkscrew-test-prefix")
         }
     }
+
+    /// One shared scan: a process is found by its prefix, again from the cache, and is gone once it quits.
+    @Test func listsAPrefixsProcessesFromTheSharedScan() throws {
+        try withTempDir { dir in
+            let sleep = dir.appending(path: "sleep")
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
+            let sign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", sleep.path])
+            sign.waitUntilExit()
+            let prefix = dir.appending(path: "prefix")
+            let process = Process()
+            process.executableURL = sleep
+            process.arguments = ["5"]
+            process.environment = ["WINEPREFIX": prefix.path + "/"]
+            try process.run()
+            defer { process.terminate() }
+            let pid = process.processIdentifier
+            #expect(BottleProcesses.list(prefix: prefix, maxAge: .zero).map(\.pid) == [pid])
+            #expect(BottleProcesses.list(prefix: prefix, maxAge: .zero) == [BottleProcesses.Entry(pid: pid, arguments: [sleep.path, "5"])],
+                    "found again through the cache")
+            #expect(BottleProcesses.list(prefix: dir.appending(path: "other"), maxAge: .zero).isEmpty)
+            process.terminate()
+            process.waitUntilExit()
+            #expect(BottleProcesses.list(prefix: prefix, maxAge: .zero).isEmpty)
+        }
+    }
 }
