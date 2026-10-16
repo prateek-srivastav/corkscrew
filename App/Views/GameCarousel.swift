@@ -3,12 +3,13 @@ import SwiftUI
 
 /// The top of a page of games: one game after another, only its art and name. A click on the name
 /// opens the game's page. Moves on by itself every few seconds, except while the pointer is over
-/// it. The page draws the game's art behind it, from `current`.
+/// it or another app (a game) is in front. The page draws the game's art behind it, from `current`.
 struct GameCarousel: View {
     let games: [Game]
     @Binding var current: Game.ID?
     let open: (Game) -> Void
     @State private var isHovering = false
+    @Environment(\.controlActiveState) private var activeState
 
     static var interval: Duration { .seconds(8) }
 
@@ -35,8 +36,8 @@ struct GameCarousel: View {
         }
         .frame(maxHeight: .infinity, alignment: .bottom)
         .onHover { isHovering = $0 }
-        .task(id: "\(game.id) \(isHovering)") {
-            guard games.count > 1, !isHovering else { return }
+        .task(id: "\(game.id) \(isHovering) \(activeState == .inactive)") {
+            guard games.count > 1, !isHovering, activeState != .inactive else { return }
             try? await Task.sleep(for: Self.interval)
             guard !Task.isCancelled else { return }
             show(index + 1)

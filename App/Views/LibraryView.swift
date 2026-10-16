@@ -383,8 +383,9 @@ private struct BottleSummary: View {
                      tint: online ? Theme.online : .secondary)
             }
             if model.runningBottles.contains(bottle.id) {
+                // No endless effect: it kept the app redrawing for the whole game (~45% CPU plus
+                // WindowServer compositing, measured 2026-10-17).
                 Chip(title: "Running", systemImage: "circle.fill", tint: Theme.running)
-                    .symbolEffect(.pulse)
                     .transition(.scale.combined(with: .opacity))
             }
         }
@@ -611,7 +612,6 @@ struct GameCard: View {
                         .padding(8)
                     } else if model.isRunning(game) {
                         Label("Running", systemImage: "circle.fill")
-                            .symbolEffect(.pulse)
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Theme.running)
                             .padding(.horizontal, 8).padding(.vertical, 4)

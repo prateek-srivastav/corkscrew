@@ -35,4 +35,32 @@ struct HostRootCertificatesTests {
             #expect(HostRootCertificates.missing([new], prefix: prefix.appending(path: "nowhere")) == [new], "no registry yet: import all")
         }
     }
+
+    @Test func readsSavedThumbprintsInAnyCase() {
+        let registry = """
+            WINE REGISTRY Version 2
+
+            [Software\\\\Microsoft\\\\SystemCertificates\\\\Root\\\\Certificates\\\\0a1b2c] 1791375674
+            "Blob"=hex:00
+            [SOFTWARE\\\\Microsoft\\\\SystemCertificates\\\\Root\\\\Certificates\\\\DDEE] 1791375674
+            [Software\\\\Microsoft\\\\SystemCertificates\\\\CA\\\\Certificates\\\\FFFF] 1791375674
+            [Software\\\\Microsoft\\\\SystemCertificates\\\\Root\\\\Certificates] 1791375674
+
+            """
+        #expect(HostRootCertificates.savedThumbprints(in: Data(registry.utf8)) == ["0A1B2C", "DDEE"])
+    }
+
+    /// The real registry is ~4 MB; the check runs before every isolated launch.
+    @Test func checksALargeRegistryQuickly() throws {
+        try withTempDir { prefix in
+            let roots = (0 ..< 200).map { Data([UInt8($0), 7, 7]) }
+            let header = #"[Software\\Microsoft\\SystemCertificates\\Root\\Certificates\\"#
+            var text = String(repeating: "[Software\\\\Classes\\\\Filler] 1791375674\n\"Value\"=\"0123456789abcdef\"\n", count: 60_000)
+            for der in roots.dropFirst(100) { text += header + HostRootCertificates.thumbprint(der) + "] 1791375674\n" }
+            try Data(text.utf8).write(to: prefix.appending(path: "system.reg"))
+            let start = ContinuousClock.now
+            #expect(HostRootCertificates.missing(roots, prefix: prefix) == Array(roots.prefix(100)))
+            #expect(ContinuousClock.now - start < .seconds(1))
+        }
+    }
 }

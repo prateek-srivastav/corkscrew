@@ -37,9 +37,23 @@ public enum HostRootCertificates {
     /// The certificates whose keys aren't in the saved registry (`system.reg`, which can lag a running
     /// bottle by a few seconds; importing again is harmless).
     static func missing(_ certificates: [Data], prefix: URL) -> [Data] {
-        let text = (try? String(contentsOf: prefix.appending(path: "system.reg"), encoding: .utf8))?.lowercased() ?? ""
-        let header = "[" + key.replacingOccurrences(of: #"\"#, with: #"\\"#).lowercased() + #"\\"#
-        return certificates.filter { !text.contains(header + thumbprint($0).lowercased() + "]") }
+        let saved = savedThumbprints(in: (try? Data(contentsOf: prefix.appending(path: "system.reg"))) ?? Data())
+        return certificates.filter { !saved.contains(thumbprint($0)) }
+    }
+
+    /// The thumbprints (upper-case) of the certificate keys in a saved registry file, in one pass over
+    /// its bytes. A text search per certificate took ~10 s for the Mac's ~160 roots in a 4 MB file.
+    static func savedThumbprints(in registry: Data) -> Set<String> {
+        let header = Array(("[" + key.replacingOccurrences(of: #"\"#, with: #"\\"#) + #"\\"#).lowercased().utf8)
+        func lowercased(_ byte: UInt8) -> UInt8 { (0x41 ... 0x5A).contains(byte) ? byte | 0x20 : byte }
+        var result = Set<String>()
+        for line in registry.split(separator: UInt8(ascii: "\n")) {
+            guard line.count > header.count, zip(line, header).allSatisfy({ lowercased($0) == $1 }) else { continue }
+            let name = line.dropFirst(header.count)
+            guard let end = name.firstIndex(of: UInt8(ascii: "]")) else { continue }
+            result.insert(String(decoding: name[..<end], as: UTF8.self).uppercased())
+        }
+        return result
     }
 
     /// The certificates as a `regedit` file. Each `Blob` is a serialized store element, as Wine and
