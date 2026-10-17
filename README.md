@@ -7,13 +7,13 @@
 
 **[prateek-srivastav.github.io/corkscrew](https://prateek-srivastav.github.io/corkscrew/)**
 
-A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on Apple Silicon Macs. It builds its own Wine runtime, picks a graphics translation layer per game, keeps games in separate Wine prefixes ("bottles"), and can run untrusted programs inside a macOS sandbox.
+A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on Apple Silicon Macs. It builds its own Wine runtime, picks a graphics translation layer per game, keeps programs in separate Wine prefixes ("bottles"), and can run untrusted programs inside a macOS sandbox.
 
 It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs games through their stores and launchers, and any Windows program you add. Corkscrew itself doesn't bypass DRM or copy protection. Contributions are welcome (see [Contributing](#contributing)).
 
 | Library | Steam |
 |---|---|
-| <img src="docs/screenshots/library.png" alt="The Library: every game from every bottle, with the last-played ones in a carousel"> | <img src="docs/screenshots/steam.png" alt="The Steam page: the signed-in account's Steam library"> |
+| <img src="docs/screenshots/library.png" alt="The Library: every program from every bottle, with the last-played ones in a carousel"> | <img src="docs/screenshots/steam.png" alt="The Steam page: the signed-in account's Steam library"> |
 | **Game page** | **Online Programs** |
 | <img src="docs/screenshots/game.png" alt="A game page with its art, Open in Steam, and details from the Steam store"> | <img src="docs/screenshots/online.png" alt="Online Programs, a protected bottle with internet on and a Steam of its own"> |
 
@@ -27,14 +27,23 @@ You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free disk
    curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash
    ```
 
-   The [script](scripts/install.sh) downloads the latest DMG (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. Run it again to update.
-
-   Or download `Corkscrew-<version>.dmg` from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest), open it, and drag Corkscrew to Applications.
-2. If you used the DMG: Corkscrew isn't signed with an Apple Developer ID yet, so macOS blocks it the first time. Click **Done**, then **Open Anyway** in **System Settings → Privacy & Security**. You only do this once. The Terminal install skips this step, because macOS only checks apps that a browser downloaded.
-3. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
-4. Open Steam from the Library, sign in, and install your games.
+   The [script](scripts/install.sh) downloads the latest release (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. Run it again to update.
+2. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
+3. Open Steam from the Library, sign in, and install your games. Or install a program you downloaded (below).
 
 Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 runtime is on the [roadmap](#roadmap). To build from source, see [Building](#building).
+
+### Install a program from a download
+
+Corkscrew installs a program that comes as a `.zip`, `.rar`, `.7z`, `.tar.gz` or `.iso`, or as split parts (`.part1.rar`, `.r00`, `.7z.001`). You don't need an unpacking app or Terminal.
+
+1. Drag the download onto Corkscrew's window. Or use **Add Program…** (⌘O), or **Open With → Corkscrew** in Finder. For a split download, pick any part; keep all the parts in one folder.
+2. Choose the bottle (Offline Programs by default) and what happens to your file: **Copy** keeps it, **Move** deletes it after unpacking to save space. Click **Install**.
+3. Corkscrew unpacks the download into the bottle. If there's a disc image, it goes into the bottle's D: drive, like a DVD.
+4. Click **Run Setup** and follow the setup's steps. Keep the install folder it suggests.
+5. When the setup closes, Corkscrew shows the program it installed. Check the name and click **Add to Library**. It deletes the setup files and ejects the disc.
+
+If the download is the program itself, with no setup, step 4 is **Add to Library**. Long steps can run in the background: click **Hide**, and click the bar at the bottom to come back. Password-protected archives and split zips (`.z01`) don't work yet.
 
 ## What works
 
@@ -46,6 +55,7 @@ Apple plans to limit Rosetta after macOS 27, and the runtime needs it; an ARM64 
 | Rockstar Games Launcher | Starts, signs in (Social Club), and launches games |
 | Isolated bottles | Programs run in a macOS sandbox with no access to your files; internet off unless you turn it on; DX11 and DX12 render inside it |
 | App | Library with a tab per bottle, per-game settings, logs, Retina mode, Metal HUD and a performance overlay, Finder "Open With" for `.exe`/`.msi` |
+| Programs from downloads | `.zip`, `.rar`, `.7z`, `.iso` and split archives: unpacks, mounts the disc, runs the setup and adds the program to the Library ([how](#install-a-program-from-a-download)) |
 | Game controllers | Xbox controller works in every tested game (not tried yet in Last Pirates Die Together), through Wine's SDL2 support |
 | Game Mode | Turns on for fullscreen games in standard bottles |
 
@@ -124,11 +134,12 @@ Open it from there the first time: it finds the runtime and components in `build
 ## Using it
 
 - **Steam games** appear in the Library once installed. Tested games are listed under **Not Downloaded** from the start; their button opens them in Steam.
-- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for games.
+- **Downloaded programs** (`.zip`, `.rar`, `.7z`, `.iso`): see [Install a program from a download](#install-a-program-from-a-download).
+- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for programs you open again.
 - **Per-game settings:** graphics backend, MetalFX, Retina mode, Metal HUD, performance overlay, Steam overlay, launch arguments and logs.
-- **Untrusted programs:** create an **Isolated** bottle under Bottles → New Bottle. Turn on **Install Steam** if a game needs Steam; use a second Steam account there, because programs in the bottle can read its sign-in.
+- **Untrusted programs:** create an **Isolated** bottle under Bottles → New Bottle. Turn on **Install Steam** if a program needs Steam; use a second Steam account there, because programs in the bottle can read its sign-in.
 - **Data** lives in `~/Library/{Application Support,Logs,Caches}/Corkscrew`; pass `-DataRoot <folder>` to keep it in one folder.
-- **Uninstall:** **Settings → Clean Up and Uninstall** stops every bottle, deletes the bottles with the games in them, Wine, the library, logs, caches and settings, then deletes the app.
+- **Uninstall:** **Settings → Clean Up and Uninstall** stops every bottle, deletes the bottles with the programs in them, Wine, the library, logs, caches and settings, then deletes the app.
 - **CLI** (`swift build` in `Packages/GameCore`, run from the repository root): `gamecore-cli bottle create <name> [--isolated]`, `inspect <exe>`, and `run --bottle <name> [--backend d3dmetal] [--metalfx] [--hud] [--retina] [--verbose] [--env KEY=VALUE] <exe>`.
 
 If something doesn't work, check [Known issues](#known-issues), then the game's log under **Logs** in its panel.
@@ -161,7 +172,7 @@ Corkscrew is free software: you can redistribute it and modify it under the term
 
 ## Credits and licenses
 
-This repository only contains Corkscrew's own code. The build scripts download each third-party component at build time, check it against `scripts/runtime-pins.env`, and keep it under `build/` (not in git). The DMG's app carries them as an **engine pack** (`Contents/Resources/EnginePack`) with their licenses; `scripts/package-engine.sh` makes it, and each pack is published as a `runtime-*` release with the source of everything in it.
+This repository only contains Corkscrew's own code. The build scripts download each third-party component at build time, check it against `scripts/runtime-pins.env`, and keep it under `build/` (not in git). The released app carries them as an **engine pack** (`Contents/Resources/EnginePack`) with their licenses; `scripts/package-engine.sh` makes it, and each pack is published as a `runtime-*` release with the source of everything in it.
 
 | Component | Used for | License |
 |---|---|---|

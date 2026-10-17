@@ -36,7 +36,7 @@ body:
     attributes:
       label: How you installed it
       options:
-        - Release download (DMG)
+        - Terminal install (curl)
         - Built from source
     validations:
       required: true

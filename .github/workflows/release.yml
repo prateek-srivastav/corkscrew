@@ -42,12 +42,11 @@ jobs:
 
           ## Install
 
-          1. Download **Corkscrew-$version.dmg** below, open it, and drag Corkscrew to Applications. Or install it from Terminal, which also skips step 2: \`curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash\`
-          2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time: click **Done**, then go to **System Settings → Privacy & Security**, click **Open Anyway** next to Corkscrew, and confirm. You only do this once.
-          3. Click **Set Up Corkscrew**: it installs Rosetta if needed, unpacks Wine with its graphics translators (engine $engine, inside the app, including D3DMetal from Apple's Game Porting Toolkit under Apple's non-commercial license), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
-          4. Open Steam from the Library, sign in and install your games.
+          1. Install it from Terminal: \`curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash\`. The script downloads the latest release, checks its SHA-256, puts Corkscrew in Applications and opens it. Run it again to update.
+          2. Click **Set Up Corkscrew**: it installs Rosetta if needed, unpacks Wine with its graphics translators (engine $engine, inside the app, including D3DMetal from Apple's Game Porting Toolkit under Apple's non-commercial license), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
+          3. Open Steam from the Library, sign in and install your games. To install a program you downloaded (\`.zip\`, \`.rar\`, \`.7z\`, \`.iso\`), drag it onto Corkscrew's window: see [Install a program from a download](https://github.com/$GITHUB_REPOSITORY#install-a-program-from-a-download).
 
-          The DMG's SHA-256 is in Corkscrew-$version.dmg.sha256. The engine's source code is published with [its release](https://github.com/$GITHUB_REPOSITORY/releases/tag/runtime-$engine).
+          The engine's source code is published with [its release](https://github.com/$GITHUB_REPOSITORY/releases/tag/runtime-$engine).
 
           ## Changes
 
