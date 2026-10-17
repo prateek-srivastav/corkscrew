@@ -147,7 +147,6 @@ count_install() {
     "$(json "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" "$(json "$(date +%s)$(printf '%08d' $(( (RANDOM * 32768 + RANDOM) % 100000000 )))")" \
     "$debug" "$(json "$locale")" "$(json "$(sw_vers -productVersion)")" "$(json "$version")" "$(json "$build")" \
     "$(json "$model")" "$(json "$kind")" "$(json "$previous")" "$(json "$chip")" "$memory")
-  say "Sending an anonymous install count (DO_NOT_TRACK=1 turns it off)"
   curl -fsS --max-time 5 -o /dev/null -X POST -H 'Content-Type: application/json' -H "App-Key: $ANALYTICS_KEY" \
     --data "$body" "$host/api/v0/events" 2>/dev/null || true
 }
