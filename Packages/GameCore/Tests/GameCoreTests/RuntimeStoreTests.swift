@@ -126,8 +126,8 @@ struct GPTKImporterTests {
         #expect(GPTKImporter.version(fromImageName: name) == version)
     }
 
-    @Test func importsANestedToolkitImage() throws {
-        try withTempDir { root in
+    @Test func importsANestedToolkitImage() async throws {
+        try await withTempDir { root in
             // Shaped like Apple's download: an outer image holding the evaluation environment image.
             let env = root.appending(path: "env")
             let lib = env.appending(path: "redist/lib")
@@ -140,12 +140,12 @@ struct GPTKImporterTests {
             }
             try env.appending(path: "License.rtf").write("license")
             let outerFolder = try root.appending(path: "outer").makeDirectory()
-            try Self.makeImage(from: env, at: outerFolder.appending(path: "Evaluation environment for Windows games 9.1 beta 3.dmg"))
+            try await Self.makeImage(from: env, at: outerFolder.appending(path: "Evaluation environment for Windows games 9.1 beta 3.dmg"))
             let dmg = root.appending(path: "Game_Porting_Toolkit_9.1_beta_3.dmg")
-            try Self.makeImage(from: outerFolder, at: dmg)
+            try await Self.makeImage(from: outerFolder, at: dmg)
 
             let components = root.appending(path: "components")
-            let staged = try GPTKImporter.importToolkit(dmg: dmg, into: components)
+            let staged = try await offThePool { try GPTKImporter.importToolkit(dmg: dmg, into: components) }
             let fm = FileManager.default
             #expect(staged.lastPathComponent == "d3dmetal-9.1b3")
             #expect(fm.fileExists(atPath: staged.appending(path: "wine/x86_64-windows/nvngx.dll").path))
@@ -158,18 +158,18 @@ struct GPTKImporterTests {
             // Both images were detached.
             #expect(!Self.mountedImages().contains { $0.contains(root.lastPathComponent) || $0.contains("9.1 beta 3") })
 
-            #expect(throws: GPTKImporter.ImportError.alreadyImported("d3dmetal-9.1b3")) {
-                try GPTKImporter.importToolkit(dmg: dmg, into: components)
+            await #expect(throws: GPTKImporter.ImportError.alreadyImported("d3dmetal-9.1b3")) {
+                try await offThePool { try GPTKImporter.importToolkit(dmg: dmg, into: components) }
             }
         }
     }
 
-    static func makeImage(from folder: URL, at image: URL) throws {
+    static func makeImage(from folder: URL, at image: URL) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         process.arguments = ["create", "-quiet", "-fs", "HFS+", "-format", "UDRO", "-srcfolder", folder.path, image.path]
         try process.run()
-        process.waitUntilExit()
+        await exited(process)
         #expect(process.terminationStatus == 0)
     }
 

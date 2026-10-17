@@ -63,16 +63,17 @@ struct ProcessRunnerTests {
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("pipes\n"))
     }
 
-    /// The background program outlives the launch by seconds, not milliseconds: on a busy CI Mac
-    /// starting the shell alone took 1.7 s, which a 1-second sleep couldn't tell apart from waiting.
+    /// The background program outlives the launch by many seconds: on a busy CI Mac starting the
+    /// shell alone took 1.7 s, and returning from the launch took 4.2 s while other tests held the
+    /// threads.
     @Test func keepsLoggingProgramsThatOutliveTheLaunch() async throws {
         let start = ContinuousClock.now
-        let (result, dir) = try await run("(sleep 5; echo late) & echo early")
+        let (result, dir) = try await run("(sleep 10; echo late) & echo early")
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(ContinuousClock.now - start < .seconds(4), "returns when the launched process exits")
+        #expect(ContinuousClock.now - start < .seconds(8), "returns when the launched process exits")
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("early\n"))
 
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(30)
         while try !String(contentsOf: result.log, encoding: .utf8).hasSuffix("late\n"), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -114,13 +115,9 @@ struct BottleProcessesTests {
         #expect(parsed.environment == ["WINEPREFIX": "/bottle", "HOME": "/h"])
     }
 
-    /// macOS hides the environment of its own system binaries, so the stand-in for Wine is a re-signed copy.
-    @Test func readsARealProcess() throws {
-        try withTempDir { dir in
-            let sleep = dir.appending(path: "sleep")
-            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
-            let sign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", sleep.path])
-            sign.waitUntilExit()
+    @Test func readsARealProcess() async throws {
+        try await withTempDir { dir in
+            let sleep = try await signedSleep(in: dir)
             let process = Process()
             process.executableURL = sleep
             process.arguments = ["5"]
@@ -134,12 +131,9 @@ struct BottleProcessesTests {
     }
 
     /// One shared scan: a process is found by its prefix, again from the cache, and is gone once it quits.
-    @Test func listsAPrefixsProcessesFromTheSharedScan() throws {
-        try withTempDir { dir in
-            let sleep = dir.appending(path: "sleep")
-            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
-            let sign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", sleep.path])
-            sign.waitUntilExit()
+    @Test func listsAPrefixsProcessesFromTheSharedScan() async throws {
+        try await withTempDir { dir in
+            let sleep = try await signedSleep(in: dir)
             let prefix = dir.appending(path: "prefix")
             let process = Process()
             process.executableURL = sleep
@@ -153,7 +147,7 @@ struct BottleProcessesTests {
                     "found again through the cache")
             #expect(BottleProcesses.list(prefix: dir.appending(path: "other"), maxAge: .zero).isEmpty)
             process.terminate()
-            process.waitUntilExit()
+            await exited(process)
             #expect(BottleProcesses.list(prefix: prefix, maxAge: .zero).isEmpty)
         }
     }
