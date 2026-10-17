@@ -9,29 +9,6 @@ public enum Steam {
     /// Steam ignores every flag after a literal `--`; these keep it from restoring its own web helper.
     public static let clientArguments = ["-noverifyfiles", "-norepairfiles"]
 
-    /// Settings tested on this Mac, by Steam app id; the detected backend covers everything else.
-    public static let testedProfiles: [String: GameProfile] = [
-        // Black Myth: Wukong Benchmark Tool: DX12 through D3DMetal (GPTK 3.0) with MetalFX (pick DLSS in
-        // the game), Retina on. In game: Super Resolution ~34, Medium with GI/Reflections/Shadows Low,
-        // Frame Generation off (it crashes on DX12).
-        "3132990": GameProfile(backendOverride: .d3dmetal, metalFX: true, retinaMode: true),
-        // Red Dead Redemption 2: DX12 through D3DMetal (GPTK 3.0) with MetalFX, Retina off. Its in-game
-        // settings start from RockstarLauncher.rdr2TestedSettings.
-        "1174180": GameProfile(backendOverride: .d3dmetal, metalFX: true),
-        // Emily is Away: 32-bit, DX11 through DXVK.
-        "417860": GameProfile(backendOverride: .dxvk),
-    ]
-
-    /// Games tested with Corkscrew, shown in the library before they're installed: their button opens
-    /// their store page in Steam, and they start with their tested settings once downloaded.
-    public static let testedGames: [(appID: String, name: String)] = [
-        ("1174180", "Red Dead Redemption 2"),
-        ("3132990", "Black Myth: Wukong Benchmark Tool"),
-        ("417860", "Emily is Away"),
-    ]
-
-    public static func isTested(appID: String) -> Bool { testedGames.contains { $0.appID == appID } }
-
     /// Starts Steam without its window when launching a game: under Wine the window is drawn in
     /// software and costs one to two CPU cores the game could use. Steam's icon stays in the menu bar.
     public static let silentArgument = "-silent"
@@ -40,10 +17,7 @@ public enum Steam {
     /// tested setup of the main game here (the Wukong benchmark), except Retina mode: Steam's window
     /// is drawn by the CPU, and at Retina resolution that's four times the pixels.
     public static var clientProfile: GameProfile {
-        var profile = testedProfiles["3132990"]!
-        profile.retinaMode = false
-        profile.arguments = clientArguments
-        return profile
+        GameProfile(backendOverride: .d3dmetal, metalFX: true, arguments: clientArguments)
     }
 
     /// Bumped when the settings found entries get change; `upgraded(_:from:)` brings entries saved

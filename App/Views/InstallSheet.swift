@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Installs a download step by step: where it goes and what happens to the file, unpacking, the
-/// disc image question, the setup, and which program starts the game.
+/// disc image question, the setup, and which program goes in the Library.
 struct InstallSheet: View {
     @Environment(AppModel.self) private var model
     @State private var candidate: SetupFinder.Candidate?
@@ -54,7 +54,7 @@ struct InstallSheet: View {
         case .choose: choose(job)
         case .unpacking(let fraction):
             working("Unpacking… \(Int(fraction * 100))%", fraction: fraction,
-                    detail: "Big games take a while. You can hide this window: Corkscrew keeps going.")
+                    detail: "Big downloads take a while. You can hide this window: Corkscrew keeps going.")
             buttons { cancelButton(job); Spacer(); hideButton }
         case .disc(let images): disc(images, job: job)
         case .preparingDisc(let mounting):
@@ -65,7 +65,7 @@ struct InstallSheet: View {
         case .runningSetup:
             working("The setup is running", fraction: nil,
                     detail: "Follow the steps in the setup's window. Keep the install folder it suggests. "
-                        + "When the setup closes, Corkscrew deletes the setup files and asks which program starts the game.")
+                        + "When the setup closes, Corkscrew deletes the setup files and asks which program to add to your library.")
             buttons {
                 cancelButton(job)
                 Spacer()
@@ -106,7 +106,7 @@ struct InstallSheet: View {
         Option(title: "Move", systemImage: "arrow.right.doc.on.clipboard", isSelected: job.original == .move,
                text: job.isDiscImage
                    ? "Corkscrew uses your disc image, then deletes it when the setup is done. Saves space; to install again, you'd need to download it again."
-                   : "Corkscrew deletes your file as soon as it's unpacked, to free the space. Best for big games; to install again, you'd need to download it again.") {
+                   : "Corkscrew deletes your file as soon as it's unpacked, to free the space. To install again, you'd need to download it again.") {
             installer.setOriginal(.move)
         }
         spaceNote(job)
@@ -123,12 +123,12 @@ struct InstallSheet: View {
     @ViewBuilder
     private func spaceNote(_ job: ProgramInstaller.Job) -> some View {
         if let free = installer.freeSpace {
-            // Unpacked, a download takes about its own size (games inside are compressed); the installed game as much again.
+            // Unpacked, a download takes about its own size (programs inside are compressed); the installed program as much again.
             let needed = job.isDiscImage ? job.size : job.size * 2
             let tight = free < needed
             Label("\(bytes(free)) free. " + (job.isDiscImage
-                    ? "The installed game needs about \(bytes(job.size))."
-                    : "Unpacking needs about \(bytes(job.size)), and the installed game about as much again."),
+                    ? "The installed program needs about \(bytes(job.size))."
+                    : "Unpacking needs about \(bytes(job.size)), and the installed program about as much again."),
                   systemImage: tight ? "exclamationmark.triangle" : "internaldrive")
                 .font(.subheadline)
                 .foregroundStyle(tight ? .orange : .secondary)
@@ -144,7 +144,7 @@ struct InstallSheet: View {
         Option(title: "Use the disc image (recommended)", systemImage: "opticaldisc", isSelected: mountsDisc,
                text: "Corkscrew puts the disc image in the bottle's drive, like a DVD, and runs the setup from it. "
                    + "Fast, and needs no extra space. After the setup, the disc comes out again. "
-                   + "A few old games ask for their disc every time they start; those won't start then.") {
+                   + "A few old programs ask for their disc every time they start; those won't start then.") {
             mountsDisc = true
         }
         Option(title: "Unpack the disc image", systemImage: "square.and.arrow.down.on.square", isSelected: !mountsDisc,
@@ -165,14 +165,14 @@ struct InstallSheet: View {
         let picked = candidate.flatMap { candidates.contains($0) ? $0 : nil } ?? candidates[0]
         Text(picked.isSetup
              ? "Corkscrew runs the setup once. Follow its steps and keep the install folder it suggests. "
-                + "When it's done, Corkscrew deletes the setup files and adds the game to your library."
-             : "There's no setup in this download: it's the game itself. Corkscrew keeps its files in the bottle "
-                + "(in C:\\Games) and adds the game to your library.")
+                + "When it's done, Corkscrew deletes the setup files and adds the program to your library."
+             : "There's no setup in this download: it's the program itself. Corkscrew keeps its files in the bottle "
+                + "(in C:\\Games) and adds it to your library.")
             .font(.body)
         Form {
             Picker(picked.isSetup ? "Setup" : "Program", selection: Binding(get: { picked }, set: { candidate = $0 })) {
                 ForEach(candidates) { item in
-                    Text(installer.displayPath(of: item.url) + (item.isSetup ? "" : "  (the game)")).tag(item)
+                    Text(installer.displayPath(of: item.url) + (item.isSetup ? "" : "  (the program)")).tag(item)
                 }
             }
         }
@@ -190,7 +190,7 @@ struct InstallSheet: View {
     private func pickProgram(_ programs: [URL]) -> some View {
         let picked = program.flatMap { programs.contains($0) ? $0 : nil } ?? programs.first
         if let picked {
-            Text("The setup is done. Pick the program that starts the game; the setup files are deleted then.").font(.body)
+            Text("The setup is done. Pick the program to add to your library; the setup files are deleted then.").font(.body)
             Form {
                 Picker("Program", selection: Binding(get: { picked }, set: { program = $0; name = Game.defaultName(for: $0) })) {
                     ForEach(programs, id: \.self) { item in Text(installer.displayPath(of: item)).tag(item) }

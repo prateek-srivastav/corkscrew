@@ -69,6 +69,7 @@ struct ContentView: View {
         }
         .alert("Something went wrong", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
+            if AppModel.offersReports { Button("Report…") { model.reportError() } }
         } message: {
             Text(model.errorMessage ?? "")
         }

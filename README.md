@@ -45,6 +45,36 @@ Corkscrew installs a program that comes as a `.zip`, `.rar`, `.7z`, `.tar.gz` or
 
 If the download is the program itself, with no setup, step 4 is **Add to Library**. Long steps can run in the background: click **Hide**, and click the bar at the bottom to come back. Password-protected archives and split zips (`.z01`) don't work yet.
 
+### Usage counts
+
+Corkscrew sends a few anonymous counts that show how many people install it and on which Macs:
+
+- **install**: from the install script, after an install or an update. It has the version, the version it replaced, macOS, the Mac model, the chip and memory, and the language.
+- **first_launch**: once, the first time Corkscrew opens, with the same details.
+- **setup_done**: when **Set Up Corkscrew** finishes. It has how long setup took, whether it installed Rosetta, and where Wine came from.
+
+The counts go to [Aptabase](https://aptabase.com). Aptabase shows the country from the connection and doesn't keep the IP address. Nothing identifies you: no name, account, Apple ID, files, programs or games, and no ID that lasts (Aptabase's visitor hash changes every day). The code is in [Analytics.swift](Packages/GameCore/Sources/GameCore/Analytics.swift) and the [install script](scripts/install.sh).
+
+To turn them off, switch off **Send anonymous usage counts** in Settings → Privacy. Or install with `DO_NOT_TRACK=1`, which also turns off the app's counts before it opens:
+
+```bash
+curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | DO_NOT_TRACK=1 bash
+```
+
+### Crash and error reports
+
+When a program crashes, a program doesn't start, or Corkscrew itself quits unexpectedly, Corkscrew shows a report. An error message has a **Report…** button too. The report has what happened, the Corkscrew, macOS and Wine versions, the Mac, the bottle, the program's graphics and settings, Wine's backtrace and the end of the log. Your home folder shows as `~` and your user name as `<user>`.
+
+Nothing is sent until you click. **Send Report** sends the report to Corkscrew's relay ([`relay/`](relay)), a small Cloudflare Worker. It keeps the whole report privately and opens a public [GitHub issue](https://github.com/Prateek-Srivastav/corkscrew/issues?q=label%3Acrash-report) with the title, the summary line, the details and the start of the backtrace; your note and the end of the log stay private. The relay doesn't keep your IP address. If sending fails, **Report on GitHub…** copies the whole report and opens a new [bug report](https://github.com/Prateek-Srivastav/corkscrew/issues/new?template=bug_report.yml) with as much of it as fits in the link; paste the rest. GitHub issues are public, so read the report first. To stop the reports, switch off **Offer to report crashes and working settings** in Settings → Privacy.
+
+Corkscrew turns off Wine's crash dialog in each bottle, so Wine writes the backtrace into the launch log (**Show Log**) instead of a `backtrace.txt` you would have to save from the dialog.
+
+### Share settings that work
+
+After you play a Steam game for 15 minutes without a crash, with settings that aren't on the tested list, Corkscrew asks whether it ran well. **Share on GitHub…** opens a new [game report](https://github.com/Prateek-Srivastav/corkscrew/issues/new?template=game_report.yml) with the game, its Corkscrew settings, your Mac and macOS filled in. It asks once for each game and set of settings.
+
+When a maintainer checks the report and labels it **tested**, a workflow adds the settings to [the tested list](Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift) in a pull request. After the next release, everyone's copy of that game starts with them. The workflow takes only the settings Corkscrew shares, and never changes the games tested here.
+
 ## What works
 
 | Area | Status |

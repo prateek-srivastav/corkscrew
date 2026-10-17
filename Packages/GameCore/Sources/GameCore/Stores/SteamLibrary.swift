@@ -60,11 +60,12 @@ extension Steam {
     private static let libraries = Mutex<[String: (modified: Date?, size: Int?, ids: Set<UInt32>, games: [LibraryGame])]>([:])
 
     /// A library entry that starts the game through Steam (`-silent -applaunch`) with its tested
-    /// settings, or `profile` when it has none.
+    /// settings and arguments, or `profile` when it has none.
     public static func entry(appID: String, name: String, bottleID: UUID, steamRoot: URL,
                              profile: GameProfile = GameProfile(), program: URL? = nil) -> Game {
-        var profile = testedProfiles[appID] ?? profile
-        profile.arguments = clientArguments + [silentArgument, "-applaunch", appID]
+        let tested = testedProfiles[appID]
+        var profile = tested ?? profile
+        profile.arguments = clientArguments + [silentArgument, "-applaunch", appID] + (tested?.arguments ?? [])
         return Game(name: name, executable: steamRoot.appending(path: "steam.exe"), bottleID: bottleID, profile: profile,
                     store: StoreItem(store: store, appID: appID), iconSource: program)
     }

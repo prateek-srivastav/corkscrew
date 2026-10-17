@@ -1,0 +1,20 @@
+{
+  "name": "corkscrew-relay",
+  "private": true,
+  "description": "Takes Corkscrew's crash and error reports: keeps the whole report private in R2 and opens a GitHub issue with a summary.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.4",
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.1"
+  }
+}

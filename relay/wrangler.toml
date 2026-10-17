@@ -1,0 +1,35 @@
+# Corkscrew's report relay: takes crash and error reports from the app, keeps each whole report in a
+# private R2 bucket and opens a GitHub issue with a summary. Deploy steps: README.md.
+name = "corkscrew-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# No Workers Logs: they would keep request details, the sender's address among them. Read live
+# output with `npx wrangler tail` instead.
+[observability]
+enabled = false
+
+[vars]
+GITHUB_REPOSITORY = "Prateek-Srivastav/corkscrew"
+# Reports one address can send in an hour, and issues the relay opens in a day (UTC) in all. Reports
+# over the daily limit are still kept, without an issue.
+REPORTS_PER_HOUR = "5"
+ISSUES_PER_DAY = "50"
+
+# Secrets (`npx wrangler secret put <name>`, not in this file):
+#   GITHUB_TOKEN    fine-grained token for the repository above, Issues: read and write only
+#   RATE_LIMIT_KEY  random text; the counters are named by a keyed hash of the address, not the address
+
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "corkscrew-reports"
+
+# The rate-limit counters: one small Durable Object per sender and hour, and one per day for issues.
+[[durable_objects.bindings]]
+name = "COUNTERS"
+class_name = "Counter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Counter"]
