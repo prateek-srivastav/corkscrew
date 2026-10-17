@@ -17,6 +17,12 @@ struct CorkscrewApp: App {
                 .environment(model)
                 .environment(navigator)
                 .frame(minWidth: 1080, minHeight: 620)
+                .background {
+                    Color.clear.sheet(item: $model.pendingReport) { ReportSheet(pending: $0) }
+                }
+                .background {
+                    Color.clear.sheet(item: $model.pendingShare) { ShareSettingsSheet(prompt: $0).environment(model) }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)

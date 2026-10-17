@@ -10,8 +10,11 @@ struct SetupView: View {
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
     @AppStorage(AppModel.lowersLaunchersKey) private var lowersLaunchers = false
     @AppStorage(AppModel.excludesGamesFromBackupsKey) private var excludesGamesFromBackups = false
+    @AppStorage(AppModel.sendsUsageCountsKey) private var sendsUsageCounts = true
+    @AppStorage(AppModel.offersReportsKey) private var offersReports = true
 
     static let gameportingToolkitPage = URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!
+    static let usageCountsPage = URL(string: "https://github.com/Prateek-Srivastav/corkscrew#usage-counts")!
 
     var body: some View {
         ScrollView {
@@ -59,6 +62,22 @@ struct SetupView: View {
                                 + "play. Saves in Documents, AppData and Steam stay in backups. A game that keeps its saves "
                                 + "in its own folder loses them from backups.")
                             .onChange(of: excludesGamesFromBackups) { model.updateBackupExclusions() }
+                    }
+                }
+
+                Card {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SectionLabel("Privacy")
+                        setting("Send anonymous usage counts", isOn: $sendsUsageCounts,
+                                "Counts the first launch and each finished setup, with the Mac model, chip and memory, the "
+                                + "macOS and Corkscrew versions, and the language. The country comes from the connection; the "
+                                + "IP address isn't kept. No names, files or programs.")
+                        Link("What's sent", destination: Self.usageCountsPage)
+                            .font(.subheadline)
+                        setting("Offer to report crashes and working settings", isOn: $offersReports,
+                                "After a program crashes, or something in Corkscrew fails, shows the report: what happened, "
+                                + "the Mac, the program's settings and the end of its log. After a Steam game runs well with "
+                                + "settings that aren't on the tested list, asks to share them. Nothing is sent until you click.")
                     }
                 }
 

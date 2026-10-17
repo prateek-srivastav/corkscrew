@@ -1,0 +1,59 @@
+name: Tested settings
+
+# A maintainer's "tested" label on a Game report that Corkscrew filled in adds the game's settings
+# to the tested list (Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift) in a pull
+# request. scripts/tested-settings.py checks them: the report is untrusted.
+# Needs Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tested-settings
+  cancel-in-progress: false
+
+jobs:
+  add:
+    name: Add tested settings
+    if: github.event.label.name == 'tested'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # to push the branch
+      pull-requests: write # to open the pull request
+      issues: write # to say why a report can't be added
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      BRANCH: tested-settings/issue-${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Add the settings
+        env:
+          # From the environment, never in the script's text: the report is untrusted.
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          python3 -I scripts/tested-settings.py --title-out "$RUNNER_TEMP/title" --body-out "$RUNNER_TEMP/body" \
+            --error-out "$RUNNER_TEMP/error"
+      - name: Open a pull request
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "$(cat "$RUNNER_TEMP/title")"
+          git push --force origin "$BRANCH"
+          if [[ -n $(gh pr list --head "$BRANCH" --json number --jq '.[].number') ]]; then
+            gh pr edit "$BRANCH" --title "$(cat "$RUNNER_TEMP/title")" --body-file "$RUNNER_TEMP/body"
+          else
+            gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+              --title "$(cat "$RUNNER_TEMP/title")" --body-file "$RUNNER_TEMP/body"
+          fi
+      - name: Say why it wasn't added
+        if: failure()
+        run: |
+          reason=$(cat "$RUNNER_TEMP/error" 2>/dev/null || echo "The workflow failed; see its log.")
+          gh issue comment "$ISSUE_NUMBER" --body "These settings weren't added to the tested list: $reason"

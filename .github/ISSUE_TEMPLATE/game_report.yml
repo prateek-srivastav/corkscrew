@@ -51,6 +51,12 @@ body:
       label: Settings and performance
       description: Corkscrew settings (MetalFX, Retina mode, launch arguments), in-game settings, resolution and FPS.
   - type: textarea
+    id: corkscrew
+    attributes:
+      label: Corkscrew settings
+      description: Filled in when you share a Steam game's settings from Corkscrew. Leave it as it is; after a maintainer checks the report, it's added to the tested list.
+      render: json
+  - type: textarea
     id: issues
     attributes:
       label: Issues and workarounds

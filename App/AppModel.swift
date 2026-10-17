@@ -214,6 +214,8 @@ final class AppModel {
         }
         updateBackupExclusions()
         trimCaches()
+        countFirstLaunch()
+        offerAppCrashReport()
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -451,6 +453,10 @@ final class AppModel {
     static let lowersLaunchersKey = "LowerLaunchersDuringGames"
     /// Settings → "While you play": installed games left out of Time Machine backups.
     static let excludesGamesFromBackupsKey = "ExcludeGamesFromBackups"
+    /// Settings → "Privacy": anonymous usage counts (`Analytics`). On until turned off there, or by
+    /// install.sh with DO_NOT_TRACK.
+    static let sendsUsageCountsKey = "SendsUsageCounts"
+    static var sendsUsageCounts: Bool { UserDefaults.standard.object(forKey: sendsUsageCountsKey) as? Bool ?? true }
 
     @ObservationIgnored private var wasGameRunning = false
     @ObservationIgnored private var loweredPrograms: Set<pid_t> = []
@@ -805,13 +811,20 @@ final class AppModel {
                     + (prepared.inspection?.antiCheat.map { "\($0.kind.rawValue) found (\($0.evidence)): "
                         + ($0.severity == .blocksLaunch ? "this game won't run under Wine." : "online play may not work.") } ?? [])
                 self?.sessions[game.id]?.status = .running
+                let started = ContinuousClock.now
                 if game.profile.performanceOverlay { Self.startOverlay(prefix: prepared.context.location.prefix) }
                 let result = try await Launcher.run(prepared)
                 self?.sessions[game.id]?.status = Task.isCancelled ? .stopped : .exited(result.status)
+                if !Task.isCancelled {
+                    // With Steam already running, the game ran with Steam's settings: nothing of its own to share.
+                    await self?.sessionEnded(game, result: result, backend: prepared.plan.backend, log: prepared.log,
+                                             played: ContinuousClock.now - started, ranOwnSettings: !steamWasRunning)
+                }
             } catch is CancellationError {
                 self?.sessions[game.id]?.status = .stopped
             } catch {
                 self?.sessions[game.id]?.status = Task.isCancelled ? .stopped : .failed(Self.describe(error))
+                if !Task.isCancelled { self?.offerReport(.launchFailed, for: game, summary: Self.describe(error)) }
             }
             self?.refreshRunningBottles()
         }
@@ -1121,6 +1134,9 @@ final class AppModel {
                 setupStep = nil
             }
             setupFailure = nil
+            let started = ContinuousClock.now
+            let installsRosetta = !hasRosetta
+            var engine = "installed before"
             if !hasRosetta {
                 setupStep = .rosetta
                 let installed: Void? = await perform("Installing Rosetta… (macOS asks for your password; the download takes a minute)", reloading: .setup) {
@@ -1130,6 +1146,7 @@ final class AppModel {
             }
             setupStep = .engine
             if runtimes.isEmpty || Self.enginePack.upgradesInstalledRuntime(in: paths) {
+                engine = Self.bundledEnginePack == nil ? "downloaded" : "in the app"
                 guard await installEnginePack(), !Task.isCancelled else { return stopSetUp(at: .engine) }
             }
             setupStep = .steam
@@ -1139,6 +1156,194 @@ final class AppModel {
             }
             setupStep = .protectedGames
             guard await createDefaultBottles() else { return stopSetUp(at: .protectedGames) }
+            guard !Task.isCancelled else { return }
+            let seconds = Int(started.duration(to: .now).components.seconds)
+            // Not awaited: setup is done, and the count may take seconds.
+            Task { await count("setup_done", ["seconds": .int(seconds), "installed_rosetta": .bool(installsRosetta), "engine": .string(engine)]) }
+        }
+    }
+
+    // MARK: Usage counts
+
+    /// `-AnalyticsKey <key>` sends to another Aptabase app (A-DEV-… to a local server at port 3000).
+    private static let analytics = Analytics(key: UserDefaults.standard.string(forKey: "AnalyticsKey") ?? Analytics.appKey,
+                                             system: .current(isDebug: isDebugBuild))
+    /// Set once the first launch is counted, or when counts were off at the first launch.
+    private static let firstLaunchCountedKey = "FirstLaunchCounted"
+
+    /// Debug builds' counts go to Aptabase's debug data, apart from the releases'.
+    static var isDebugBuild: Bool {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// Sends one anonymous count unless Settings turned them off, and returns whether it went.
+    @discardableResult
+    private func count(_ event: String, _ props: [String: Analytics.Value] = [:]) async -> Bool {
+        guard Self.sendsUsageCounts, let analytics = Self.analytics else { return false }
+        return await analytics.send(event, props: props)
+    }
+
+    // MARK: Crash and error reports
+
+    /// A report the report sheet offers, after a crash or an error.
+    struct PendingReport: Identifiable {
+        let id = UUID()
+        var report: ProblemReport
+        var logFile: URL?
+        /// The Bug report form's name for the graphics backend.
+        var backend = "Not related to graphics"
+    }
+
+    var pendingReport: PendingReport?
+    /// Where Send Report posts reports; `-ReportRelayURL <url>` tries another server.
+    static var reportRelay: URL? { UserDefaults.standard.string(forKey: "ReportRelayURL").flatMap(URL.init(string:)) ?? ProblemReport.relayURL }
+
+    /// Settings → "Privacy": offer a report after a crash or an error. Nothing is sent without a click.
+    static let offersReportsKey = "OffersProblemReports"
+    static var offersReports: Bool { UserDefaults.standard.object(forKey: offersReportsKey) as? Bool ?? true }
+    /// When the app last looked for its own crash reports.
+    private static let crashReportsCheckedKey = "CrashReportsChecked"
+
+    private func offer(_ report: ProblemReport, logFile: URL? = nil, backend: GraphicsBackend? = nil) {
+        guard Self.offersReports else { return }
+        pendingReport = PendingReport(report: report, logFile: logFile, backend: backend?.formName ?? "Not related to graphics")
+    }
+
+    /// After a launch ends by itself: a report when the program crashed (Wine's backtrace in the
+    /// log, or Wine ended by a signal). Or, for a Steam game played a while with settings the
+    /// tested list doesn't have, an offer to share them.
+    private func sessionEnded(_ game: Game, result: RunResult, backend: GraphicsBackend?, log: URL, played: Duration,
+                              ranOwnSettings: Bool) async {
+        guard Self.offersReports else { return }
+        let found = await Task.detached(priority: .utility) {
+            (crash: ProblemReport.crash(inLog: log), tail: ProblemReport.logTail(of: log))
+        }.value
+        if found.crash != nil || result.crashed {
+            offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: found.crash?.summary ?? "Wine \(result.outcome).",
+                                details: reportDetails(for: game, backend: backend), backtrace: found.crash?.backtrace, log: found.tail),
+                  logFile: log, backend: backend)
+        } else if ranOwnSettings, played >= Self.playedBeforeAskingToShare {
+            offerToShare(game, played: played)
+        }
+    }
+
+    /// A launch that failed before the program ran.
+    private func offerReport(_ kind: ProblemReport.Kind, for game: Game, summary: String) {
+        let log = sessions[game.id]?.log
+        offer(ProblemReport(kind: kind, title: "\(game.name) didn't start", summary: summary, details: reportDetails(for: game),
+                            log: log.flatMap { ProblemReport.logTail(of: $0) }),
+              logFile: log)
+    }
+
+    /// The error alert's Report button.
+    func reportError() {
+        guard let message = errorMessage else { return }
+        errorMessage = nil
+        let report = ProblemReport(kind: .error, title: "Something went wrong", summary: message, details: reportDetails())
+        // After the alert closes: a sheet asked for while it closes doesn't show.
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            pendingReport = PendingReport(report: report)
+        }
+    }
+
+    /// Corkscrew's own crash since the last launch, from macOS's crash reports. Not at the first
+    /// check: older reports may be from another version.
+    private func offerAppCrashReport() {
+        let since = UserDefaults.standard.object(forKey: Self.crashReportsCheckedKey) as? Date
+        UserDefaults.standard.set(Date(), forKey: Self.crashReportsCheckedKey)
+        guard let since, Self.offersReports else { return }
+        let details = reportDetails()
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/DiagnosticReports", directoryHint: .isDirectory)
+        Task {
+            let report = await Task.detached(priority: .utility) { () -> ProblemReport? in
+                let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+                let newest = files
+                    .filter { $0.lastPathComponent.hasPrefix("Corkscrew-") && $0.pathExtension == "ips" }
+                    .compactMap { url in (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate.map { (url, $0) } }
+                    .filter { $0.1 > since }
+                    .max { $0.1 < $1.1 }
+                return newest.flatMap { ProblemReport.appCrash(ipsFile: $0.0, details: details) }
+            }.value
+            if let report, pendingReport == nil { offer(report) }
+        }
+    }
+
+    /// Corkscrew and the Mac, then the program and its settings: what a report says besides the error.
+    func reportDetails(for game: Game? = nil, backend: GraphicsBackend? = nil) -> [String] {
+        let system = Analytics.System.current(isDebug: Self.isDebugBuild)
+        var lines = ["Corkscrew: \(system.appVersion) (\(system.appBuildNumber))" + (Self.isDebugBuild ? ", debug build" : ""),
+                     "macOS: \(system.osVersion)",
+                     "Mac: \(Hardware.model), \(Hardware.chip), \(Hardware.memoryGB) GB",
+                     "Wine: \(runtimes.isEmpty ? "not installed" : runtimes.map(\.id).joined(separator: ", ")), engine pack \(EnginePack.current.version)",
+                     "Rosetta: \(hasRosetta ? "installed" : "not installed")"]
+        guard let game else { return lines }
+        lines.append("Program: \(game.name)" + (game.store?.appID.map { " (Steam app \($0))" } ?? ""))
+        if let bottle = bottle(for: game) {
+            lines.append("Bottle: \(bottle.name), Wine \(bottle.engineID), \(bottle.windowsVersion.rawValue), " + (bottle.kind == .isolated
+                ? "protected, internet \(bottle.isolation.allowNetwork ? "on" : "off")" : "not protected"))
+        }
+        let profile = game.profile
+        lines.append("Graphics: \(backend?.displayName ?? "not chosen") (setting: \(profile.backendOverride?.displayName ?? "Automatic"))")
+        lines.append("Settings: MetalFX \(profile.metalFX ? "on" : "off"), Retina mode \(profile.retinaMode ? "on" : "off"), "
+                     + "AVX \(profile.advertiseAVX ? "on" : "off"), Steam overlay \(profile.steamOverlay ? "on" : "off")"
+                     + (profile.arguments.isEmpty ? "" : ", arguments: \(profile.arguments.joined(separator: " "))")
+                     + (profile.environment.isEmpty ? "" : ", environment: "
+                        + profile.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")))
+        return lines
+    }
+
+    /// The issue forms' "Corkscrew version" and "Mac and macOS" fields.
+    func formVersionAndMac() -> (version: String, mac: String) {
+        let system = Analytics.System.current(isDebug: Self.isDebugBuild)
+        return ("\(system.appVersion) (\(system.appBuildNumber))", "\(system.osVersion), \(Hardware.model), \(Hardware.chip), \(Hardware.memoryGB) GB")
+    }
+
+    // MARK: Sharing settings that work
+
+    /// A Steam game that ran well, and the settings it ran with: the share sheet offers them for
+    /// the tested list.
+    struct SharePrompt: Identifiable {
+        let id = UUID()
+        var game: Game
+        var minutes: Int
+    }
+
+    var pendingShare: SharePrompt?
+
+    /// How long a game must run before it counts as running well; `-AskToShareAfterSeconds <n>` to try it.
+    private static var playedBeforeAskingToShare: Duration {
+        .seconds(UserDefaults.standard.string(forKey: "AskToShareAfterSeconds").flatMap(Int.init) ?? 15 * 60)
+    }
+
+    /// The settings already offered, by Steam app id: asked once for each set of settings.
+    private static let sharePromptsKey = "SharedSettingsAsked"
+
+    private func offerToShare(_ game: Game, played: Duration) {
+        guard pendingReport == nil, Steam.canShareSettings(of: game), let appID = game.store?.appID,
+              let settings = Steam.settingsReport(of: game) else { return }
+        var asked = UserDefaults.standard.dictionary(forKey: Self.sharePromptsKey) as? [String: String] ?? [:]
+        guard asked[appID] != settings else { return }
+        asked[appID] = settings
+        UserDefaults.standard.set(asked, forKey: Self.sharePromptsKey)
+        pendingShare = SharePrompt(game: game, minutes: Int(played.components.seconds / 60))
+    }
+
+    /// The first launch for this Mac account, once (Clean Up and Uninstall starts over). `set_up`:
+    /// Corkscrew was set up before, by a version that didn't count. With counts off at that launch,
+    /// it's never sent; one that fails goes at the next launch.
+    private func countFirstLaunch() {
+        guard !UserDefaults.standard.bool(forKey: Self.firstLaunchCountedKey) else { return }
+        guard Self.sendsUsageCounts else { return UserDefaults.standard.set(true, forKey: Self.firstLaunchCountedKey) }
+        let setUp = !runtimes.isEmpty
+        Task {
+            if await count("first_launch", ["set_up": .bool(setUp)]) {
+                UserDefaults.standard.set(true, forKey: Self.firstLaunchCountedKey)
+            }
         }
     }
 

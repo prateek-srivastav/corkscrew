@@ -231,7 +231,7 @@ final class ProgramInstaller {
     private func finishSetup() {
         guard let prefix, let job else { return }
         let programs = SetupFinder.installedPrograms(prefix: prefix, before: job.snapshot)
-        self.job?.note = programs.isEmpty ? "The setup didn't install a program. Run it again, or pick the game's program yourself." : nil
+        self.job?.note = programs.isEmpty ? "The setup didn't install a program. Run it again, or pick the program yourself." : nil
         self.job?.step = .pickProgram(programs)
     }
 
@@ -259,7 +259,7 @@ final class ProgramInstaller {
     /// A program the user finds themselves, on the bottle's drive.
     func chooseProgram() {
         guard let bottle else { return }
-        guard let program = Pickers.file("Choose the game's program (.exe) in \(bottle.name).", extensions: ["exe"],
+        guard let program = Pickers.file("Choose the program (.exe) in \(bottle.name).", extensions: ["exe"],
                                          in: model.driveC(of: bottle))
         else { return }
         let outside = [setupFolder, prefix.map(DiscImage.folder(prefix:))].compactMap { $0?.path }
