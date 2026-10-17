@@ -274,8 +274,8 @@ struct DiscImageTests {
         }
     }
 
-    @Test func mountsADiscOnADriveAndEjectsIt() throws {
-        try withTempDir { root in
+    @Test func mountsADiscOnADriveAndEjectsIt() async throws {
+        try await withTempDir { root in
             let source = root.appending(path: "disc")
             try source.appending(path: "SETUP.EXE").write("MZ")
             let image = root.appending(path: "Game.iso")
@@ -283,15 +283,15 @@ struct DiscImageTests {
             make.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
             make.arguments = ["makehybrid", "-iso", "-joliet", "-quiet", "-o", image.path, source.path]
             try make.run()
-            make.waitUntilExit()
+            await exited(make)
             let prefix = root.appending(path: "prefix")
             try prefix.appending(path: "dosdevices").makeDirectory()
 
-            let mounted = try DiscImage.attach([image], prefix: prefix)
+            let mounted = try await offThePool { try DiscImage.attach([image], prefix: prefix) }
             #expect(mounted.map(\.drive) == ["d:"])
             #expect(FileManager.default.fileExists(atPath: prefix.appending(path: "dosdevices/d:/SETUP.EXE").path))
 
-            DiscImage.detach(mounted, prefix: prefix)
+            try await offThePool { DiscImage.detach(mounted, prefix: prefix) }
             #expect(!FileManager.default.fileExists(atPath: prefix.appending(path: "dosdevices/d:").path))
             #expect(!FileManager.default.fileExists(atPath: DiscImage.folder(prefix: prefix).path))
         }

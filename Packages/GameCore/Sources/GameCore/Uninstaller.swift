@@ -48,12 +48,14 @@ public struct Uninstaller: Sendable {
                 ProcessRunner.stopSession(environment: environment, wineserver: engine.wineserver)
                 _ = ProcessRunner.waitForSession(environment: environment, wineserver: engine.wineserver, timeout: .seconds(10))
             }
-            for process in BottleProcesses.list(prefix: location.prefix) { kill(process.pid, SIGKILL) }
+            for process in BottleProcesses.list(prefix: location.prefix, maxAge: .zero) { kill(process.pid, SIGKILL) }
             if let server = try? WineServer.directory(forPrefix: location.prefix, base: paths.wineServerDirectory) {
                 try? fm.removeItem(at: server)
             }
         }
         if let loaderBundles { LoaderBundles.removeAll(in: loaderBundles) }
+        // Deleted with the data folders; out of LaunchServices first.
+        LoaderBundles.unregisterAll(in: nil, prebuilt: paths.gameModeBundles)
     }
 
     /// Takes the app out of LaunchServices (Open With) and deletes it; to the Trash when it can't be

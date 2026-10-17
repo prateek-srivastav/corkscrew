@@ -8,6 +8,8 @@ struct SetupView: View {
     @State private var isCreatingBottle = false
     @State private var confirmsUninstall = false
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
+    @AppStorage(AppModel.lowersLaunchersKey) private var lowersLaunchers = false
+    @AppStorage(AppModel.excludesGamesFromBackupsKey) private var excludesGamesFromBackups = false
 
     static let gameportingToolkitPage = URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!
 
@@ -42,6 +44,21 @@ struct SetupView: View {
                         Toggle("Advanced mode", isOn: $advancedMode)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                    }
+                }
+
+                Card {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SectionLabel("While you play")
+                        setting("Lower Steam and launchers during games", isOn: $lowersLaunchers,
+                                "Steam, its web pages and the Rockstar Games Launcher run at background priority while a game "
+                                + "plays, on the Mac's efficiency cores. Steam's notifications and downloads may be slower. "
+                                + "Back to normal when the game ends.")
+                        setting("Don't back up installed games", isOn: $excludesGamesFromBackups,
+                                "Time Machine skips the games installed in the bottles, so a backup doesn't copy them during "
+                                + "play. Saves in Documents, AppData and Steam stay in backups. A game that keeps its saves "
+                                + "in its own folder loses them from backups.")
+                            .onChange(of: excludesGamesFromBackups) { model.updateBackupExclusions() }
                     }
                 }
 
@@ -219,6 +236,19 @@ struct SetupView: View {
 
     /// A step setup works on (or `busy` outside setup) shows a spinner: what `done` checks may be
     /// there before the step ends. The step setup stopped at with an error shows as failed.
+    private func setting(_ title: String, isOn: Binding<Bool>, _ detail: String) -> some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.body).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle(title, isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+
     private func step(_ number: Int, _ step: SetupStep, _ title: String, systemImage: String, done: Bool, busy: Bool = false) -> some View {
         let active = model.setupStep == step || busy
         let failed = !active && model.setupFailure == step

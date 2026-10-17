@@ -50,7 +50,11 @@ public enum RetinaMode {
     public static func apply(_ enabled: Bool, in context: WineContext, log: URL) async throws {
         let prefix = context.location.prefix
         if WineServer.isRunning(prefix: prefix, base: context.paths.wineServerDirectory) {
-            // The saved user.reg can lag a running wineserver, so ask Wine.
+            // The app changes the value only while the bottle is idle, so a saved user.reg that
+            // agrees is right, and the launch needn't start a Wine process under Rosetta to ask
+            // (a Steam game's bottle runs). It can lag a change made in the session (winecfg), so
+            // when it disagrees, ask Wine.
+            if isEnabled(prefix: prefix) == enabled { return }
             let current = try await run(queryCommand, in: context, log: log, allowFailure: true)
             if WineRegistry.isTrue(queriedValue(in: current)) == enabled { return }
         }

@@ -159,6 +159,63 @@ if "corkscrew_create_bundle_link" not in s:
     p.write_text(s)
 PATCH
 
+log "Patching the loader: Game Mode bundles for isolated bottles"
+# An isolated bottle's sandbox only runs programs from the runtime and from folders the app names,
+# so its games can't get the bundle above (CORKSCREW_NO_LOADER_LINK). The app makes the game's
+# bundle before the launch in CORKSCREW_LOADER_BUNDLE_DIR (read-only to the sandbox), and the loader
+# only runs it, while its executable is still the loader's own file. A game started directly runs
+# in the process Wine re-runs itself as (`wine` as the program, the game as its first argument), so
+# the argument's name counts too. (The same re-run is why other bottles get a `wine.app` bundle:
+# for a game started directly, that bundle is the game's.)
+python3 - "$WINE_SRC/dlls/ntdll/unix/loader.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+anchor = "static void replace_wineloader_path_with_link(char **wineloader_path, const char *image_path)\n{\n"
+helper = r'''/* Corkscrew: isolated bottles. Runs the program from <CORKSCREW_LOADER_BUNDLE_DIR>/<name>.app, made
+ * by the app, when that bundle's executable is this loader (a hard link). */
+static int corkscrew_try_prebuilt_bundle(char **wineloader_path, const char *dir, const char *path)
+{
+    char *app_name = path ? extract_exe_name(path) : NULL, *exe = NULL;
+    struct stat st, loader;
+    int found = 0;
+
+    if (!app_name) return 0;
+    if (asprintf(&exe, "%s/%s.app/Contents/MacOS/%s", dir, app_name, app_name) < 0) exe = NULL;
+    if (exe && !stat(exe, &st) && !stat(*wineloader_path, &loader) && st.st_dev == loader.st_dev && st.st_ino == loader.st_ino)
+    {
+        free(*wineloader_path);
+        *wineloader_path = exe;
+        exe = NULL;
+        setenv("WINEPRELOADERAPPNAME", app_name, 1);
+        found = 1;
+    }
+    free(exe);
+    free(app_name);
+    return found;
+}
+
+static void corkscrew_use_prebuilt_bundle(char **wineloader_path, const char *image_path, const char *first_arg)
+{
+    const char *dir = getenv("CORKSCREW_LOADER_BUNDLE_DIR");
+
+    if (!dir || !*dir) return;
+    if (!corkscrew_try_prebuilt_bundle(wineloader_path, dir, image_path))
+        corkscrew_try_prebuilt_bundle(wineloader_path, dir, first_arg);
+}
+
+'''
+call_old = """    if (getenv("WINEDLLPATH") && !getenv("CORKSCREW_NO_LOADER_LINK"))
+        replace_wineloader_path_with_link( &(argv[1]), image_path );
+"""
+call_new = call_old + """    else if (getenv("WINEDLLPATH"))
+        corkscrew_use_prebuilt_bundle( &(argv[1]), image_path, argv[2] );
+"""
+if "corkscrew_use_prebuilt_bundle" not in s:
+    assert s.count(anchor) == 1 and s.count(call_old) == 1, "loader.c changed upstream; update this patch"
+    s = s.replace(anchor, helper + anchor).replace(call_old, call_new)
+    p.write_text(s)
+PATCH
+
 log "Patching kernelbase: Social Club's Chromium draws in its own process"
 # Chromium draws a window's contents from its GPU process, but the window belongs to the browser
 # process, and winemac only shows what a window's own process draws (GDI, OpenGL and Vulkan alike).

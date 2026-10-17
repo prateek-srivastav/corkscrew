@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Steam inside a bottle: finding it and its installed games, launching them the way that works
 /// under Wine, and keeping its web helper usable.
@@ -197,18 +198,35 @@ public enum Steam {
         var apps: [App] = []
         for library in libraries {
             let steamapps = library.appending(path: "steamapps", directoryHint: .isDirectory)
-            let files = (try? FileManager.default.contentsOfDirectory(at: steamapps, includingPropertiesForKeys: nil)) ?? []
+            let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+            let files = (try? FileManager.default.contentsOfDirectory(at: steamapps, includingPropertiesForKeys: keys)) ?? []
             for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
             where file.lastPathComponent.hasPrefix("appmanifest_") && file.pathExtension == "acf" {
-                guard let text = try? String(contentsOf: file, encoding: .utf8),
-                      let appID = value("appid", in: text), let name = value("name", in: text),
-                      let folder = value("installdir", in: text) else { continue }
-                apps.append(App(appID: appID, name: name,
-                                installFolder: steamapps.appending(path: "common/\(folder)", directoryHint: .isDirectory),
-                                stateFlags: value("StateFlags", in: text).flatMap { Int($0) } ?? 4))
+                if let app = manifest(file, steamapps: steamapps) { apps.append(app) }
             }
         }
         return apps
+    }
+
+    /// Manifests read before, by path, with the date and size they had: the app reads them every few
+    /// seconds while a bottle runs, and they change only when Steam installs or updates a game.
+    private static let manifests = Mutex<[String: (modified: Date?, size: Int?, app: App?)]>([:])
+
+    static func manifest(_ file: URL, steamapps: URL) -> App? {
+        let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let modified = values?.contentModificationDate, size = values?.fileSize
+        if let cached = manifests.withLock({ $0[file.path] }), cached.modified == modified, cached.size == size, modified != nil {
+            return cached.app
+        }
+        var app: App?
+        if let text = try? String(contentsOf: file, encoding: .utf8),
+           let appID = value("appid", in: text), let name = value("name", in: text), let folder = value("installdir", in: text) {
+            app = App(appID: appID, name: name,
+                      installFolder: steamapps.appending(path: "common/\(folder)", directoryHint: .isDirectory),
+                      stateFlags: value("StateFlags", in: text).flatMap { Int($0) } ?? 4)
+        }
+        manifests.withLock { $0[file.path] = (modified, size, app) }
+        return app
     }
 
     /// The bottle's Steam games that have a program running, by app id, with their processes:

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The Steam account signed in inside a bottle and the games in its library, read from Steam's own
 /// files: nothing is asked of Valve's servers.
@@ -34,16 +35,29 @@ extension Steam {
         let cache = steamRoot.appending(path: "appcache/librarycache", directoryHint: .isDirectory)
         let entries = (try? FileManager.default.contentsOfDirectory(atPath: cache.path)) ?? []
         let ids = Set(entries.compactMap { entry -> UInt32? in UInt32(entry.prefix { $0.isNumber }) })
-        guard !ids.isEmpty,
-              let data = try? Data(contentsOf: steamRoot.appending(path: "appcache/appinfo.vdf"), options: .mappedIfSafe),
+        guard !ids.isEmpty else { return [] }
+        let file = steamRoot.appending(path: "appcache/appinfo.vdf")
+        let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let modified = values?.contentModificationDate, size = values?.fileSize
+        if let cached = libraries.withLock({ $0[file.path] }), modified != nil,
+           cached.modified == modified, cached.size == size, cached.ids == ids {
+            return cached.games
+        }
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
               let apps = try? SteamAppInfo.read(data, appIDs: ids)
         else { return [] }
-        return apps.compactMap { id, common in
+        let games = apps.compactMap { id, common -> LibraryGame? in
             guard common.value("type")?.lowercased() == "game" else { return nil }
             return LibraryGame(appID: String(id), name: common.value("name") ?? "App \(id)")
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        libraries.withLock { $0[file.path] = (modified, size, ids, games) }
+        return games
     }
+
+    /// Libraries read before, by `appinfo.vdf` path, with the file's date and size and the apps
+    /// asked for: the store sync asks often, and the file can be tens of MB.
+    private static let libraries = Mutex<[String: (modified: Date?, size: Int?, ids: Set<UInt32>, games: [LibraryGame])]>([:])
 
     /// A library entry that starts the game through Steam (`-silent -applaunch`) with its tested
     /// settings, or `profile` when it has none.
@@ -206,22 +220,17 @@ enum SteamAppInfo {
         let data: Data
         var offset = 0
 
-        private mutating func bytes(_ count: Int) throws -> Data {
+        /// A little-endian integer at the offset, read in one load.
+        private mutating func integer<T: FixedWidthInteger>(_: T.Type) throws -> T {
+            let count = MemoryLayout<T>.size
             guard offset >= 0, offset + count <= data.count else { throw FormatError(description: "appinfo.vdf ends early") }
             defer { offset += count }
-            let start = data.startIndex + offset
-            return data[start..<start + count]
+            return T(littleEndian: data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: T.self) })
         }
 
-        mutating func uint8() throws -> UInt8 { try bytes(1).first! }
-
-        mutating func uint32() throws -> UInt32 {
-            try bytes(4).reversed().reduce(0) { $0 << 8 | UInt32($1) }
-        }
-
-        mutating func int64() throws -> Int64 {
-            Int64(bitPattern: try bytes(8).reversed().reduce(0) { $0 << 8 | UInt64($1) })
-        }
+        mutating func uint8() throws -> UInt8 { try integer(UInt8.self) }
+        mutating func uint32() throws -> UInt32 { try integer(UInt32.self) }
+        mutating func int64() throws -> Int64 { try integer(Int64.self) }
 
         mutating func cString() throws -> String {
             let start = data.startIndex + offset

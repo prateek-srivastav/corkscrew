@@ -91,13 +91,14 @@ struct SteamGameLaunchTests {
     }
 
     @Test func aGameHasQuitOnceItsProgramsStayGone() async throws {
-        // Checks elapsed time, not poll counts: on a busy CI runner a 10 ms sleep can take far longer.
+        // Checks elapsed time, not poll counts: on a busy CI runner a 10 ms sleep can take far longer
+        // (over 5 s once), so the timeout for the programs to appear is long.
         let clock = ContinuousClock()
 
         // Seen for three polls, then gone: quit after the grace period.
         var polls = 0
         var lastSeen = clock.now
-        let quit = try await Launcher.waitForQuit(timeout: .seconds(5), grace: .milliseconds(30), poll: .milliseconds(10)) {
+        let quit = try await Launcher.waitForQuit(timeout: .seconds(60), grace: .milliseconds(30), poll: .milliseconds(10)) {
             polls += 1
             let running = (2...4).contains(polls)
             if running { lastSeen = clock.now }
@@ -110,7 +111,7 @@ struct SteamGameLaunchTests {
         // A restart within the grace period doesn't count as quitting. The grace is generous so the
         // two-poll gap stays inside it on a slow machine.
         polls = 0
-        let restarted = try await Launcher.waitForQuit(timeout: .seconds(5), grace: .milliseconds(500), poll: .milliseconds(10)) {
+        let restarted = try await Launcher.waitForQuit(timeout: .seconds(60), grace: .milliseconds(500), poll: .milliseconds(10)) {
             polls += 1
             let running = polls == 1 || (4...6).contains(polls)
             if running { lastSeen = clock.now }

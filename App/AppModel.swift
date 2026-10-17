@@ -32,15 +32,15 @@ final class AppModel {
     }
 
     let paths: AppPaths
-    private(set) var library = Library()
+    private(set) var library = Library() { didSet { listsChanged() } }
     var games: [Game] { library.games }
-    private(set) var bottles: [Bottle] = []
+    private(set) var bottles: [Bottle] = [] { didSet { listsChanged() } }
     private(set) var runtimes: [RuntimeManifest] = []
     private(set) var components: [String] = []
     /// Bottles whose wineserver is up, refreshed every couple of seconds.
-    private(set) var runningBottles: Set<UUID> = []
+    private(set) var runningBottles: Set<UUID> = [] { didSet { listsChanged() } }
     /// Steam games' install states by `Game.storeKey`; nil until the first scan.
-    private(set) var storeStates: [String: Steam.InstallState]?
+    private(set) var storeStates: [String: Steam.InstallState]? { didSet { listsChanged() } }
     private(set) var sessions: [UUID: Session] = [:]
 
     /// Work a button started that hasn't shown its result yet: the button says so and can't be
@@ -129,7 +129,7 @@ final class AppModel {
         /// Every game in the library, installed or not, as entries that start it through Steam.
         var games: [Game]
     }
-    private(set) var steamLibrary: SteamLibrary?
+    private(set) var steamLibrary: SteamLibrary? { didSet { listsChanged() } }
 
     /// Steam has an account that's signed in now: Steam runs, or signs in by itself when it starts.
     var steamAccount: Steam.Account? {
@@ -140,7 +140,31 @@ final class AppModel {
     /// The Steam page's games: the account's library, with the library entries (and their settings)
     /// for games that have one, and installed games Steam hasn't listed yet. Not other entries, such
     /// as tested games the account doesn't own.
-    var steamGames: [Game] {
+    var steamGames: [Game] { lists.steam }
+
+    /// The Library page: the signed-in account's Steam games and every program in another bottle,
+    /// without the launchers themselves.
+    var allGames: [Game] { lists.all }
+
+    /// Bumped when something the game lists come from changes; the lists are sorted again on the
+    /// next read after that, not on every read (each view body reads them).
+    private var listsVersion = 0
+    @ObservationIgnored private var listCache: (version: Int, steam: [Game], all: [Game])?
+
+    private func listsChanged() { listsVersion &+= 1 }
+
+    private var lists: (steam: [Game], all: [Game]) {
+        if let listCache, listCache.version == listsVersion { return (listCache.steam, listCache.all) }
+        let steam = makeSteamGames()
+        let others = games.filter { $0.bottleID != launcherBottle?.id }
+        let all = ((steamAccount == nil ? [] : steam) + others)
+            .filter { !($0.store != nil && $0.store?.appID == nil) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        listCache = (listsVersion, steam, all)
+        return (steam, all)
+    }
+
+    private func makeSteamGames() -> [Game] {
         guard let launcher = launcherBottle else { return [] }
         let owned = steamLibrary?.games ?? []
         let ownedIDs = Set(owned.compactMap(\.store?.appID))
@@ -150,16 +174,6 @@ final class AppModel {
         }
         let listed = Set(entries.compactMap(\.storeKey))
         return (entries + owned.filter { !listed.contains($0.storeKey ?? "") })
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    /// The Library page: the signed-in account's Steam games and every program in another bottle,
-    /// without the launchers themselves.
-    var allGames: [Game] {
-        let steam = steamAccount == nil ? [] : steamGames
-        let others = games.filter { $0.bottleID != launcherBottle?.id }
-        return (steam + others)
-            .filter { !($0.store != nil && $0.store?.appID == nil) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
@@ -174,24 +188,32 @@ final class AppModel {
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
         reload()
-        if runningBottles.isEmpty { Self.unregisterLoaderBundles() }
+        if runningBottles.isEmpty { unregisterLoaderBundles() }
         removeInstallLeftovers()
+        sweepWineLeftovers(in: bottles.filter { !runningBottles.contains($0.id) }, removeServerFolders: true)
         Task { await setUpAutomatically() }
         Task { [weak self] in
             var tick = 0
             while let self {
                 self.refreshRunningBottles()
                 await self.refreshRunningPrograms()
-                // While Steam may be installing or uninstalling games, look at its manifests now and then.
+                self.updateWhilePlaying()
+                // While Steam may be installing or uninstalling games, look at its manifests now and then
+                // (not while a game runs: Steam doesn't download then, and the game needs the Mac).
                 tick += 1
-                if tick % 15 == 0, !self.runningBottles.isEmpty { self.syncStores() }
+                if tick % 15 == 0, !self.runningBottles.isEmpty, !self.isGameRunning { self.syncStores() }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
         // Back from Steam (or Finder): pick up games installed or uninstalled meanwhile.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncStores() }
+            MainActor.assumeIsolated {
+                self?.syncStores()
+                self?.updateBackupExclusions()
+            }
         }
+        updateBackupExclusions()
+        trimCaches()
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -202,17 +224,31 @@ final class AppModel {
         return .rooted(at: URL(fileURLWithPath: (root as NSString).expandingTildeInPath, isDirectory: true))
     }
 
-    func reload() {
-        do {
-            library = try LibraryStore(paths: paths).load()
-            bottles = try BottleStore(paths: paths).list()
-            try adoptRoleBottles()
-        } catch {
-            errorMessage = Self.describe(error)
+    /// What a reload reads again: everything, or (after adding a runtime, components or Rosetta)
+    /// only the setup, without the library, the bottles and a store sync.
+    enum Reload { case all, setup }
+
+    /// Reads the app's state from disk again. A value that is the same isn't set again, so views
+    /// that show it aren't drawn again.
+    func reload(_ scope: Reload = .all) {
+        if scope == .all {
+            do {
+                let library = try LibraryStore(paths: paths).load()
+                if library != self.library { self.library = library }
+                let bottles = try BottleStore(paths: paths).list()
+                if bottles != self.bottles { self.bottles = bottles }
+                try adoptRoleBottles()
+            } catch {
+                errorMessage = Self.describe(error)
+            }
         }
-        hasRosetta = Rosetta.isInstalled
-        runtimes = RuntimeStore(paths: paths).list()
-        components = ComponentCatalog.staged(in: paths.components)
+        let hasRosetta = Rosetta.isInstalled
+        if hasRosetta != self.hasRosetta { self.hasRosetta = hasRosetta }
+        let runtimes = RuntimeStore(paths: paths).list()
+        if runtimes != self.runtimes { self.runtimes = runtimes }
+        let components = ComponentCatalog.staged(in: paths.components)
+        if components != self.components { self.components = components }
+        guard scope == .all else { return }
         refreshRunningBottles()
         syncStores()
     }
@@ -231,7 +267,7 @@ final class AppModel {
             let components = build.appending(path: "components", directoryHint: .isDirectory)
             let newComponents = ComponentCatalog.staged(in: components).filter { !self.components.contains($0) }
             if !runtimeFolders.isEmpty || !newComponents.isEmpty {
-                await perform("Adding the Wine runtime and graphics components from \(build.path)…") {
+                await perform("Adding the Wine runtime and graphics components from \(build.path)…", reloading: .setup) {
                     for folder in runtimeFolders { try RuntimeStore(paths: paths).install(directory: folder) }
                     try ComponentCatalog.importComponents(from: components, into: paths.components)
                 }
@@ -392,9 +428,87 @@ final class AppModel {
     private func refreshRunningBottles() {
         let running = Set(bottles.filter { Launcher.isRunning($0, paths: paths) }.map(\.id))
         guard running != runningBottles else { return }
+        let stopped = runningBottles.subtracting(running)
         runningBottles = running
-        if running.isEmpty { Self.unregisterLoaderBundles() }
+        if !stopped.isEmpty {
+            Task { [weak self] in
+                // Programs a session leaves behind outlive their server by a moment while they exit.
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                sweepWineLeftovers(in: bottles.filter { stopped.contains($0.id) && !runningBottles.contains($0.id) && !hasActiveSession(in: $0.id) })
+            }
+        }
+        if running.isEmpty { unregisterLoaderBundles() }
         syncStores()
+    }
+
+    /// Whether a game runs: a session other than a launcher's, or a Steam game started from Steam.
+    private var isGameRunning: Bool {
+        !runningSteamApps.isEmpty || sessions.values.contains { $0.isActive && !Steam.isClient($0.game.executable) }
+    }
+
+    /// Settings → "While you play": Steam and Rockstar's launcher at background priority during a game.
+    static let lowersLaunchersKey = "LowerLaunchersDuringGames"
+    /// Settings → "While you play": installed games left out of Time Machine backups.
+    static let excludesGamesFromBackupsKey = "ExcludeGamesFromBackups"
+
+    @ObservationIgnored private var wasGameRunning = false
+    @ObservationIgnored private var loweredPrograms: Set<pid_t> = []
+
+    /// Gives the Mac to a game while one runs: drops decoded art, and (when set) lowers the
+    /// launchers once the game is up. Puts the launchers back after.
+    private func updateWhilePlaying() {
+        let playing = isGameRunning
+        if playing != wasGameRunning {
+            wasGameRunning = playing
+            if playing { SteamArtwork.purge() }
+        }
+        // Not while a launch is pending: a game may wait on Steam as it starts.
+        if playing, pending.isEmpty, UserDefaults.standard.bool(forKey: Self.lowersLaunchersKey) {
+            let games = Set(sessions.values.filter { $0.isActive && !Steam.isClient($0.game.executable) }
+                .map { $0.game.executable.lastPathComponent.lowercased() })
+            for bottle in bottles where runningBottles.contains(bottle.id) {
+                loweredPrograms.formUnion(BackgroundPrograms.lower(prefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix, sparing: games))
+            }
+        } else if !playing || !UserDefaults.standard.bool(forKey: Self.lowersLaunchersKey) {
+            restoreLaunchers()
+        }
+    }
+
+    /// Normal priority again for the launchers lowered during a game (also when the app quits).
+    func restoreLaunchers() {
+        guard !loweredPrograms.isEmpty else { return }
+        BackgroundPrograms.restore(loweredPrograms)
+        loweredPrograms = []
+    }
+
+    /// Applies the backup setting to every bottle's game folders (new installs included).
+    func updateBackupExclusions() {
+        let excluded = UserDefaults.standard.bool(forKey: Self.excludesGamesFromBackupsKey)
+        let prefixes = bottles.map { BottleLocation(bottleID: $0.id, paths: paths).prefix }
+        Task.detached(priority: .background) {
+            for prefix in prefixes { BackupExclusion.apply(excluded, prefix: prefix) }
+        }
+    }
+
+    /// A session runs in the bottle, or any action is under way (a launch starts its programs a moment
+    /// before their server).
+    private func hasActiveSession(in bottleID: Bottle.ID) -> Bool {
+        !pending.isEmpty || sessions.values.contains { $0.isActive && $0.game.bottleID == bottleID }
+    }
+
+    /// Stops programs left running in stopped bottles without their wineserver, and (at start)
+    /// removes the folders of servers that died.
+    private func sweepWineLeftovers(in bottles: [Bottle], removeServerFolders: Bool = false) {
+        let prefixes = bottles.map { BottleLocation(bottleID: $0.id, paths: paths).prefix }
+        let base = paths.wineServerDirectory
+        Task.detached(priority: .background) {
+            for prefix in prefixes {
+                let stopped = await WineServer.stopOrphans(prefix: prefix, base: base)
+                if !stopped.isEmpty { print("Stopped \(stopped.count) leftover Wine programs in \(prefix.path): \(stopped)") }
+            }
+            if removeServerFolders { WineServer.removeStaleDirectories(base: base) }
+        }
     }
 
     /// Which running bottles have Steam open, and which Steam games run (off the main thread: it
@@ -422,8 +536,9 @@ final class AppModel {
 
     /// The bundles games run from (for Game Mode) are recorded as installed games while they run;
     /// once nothing runs, they're taken out of LaunchServices again.
-    private static func unregisterLoaderBundles() {
-        Task.detached(priority: .utility) { LoaderBundles.unregisterAll() }
+    private func unregisterLoaderBundles() {
+        let prebuilt = paths.gameModeBundles
+        Task.detached(priority: .utility) { LoaderBundles.unregisterAll(prebuilt: prebuilt) }
     }
 
     // MARK: Library
@@ -441,11 +556,23 @@ final class AppModel {
     /// replaced program gets its new icon.
     @ObservationIgnored private var icons: [UUID: (image: NSImage?, modified: Date?)] = [:]
 
-    func icon(for game: Game) -> NSImage? {
-        let source = game.iconSource ?? game.executable
-        let modified = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.modificationDate] as? Date
-        if let cached = icons[game.id], cached.modified == modified { return cached.image }
-        let image = LibraryStore(paths: paths).icon(for: game).flatMap(NSImage.init(data:))
+    /// The icon read before, without touching the disk; nil before the first `loadIcon`.
+    func cachedIcon(for game: Game) -> NSImage? { icons[game.id]?.image }
+
+    /// Reads the game's icon off the main thread (a program's icon is extracted from its file the
+    /// first time), and again once the program has changed.
+    func loadIcon(for game: Game) async -> NSImage? {
+        let paths = self.paths
+        let known = icons[game.id]
+        let knownModified = known.map { $0.modified }
+        let (modified, data) = await Task.detached(priority: .utility) { () -> (Date?, Data?) in
+            let source = game.iconSource ?? game.executable
+            let modified = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.modificationDate] as? Date
+            if let knownModified, knownModified == modified { return (modified, nil) }
+            return (modified, LibraryStore(paths: paths).icon(for: game))
+        }.value
+        if let known, known.modified == modified { return known.image }
+        let image = data.flatMap(NSImage.init(data:))
         icons[game.id] = (image, modified)
         return image
     }
@@ -934,7 +1061,7 @@ final class AppModel {
         pending.insert(.addRuntime)
         Task {
             defer { pending.remove(.addRuntime) }
-            await perform("Adding the Wine runtime from \(folder.lastPathComponent)…") {
+            await perform("Adding the Wine runtime from \(folder.lastPathComponent)…", reloading: .setup) {
                 try RuntimeStore(paths: paths).install(directory: folder)
             }
         }
@@ -946,7 +1073,7 @@ final class AppModel {
         pending.insert(.addRuntime)
         Task {
             defer { pending.remove(.addRuntime) }
-            await perform("Checking and unpacking \(archive.lastPathComponent)…") {
+            await perform("Checking and unpacking \(archive.lastPathComponent)…", reloading: .setup) {
                 try RuntimeStore(paths: paths).install(archive: archive, sha256: sha256.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         }
@@ -958,7 +1085,7 @@ final class AppModel {
         pending.insert(.addComponents)
         Task {
             defer { pending.remove(.addComponents) }
-            let added = await perform("Adding graphics components from \(folder.lastPathComponent)…") {
+            let added = await perform("Adding graphics components from \(folder.lastPathComponent)…", reloading: .setup) {
                 try ComponentCatalog.importComponents(from: folder, into: paths.components)
             }
             if added?.isEmpty == true { errorMessage = "No new components in \(folder.path) (looked for dxmt-*, dxvk-macos-*, d3dmetal-*)." }
@@ -996,7 +1123,7 @@ final class AppModel {
             setupFailure = nil
             if !hasRosetta {
                 setupStep = .rosetta
-                let installed: Void? = await perform("Installing Rosetta… (macOS asks for your password; the download takes a minute)") {
+                let installed: Void? = await perform("Installing Rosetta… (macOS asks for your password; the download takes a minute)", reloading: .setup) {
                     try Rosetta.install()
                 }
                 guard installed != nil else { return stopSetUp(at: .rosetta) }
@@ -1049,7 +1176,7 @@ final class AppModel {
             isInstallingEngine = false
             enginePackProgress = nil
         }
-        let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…") {
+        let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…", reloading: .setup) {
             // The copy inside the app stays: it's sealed by the app's signature.
             defer { if bundled == nil { try? FileManager.default.removeItem(at: archive) } }
             return try pack.install(archive: archive, paths: paths) { fraction in
@@ -1106,7 +1233,7 @@ final class AppModel {
         pending.insert(.importToolkit)
         Task {
             defer { pending.remove(.importToolkit) }
-            await perform("Importing D3DMetal from \(dmg.lastPathComponent)…") {
+            await perform("Importing D3DMetal from \(dmg.lastPathComponent)…", reloading: .setup) {
                 try GPTKImporter.importToolkit(dmg: dmg, into: paths.components)
             }
         }
@@ -1116,6 +1243,16 @@ final class AppModel {
 
     /// Where Steam store details and art are cached.
     var storeCache: URL { paths.cachesRoot.appending(path: "Steam Store", directoryHint: .isDirectory) }
+
+    /// Keeps the store cache within its limit, and empties URLCache's copy of store replies from
+    /// before the store had its own connection.
+    private func trimCaches() {
+        let cache = storeCache
+        Task.detached(priority: .background) {
+            URLCache.shared.removeAllCachedResponses()
+            SteamStore.trim(cache: cache)
+        }
+    }
     @ObservationIgnored private var storeAppIDs: [Game.ID: String] = [:]
 
     /// The Steam app a game is: its own for a Steam game; for a program in another bottle, the app
@@ -1142,7 +1279,8 @@ final class AppModel {
 
     /// Runs slow work off the main thread with a status line; errors become an alert. Reloads afterwards.
     @discardableResult
-    private func perform<T: Sendable>(_ title: String, _ work: @escaping @Sendable () async throws -> T) async -> T? {
+    private func perform<T: Sendable>(_ title: String, reloading scope: Reload = .all,
+                                      _ work: @escaping @Sendable () async throws -> T) async -> T? {
         // Several can run at once (a bottle being created while a toolkit imports): the status line
         // stays until the last one ends.
         let id = UUID()
@@ -1151,7 +1289,7 @@ final class AppModel {
         defer {
             activities.removeAll { $0.id == id }
             activity = activities.last?.title
-            reload()
+            reload(scope)
         }
         do {
             return try await Task.detached(priority: .userInitiated) { try await work() }.value

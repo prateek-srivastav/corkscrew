@@ -18,6 +18,31 @@ func withTempDir<T>(_ body: (URL) async throws -> T) async throws -> T {
     return try await body(dir)
 }
 
+/// Waits for a process to exit without holding a thread. Tests share a pool as wide as the CPU
+/// count (3 on a CI Mac): a test blocked in `waitUntilExit` holds one, and the other tests' sleeps
+/// wait for a free one (a 10 ms sleep took over 5 s on CI).
+func exited(_ process: Process) async {
+    while process.isRunning { try? await Task.sleep(for: .milliseconds(10)) }
+}
+
+/// Runs blocking work (a tool that takes seconds, like hdiutil) on a dispatch thread, not the
+/// tests' pool. Keep `#expect` out of it: Swift Testing finds the test an issue belongs to through
+/// the task.
+func offThePool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { done in
+        DispatchQueue.global().async { done.resume(with: Result(catching: work)) }
+    }
+}
+
+/// A stand-in for Wine: a re-signed copy of /bin/sleep, as macOS hides the environment of its own
+/// system binaries.
+func signedSleep(in dir: URL) async throws -> URL {
+    let sleep = dir.appending(path: "sleep")
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
+    await exited(try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", sleep.path]))
+    return sleep
+}
+
 extension URL {
     @discardableResult
     func makeDirectory() throws -> URL {
