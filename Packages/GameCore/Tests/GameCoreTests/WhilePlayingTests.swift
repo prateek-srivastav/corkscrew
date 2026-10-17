@@ -29,25 +29,58 @@ struct BackgroundProgramsTests {
     }
 }
 
+/// Each test uses its own folders and never turns the exclusion on and then off again: macOS writes
+/// it at once and again a moment later from a queue in this process (after it calls Spotlight, so
+/// seconds later when Spotlight is busy). That late write of "on" could land after an "off".
 struct BackupExclusionTests {
+    static let games = ["Games", "Program Files (x86)/Steam/steamapps", "Program Files/Some Game"]
+
+    /// A bottle with three game folders and the saves that must stay in backups; returns drive_c.
+    static func makeBottle(_ prefix: URL) throws -> URL {
+        let driveC = prefix.appending(path: "drive_c")
+        let made = ["Program Files/Some Game", "Program Files (x86)/Steam/steamapps/common/Game", "Program Files (x86)/Steam/userdata",
+                    "Games/Repack", "users/me/Documents"]
+        for path in made { try driveC.appending(path: path).makeDirectory() }
+        return driveC
+    }
+
+    /// Reads afresh: a URL keeps the resource values it has read.
+    static func isExcluded(_ folder: URL) -> Bool {
+        var folder = folder
+        folder.removeAllCachedResourceValues()
+        return (try? folder.resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup == true
+    }
+
     @Test func excludesInstallsButNotSaves() throws {
         try withTempDir { prefix in
-            let driveC = prefix.appending(path: "drive_c")
-            let made = ["Program Files/Some Game", "Program Files (x86)/Steam/steamapps/common/Game", "Program Files (x86)/Steam/userdata",
-                        "Games/Repack", "users/me/Documents"]
-            for path in made { try FileManager.default.createDirectory(at: driveC.appending(path: path), withIntermediateDirectories: true) }
-            let expected = ["Games", "Program Files (x86)/Steam/steamapps", "Program Files/Some Game"].map { driveC.appending(path: $0).path }
-            #expect(BackupExclusion.gameFolders(prefix: prefix).map(\.path) == expected)
+            let driveC = try Self.makeBottle(prefix)
+            #expect(BackupExclusion.gameFolders(prefix: prefix).map(\.path) == Self.games.map { driveC.appending(path: $0).path })
 
-            func isExcluded(_ path: String) -> Bool {
-                (try? driveC.appending(path: path).resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup == true
-            }
             #expect(BackupExclusion.apply(true, prefix: prefix).count == 3)
-            #expect(isExcluded("Program Files/Some Game") && isExcluded("Program Files (x86)/Steam/steamapps") && isExcluded("Games"))
-            #expect(!isExcluded("Program Files (x86)/Steam") && !isExcluded("Program Files (x86)/Steam/userdata") && !isExcluded("users"))
+            for path in Self.games { #expect(Self.isExcluded(driveC.appending(path: path)), "\(path)") }
+            for path in ["Program Files (x86)/Steam", "Program Files (x86)/Steam/userdata", "users"] {
+                #expect(!Self.isExcluded(driveC.appending(path: path)), "\(path)")
+            }
             #expect(BackupExclusion.apply(true, prefix: prefix).isEmpty, "already excluded")
+        }
+    }
+
+    @Test func includesThemAgain() throws {
+        try withTempDir { prefix in
+            let driveC = try Self.makeBottle(prefix)
+            // Excluded by an earlier run of the app: the attribute macOS writes, set directly (no late write).
+            let marker = try PropertyListSerialization.data(fromPropertyList: "com.apple.backupd", format: .binary, options: 0)
+            for path in Self.games {
+                let set = marker.withUnsafeBytes {
+                    setxattr(driveC.appending(path: path).path, "com.apple.metadata:com_apple_backup_excludeItem", $0.baseAddress, $0.count, 0, 0)
+                }
+                #expect(set == 0)
+                #expect(Self.isExcluded(driveC.appending(path: path)), "\(path)")
+            }
+
             #expect(BackupExclusion.apply(false, prefix: prefix).count == 3)
-            #expect(!isExcluded("Program Files/Some Game"))
+            for path in Self.games { #expect(!Self.isExcluded(driveC.appending(path: path)), "\(path)") }
+            #expect(BackupExclusion.apply(false, prefix: prefix).isEmpty, "already included")
         }
     }
 }

@@ -35,6 +35,12 @@ public enum BackupExclusion {
 
     /// Excludes the bottle's game folders from backups, or includes them again; returns the folders
     /// it changed.
+    ///
+    /// Folders that already have the value aren't written again, as the app calls this each time it
+    /// becomes active. macOS writes the value at once and again a moment later from a queue in this
+    /// process, after it calls Spotlight (seconds later when Spotlight is busy). So after a quick
+    /// on, off, on, a folder can read "on" for a moment and be skipped, then end up off; the next
+    /// call puts it right.
     @discardableResult
     public static func apply(_ excluded: Bool, prefix: URL) -> [URL] {
         gameFolders(prefix: prefix).filter { folder in
