@@ -72,7 +72,8 @@ struct Sidebar: View {
                 if advancedMode {
                     section(.bottles, title: "Bottles", systemImage: "shippingbox.fill")
                 }
-                section(.setup, title: "Settings", systemImage: "gearshape.fill", needsAttention: !model.isReady)
+                section(.setup, title: "Settings", systemImage: "gearshape.fill",
+                        needsAttention: !model.isReady || model.availableUpdate != nil)
             }
             .padding(.horizontal, isCollapsed ? (Self.collapsedWidth - SidebarRow.collapsedSize) / 2 : Self.inset)
             .padding(.top, 8)

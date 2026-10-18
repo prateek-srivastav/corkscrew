@@ -131,9 +131,9 @@ struct SetupView: View {
                 setup
             }
         }
-        .background(alignment: .topTrailing) {
-            // The app icon's wine red, glowing from the corner.
-            Circle().fill(Theme.library.opacity(0.55)).frame(width: 240, height: 240).blur(radius: 70).offset(x: 60, y: -110)
+        .background {
+            // The app icon's wine red over the whole card, strongest at the top right.
+            LinearGradient(colors: [Theme.library.opacity(0.6), Theme.library.opacity(0.15)], startPoint: .topTrailing, endPoint: .bottomLeading)
         }
         .background(Theme.surface)
         .clipShape(.rect(cornerRadius: Theme.cornerRadius))

@@ -124,6 +124,26 @@ struct AppUpdateTests {
         }
     }
 
+    /// A release's update.json gives the zip's full URL: GitHub sends update.json to a signed CDN URL,
+    /// where the zip isn't next to it.
+    @Test func downloadsTheZipFromItsFullURL() async throws {
+        try await withTempDir { root in
+            let installed = root.appending(path: "Applications/Corkscrew.app")
+            try await Self.makeApp(at: installed, version: "0.8.1")
+            let release = try await Self.makeRelease(in: root.appending(path: "release"), appVersion: "0.9.0")
+            let zip = release.deletingLastPathComponent().appending(path: "Corkscrew-0.9.0-app.zip")
+            let manifest = try root.appending(path: "cdn").makeDirectory().appending(path: "update.json")
+            try manifest.write(String(contentsOf: release, encoding: .utf8)
+                .replacingOccurrences(of: "\"\(zip.lastPathComponent)\"", with: "\"\(zip.absoluteString)\""))
+            let update = try #require(try await AppUpdate.check(manifest))
+            #expect(update.app.name == zip.absoluteString)
+
+            let staged = try await update.stage(nextTo: installed, bundleIdentifier: Self.bundleID,
+                                                downloads: root.appending(path: "downloads"))
+            #expect(Self.version(of: staged) == "0.9.0")
+        }
+    }
+
     @Test func refusesADownloadThatDoesNotMatchItsChecksum() async throws {
         try await withTempDir { root in
             let installed = root.appending(path: "Applications/Corkscrew.app")

@@ -30,7 +30,8 @@ public struct AppUpdate: Sendable, Equatable {
         }
     }
 
-    /// A file in the release, next to `update.json`.
+    /// A file in the release. A release gives its full URL in `name`; a name without a host is next
+    /// to `update.json` (for a test from a local folder).
     public struct Archive: Sendable, Equatable, Decodable {
         public var name: String
         public var sha256: String
@@ -46,7 +47,8 @@ public struct AppUpdate: Sendable, Equatable {
     public var app: Archive
     /// The engine pack the new version pins.
     public var enginePack: EnginePack
-    /// Where `update.json` was read from, after redirects: `app.name` is next to it.
+    /// Where `update.json` was read from, after redirects. A relative `app.name` resolves against it,
+    /// which doesn't work for a release: GitHub sends `update.json` to a signed CDN URL.
     public var source: URL
 
     /// Reads `update.json` at `url`. Nil when the release has none (HTTP 404).

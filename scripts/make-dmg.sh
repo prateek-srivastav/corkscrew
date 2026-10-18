@@ -6,7 +6,8 @@
 # from its release; either way it must match the pinned SHA-256. Its release has to be published
 # (it holds the source code), which this checks, unless CORKSCREW_TRY_DMG=1 (to try a DMG out locally).
 # For the in-app updater (AppUpdate.swift) it also writes dist/Corkscrew-<version>-app.zip, the app
-# without the engine pack, and dist/update.json, which names the zip and the pinned pack.
+# without the engine pack, and dist/update.json, which gives the zip's URL in the v<version> release
+# and the pinned pack.
 # Usage: make-dmg.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -47,10 +48,13 @@ ZIP="dist/Corkscrew-$VERSION-app.zip"
 codesign --verify --deep --strict "$APP"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
+# The full URL: GitHub sends releases/latest/download/update.json to a signed CDN URL, and a file name
+# relative to that one doesn't resolve (0.9.0 got HTTP 618).
+ZIP_URL="https://github.com/Prateek-Srivastav/corkscrew/releases/download/v$VERSION/$(basename "$ZIP")"
 cat >dist/update.json <<EOF
 {
   "version": "$VERSION",
-  "app": {"name": "$(basename "$ZIP")", "sha256": "$(shasum -a 256 "$ZIP" | cut -d' ' -f1)", "size": $(stat -f %z "$ZIP")},
+  "app": {"name": "$ZIP_URL", "sha256": "$(shasum -a 256 "$ZIP" | cut -d' ' -f1)", "size": $(stat -f %z "$ZIP")},
   "enginePack": {"version": "$PACK_RELEASE", "url": "$PACK_URL", "sha256": "$PACK_SHA256", "size": $PACK_SIZE}
 }
 EOF
