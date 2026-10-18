@@ -52,4 +52,5 @@ jobs:
 
           EOF
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "Corkscrew $version" \
-            --notes-file notes.md --generate-notes "dist/Corkscrew-$version.dmg" "dist/Corkscrew-$version.dmg.sha256"
+            --notes-file notes.md --generate-notes "dist/Corkscrew-$version.dmg" "dist/Corkscrew-$version.dmg.sha256" \
+            "dist/Corkscrew-$version-app.zip" dist/update.json

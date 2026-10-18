@@ -92,11 +92,14 @@ struct ContentView: View {
 private struct ActivityBar: View {
     @Environment(AppModel.self) private var model
     @State private var isHoveringShow = false
+    @State private var isHoveringUpdate = false
+    @State private var isHoveringLater = false
 
     var body: some View {
         let install = model.installer.isShown ? nil : model.installer.job
+        let update = model.isUpdateDismissed ? nil : model.availableUpdate
         ZStack {
-            if model.enginePackProgress != nil || model.activity != nil || install != nil {
+            if model.enginePackProgress != nil || model.activity != nil || install != nil || update != nil {
                 Group {
                     if let install {
                         // A hidden install: the bar brings its sheet back.
@@ -120,11 +123,35 @@ private struct ActivityBar: View {
                             ProgressView(value: progress.fraction).frame(width: 90)
                             Text(progress.title).lineLimit(1)
                         }
+                    } else if let update, let progress = model.updateProgress {
+                        HStack(spacing: 10) {
+                            ProgressView(value: progress).frame(width: 90)
+                            Text("Downloading Corkscrew \(update.version)… \(Int(progress * 100))%").lineLimit(1)
+                        }
                     } else if let activity = model.activity {
                         HStack(spacing: 10) {
                             ProgressView().controlSize(.small)
                             Text(activity).lineLimit(1)
                         }
+                    } else if let update {
+                        // A newer version: Update downloads it and restarts into it.
+                        HStack(spacing: 10) {
+                            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.secondary)
+                            Text("Corkscrew \(update.version) is available").lineLimit(1)
+                            Text(ByteCountFormatter.string(fromByteCount: model.updateSize, countStyle: .file))
+                                .foregroundStyle(.secondary)
+                                .help(model.updateSize > update.app.size
+                                      ? "Includes a new Wine (engine pack \(update.enginePack.version)), which Corkscrew downloads when the new version opens."
+                                      : "")
+                            Button("Update") { model.installUpdate() }
+                                .fontWeight(.semibold)
+                                .foregroundStyle(isHoveringUpdate ? .primary : .secondary)
+                                .onHover { isHoveringUpdate = $0 }
+                            Button("Later") { model.isUpdateDismissed = true }
+                                .foregroundStyle(isHoveringLater ? .primary : .secondary)
+                                .onHover { isHoveringLater = $0 }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .font(.body)
@@ -137,6 +164,8 @@ private struct ActivityBar: View {
         }
         .animation(.snappy, value: model.activity)
         .animation(.snappy, value: model.installer.isShown)
+        .animation(.snappy, value: update?.version)
+        .animation(.snappy, value: model.updateProgress == nil)
     }
 }
 
