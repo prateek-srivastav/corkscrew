@@ -88,6 +88,62 @@ struct ArchiveTests {
         }
     }
 
+    /// A RAR5 volume set that stores `file` uncompressed, split evenly. No RAR tool is on macOS, so
+    /// the volumes are written by hand: signature, main header, file header with its slice, end.
+    private func rar5Volumes(of file: [UInt8], named name: String, count: Int) -> [Data] {
+        func vint(_ value: Int) -> [UInt8] {
+            var value = value, bytes: [UInt8] = []
+            repeat {
+                bytes.append(UInt8(value & 0x7F) | (value > 0x7F ? 0x80 : 0))
+                value >>= 7
+            } while value > 0
+            return bytes
+        }
+        func block(type: Int, flags: Int, _ fields: [UInt8]) -> [UInt8] {
+            let header = vint(fields.count + vint(type).count + vint(flags).count) + vint(type) + vint(flags) + fields
+            var crc: UInt32 = 0xFFFF_FFFF
+            for byte in header {
+                crc ^= UInt32(byte)
+                for _ in 0..<8 { crc = crc & 1 == 1 ? (crc >> 1) ^ 0xEDB8_8320 : crc >> 1 }
+            }
+            return withUnsafeBytes(of: (~crc).littleEndian, Array.init) + header
+        }
+        let slice = (file.count + count - 1) / count
+        return (0..<count).map { number in
+            let data = Array(file[(number * slice)..<min((number + 1) * slice, file.count)])
+            let isLast = number == count - 1
+            // Archive flags: a volume (0x1), with its number after the first one (0x2).
+            let main = block(type: 1, flags: 0, number == 0 ? [0x1] : [0x3] + vint(number))
+            // Header flags: a data area (0x2), continued from the previous volume (0x8) or in the next (0x10).
+            // Fields: data size, file flags, unpacked size, Windows attributes (archive), stored, Windows, name.
+            let flags = 0x2 | (number > 0 ? 0x8 : 0) | (isLast ? 0 : 0x10)
+            let fileHeader = block(type: 2, flags: flags, vint(data.count) + vint(0) + vint(file.count) + vint(0x20)
+                                   + vint(0) + vint(0) + vint(name.utf8.count) + Array(name.utf8))
+            // End of archive flags: more volumes follow (0x1).
+            let end = block(type: 5, flags: 0, vint(isLast ? 0 : 0x1))
+            return Data([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00] + main + fileHeader + data + end)
+        }
+    }
+
+    /// Without its last part, a RAR5 archive just ends: libarchive reports no error, and the file
+    /// would be padded with zeros.
+    @Test func refusesARAR5ArchiveWithoutItsLastPart() throws {
+        try withTempDir { root in
+            let file = (0..<300_000).map { UInt8($0 % 251) }
+            for (index, volume) in rar5Volumes(of: file, named: "setup-1.bin", count: 3).enumerated() {
+                try root.appending(path: "Program.part\(index + 1).rar").write(volume)
+            }
+            let parts = try Archive.parts(of: root.appending(path: "Program.part2.rar"))
+            try Archive.extract(parts, to: root.appending(path: "whole"))
+            #expect(try Data(contentsOf: root.appending(path: "whole/setup-1.bin")) == Data(file))
+
+            try FileManager.default.removeItem(at: parts[2])
+            #expect(throws: Archive.Error.unreadable("setup-1.bin stops early")) {
+                try Archive.extract(Archive.parts(of: parts[0]), to: root.appending(path: "short"))
+            }
+        }
+    }
+
     @Test func skipsEntriesThatLeaveTheFolder() throws {
         try withTempDir { root in
             let source = root.appending(path: "a/b/source")
