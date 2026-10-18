@@ -1,6 +1,7 @@
 import { type Counter, network, senderName, windowAt } from "./counter";
-import { issueFor, openIssue } from "./issue";
+import { issueFor, openIssue, reportLabels } from "./issue";
 import { InvalidReport, parseReport } from "./report";
+import { parseShare, shareIssue, shareLabels } from "./share";
 
 export { Counter } from "./counter";
 
@@ -21,14 +22,44 @@ export const maxBytes = 1 << 20;
 const hour = 60 * 60 * 1000;
 const day = 24 * hour;
 
+/** What a path takes: the R2 folder it keeps them in, the issue's labels, and how to read one
+ * (throws `InvalidReport`) into its kind and its issue. */
+interface Route {
+	folder: string;
+	labels: string[];
+	read(value: unknown): { kind: string; issue(id: string): { title: string; body: string } };
+}
+
+const routes = new Map<string, Route>([
+	["/", {
+		folder: "reports",
+		labels: reportLabels,
+		read(value) {
+			const report = parseReport(value);
+			return { kind: report.kind, issue: (id) => issueFor(report, id) };
+		},
+	}],
+	["/settings", {
+		folder: "settings",
+		labels: shareLabels,
+		read(value) {
+			const share = parseShare(value);
+			return { kind: "settings", issue: () => shareIssue(share) };
+		},
+	}],
+]);
+
 /**
- * POST / with a report as JSON (see `ProblemReport`). Answers 201 `{"issue", "id"}` when it opened
- * an issue, or 202 `{"id"}` when it only kept the report (the daily limit, or GitHub failed).
+ * POST / with a crash or error report as JSON (see `ProblemReport`), or POST /settings with the
+ * settings a player shares (see `SettingsShare`). Both share the limits. Answers 201 `{"issue", "id"}`
+ * when it opened an issue, or 202 `{"id"}` when it only kept the report (the daily limit, or GitHub
+ * failed).
  */
 export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname !== "/") return answer(404, { error: "Not found." });
+		const route = routes.get(url.pathname);
+		if (route === undefined) return answer(404, { error: "Not found." });
 		if (request.method !== "POST") return answer(405, { error: "Use POST." }, { Allow: "POST" });
 		if (!env.GITHUB_TOKEN || !env.RATE_LIMIT_KEY) return answer(503, { error: "The relay isn't set up yet." });
 		if (!(request.headers.get("Content-Type") ?? "").toLowerCase().startsWith("application/json")) {
@@ -45,7 +76,7 @@ export default {
 		}
 		let report;
 		try {
-			report = parseReport(value);
+			report = route.read(value);
 		} catch (error) {
 			if (error instanceof InvalidReport) return answer(400, { error: error.message });
 			throw error;
@@ -63,7 +94,7 @@ export default {
 		}
 
 		const id = crypto.randomUUID();
-		await env.REPORTS.put(`reports/${id}.json`, JSON.stringify({ id, received: new Date(now).toISOString(), report: value }, null, 2), {
+		await env.REPORTS.put(`${route.folder}/${id}.json`, JSON.stringify({ id, received: new Date(now).toISOString(), report: value }, null, 2), {
 			httpMetadata: { contentType: "application/json" },
 			customMetadata: { kind: report.kind },
 		});
@@ -75,7 +106,7 @@ export default {
 			return answer(202, { id });
 		}
 		try {
-			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN }, issueFor(report, id));
+			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN }, report.issue(id), route.labels);
 			return answer(201, { issue, id });
 		} catch (error) {
 			console.error(`Report ${id} kept without an issue: ${error instanceof Error ? error.message : error}`);

@@ -56,19 +56,27 @@ struct TestedGamesTests {
     }
 
     /// The Game report form, filled in, with the settings where the workflow reads them.
-    @Test func shareLinkFillsTheGameReport() throws {
+    /// The share as the relay's /settings takes it (relay/src/share.ts).
+    @Test func shareIsWhatTheRelayTakes() throws {
         var game = Steam.entry(appID: "999999", name: "Untested Game", bottleID: UUID(), steamRoot: URL(fileURLWithPath: "/steam"))
         game.profile.backendOverride = .dxmt
-        let url = try #require(Steam.shareURL(of: game, repository: URL(string: "https://github.com/o/r")!, playsWell: true,
-                                              performance: " 1440p High, 60 fps\n", issues: "", version: "0.8.0 (11)", mac: "26.1, Mac16,1"))
-        let items = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
-        func field(_ name: String) -> String? { items.first { $0.name == name }?.value }
-        #expect(url.path == "/o/r/issues/new")
-        #expect(field("template") == "game_report.yml")
-        #expect(field("result") == "Plays well")
-        #expect(field("backend") == "DXMT")
-        #expect(field("settings") == "1440p High, 60 fps")
-        #expect(field("corkscrew") == Steam.settingsReport(of: game))
-        #expect(field("title") == "Untested Game: plays well")
+        let share = try #require(Steam.share(of: game, playsWell: true, performance: " 1440p High, 60 fps\n", issues: "", minutes: 47,
+                                             version: "0.8.0 (11)", mac: "26.1, Mac16,1",
+                                             date: Date(timeIntervalSince1970: 1_792_000_000)))
+        let request = try share.request(to: URL(string: "https://relay.example/")!)
+        #expect(request.url?.absoluteString == "https://relay.example/settings")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+
+        let data = try #require(request.httpBody)
+        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(body.keys) == ["game", "appID", "result", "backend", "performance", "issues", "settings", "minutes", "version", "mac", "date"])
+        #expect(body["appID"] as? String == "999999")
+        #expect(body["result"] as? String == "Plays well")
+        #expect(body["backend"] as? String == "DXMT")
+        #expect(body["performance"] as? String == "1440p High, 60 fps")
+        #expect(body["settings"] as? String == Steam.settingsReport(of: game))
+        #expect(body["minutes"] as? Int == 47)
+        #expect(body["date"] as? String == "2026-10-14T17:46:40Z")
     }
 }

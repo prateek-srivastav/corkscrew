@@ -46,9 +46,13 @@ class Rejected(Exception):
 
 
 def field(body, heading):
-    """The text under a form field's "### heading", up to the next field."""
+    """The text under a form field's "### heading", up to the next field. When that is one code
+    block (the relay writes the player's text in one, the form the Corkscrew settings), what's in it."""
     match = re.search(r"^###\s+" + re.escape(heading) + r"[^\n]*\n(.*?)(?=^###\s|\Z)", body, re.M | re.S)
     value = match.group(1).strip() if match else ""
+    fenced = re.fullmatch(r"(`{3,})[^`\n]*\n(.*?)\n\1", value, re.S)
+    if fenced:
+        value = fenced.group(2).strip()
     return "" if value == "_No response_" else value
 
 

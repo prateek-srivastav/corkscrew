@@ -1,6 +1,6 @@
 import type { Kind, ProblemReport } from "./report";
 
-export const labels = ["bug", "crash-report"];
+export const reportLabels = ["bug", "crash-report"];
 
 /** Lines of the backtrace that go into the public issue; the rest stays in the stored report. */
 export const backtraceLines = 60;
@@ -58,7 +58,7 @@ export function codeBlock(content: string): string {
 	return `${fence}text\n${content}\n${fence}`;
 }
 
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
 	return text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
 }
 
@@ -67,8 +67,8 @@ export interface GitHub {
 	token: string;
 }
 
-/** Opens the issue and returns its link. Throws when GitHub says no. */
-export async function openIssue(github: GitHub, issue: { title: string; body: string }): Promise<string> {
+/** Opens the issue with `labels` and returns its link. Throws when GitHub says no. */
+export async function openIssue(github: GitHub, issue: { title: string; body: string }, labels: string[]): Promise<string> {
 	const response = await fetch(`https://api.github.com/repos/${github.repository}/issues`, {
 		method: "POST",
 		headers: {

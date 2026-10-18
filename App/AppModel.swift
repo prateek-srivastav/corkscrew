@@ -1324,7 +1324,7 @@ final class AppModel {
     private static let sharePromptsKey = "SharedSettingsAsked"
 
     private func offerToShare(_ game: Game, played: Duration) {
-        guard pendingReport == nil, Steam.canShareSettings(of: game), let appID = game.store?.appID,
+        guard pendingReport == nil, Self.reportRelay != nil, Steam.canShareSettings(of: game), let appID = game.store?.appID,
               let settings = Steam.settingsReport(of: game) else { return }
         var asked = UserDefaults.standard.dictionary(forKey: Self.sharePromptsKey) as? [String: String] ?? [:]
         guard asked[appID] != settings else { return }

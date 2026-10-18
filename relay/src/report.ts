@@ -55,7 +55,7 @@ export function parseReport(value: unknown): ProblemReport {
 	};
 }
 
-function text(fields: Record<string, unknown>, name: string, limit: number): string {
+export function text(fields: Record<string, unknown>, name: string, limit: number): string {
 	const value = fields[name];
 	if (typeof value !== "string") throw new InvalidReport(`"${name}" must be a string.`);
 	if (value.length > limit) throw new InvalidReport(`"${name}" is longer than ${limit} characters.`);

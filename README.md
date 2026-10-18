@@ -71,7 +71,7 @@ Corkscrew turns off Wine's crash dialog in each bottle, so Wine writes the backt
 
 ### Share settings that work
 
-After you play a Steam game for 15 minutes without a crash, with settings that aren't on the tested list, Corkscrew asks whether it ran well. **Share on GitHub…** opens a new [game report](https://github.com/Prateek-Srivastav/corkscrew/issues/new?template=game_report.yml) with the game, its Corkscrew settings, your Mac and macOS filled in. It asks once for each game and set of settings.
+After you play a Steam game for 15 minutes without a crash, with settings that aren't on the tested list, Corkscrew asks whether it ran well. **Share** sends the game, its Corkscrew settings, your notes, and your Mac and macOS to Corkscrew's [relay](relay/), which opens a public [game report](https://github.com/Prateek-Srivastav/corkscrew/issues?q=label%3Agame-report) on GitHub. You need no GitHub account. It asks once for each game and set of settings.
 
 When a maintainer checks the report and labels it **tested**, a workflow adds the settings to [the tested list](Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift) in a pull request. After the next release, everyone's copy of that game starts with them. The workflow takes only the settings Corkscrew shares, and never changes the games tested here.
 
