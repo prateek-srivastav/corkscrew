@@ -229,10 +229,19 @@ final class ProgramInstaller {
         }
     }
 
-    /// The setup window is closed but something keeps running: go on anyway.
-    func setupIsDone() {
-        task?.cancel()
-        finishSetup()
+    /// Brings the setup's window to the front.
+    func showSetup() {
+        guard let prefix else { return }
+        Task {
+            let owners = await Self.offMain { BottleProcesses.windowOwners(prefix: prefix) }
+            guard let setup = owners.lazy.compactMap(NSRunningApplication.init(processIdentifier:)).first else {
+                job?.note = "The setup has no window open now."
+                return
+            }
+            setup.unhide()
+            NSApp.yieldActivation(to: setup)
+            setup.activate()
+        }
     }
 
     private func finishSetup() {

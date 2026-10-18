@@ -30,6 +30,52 @@ public enum WineRegistry {
         return nil
     }
 
+    /// The keys directly under `key`, by name, with their string values: names lowercased, data
+    /// unescaped (`C:\\Games` → `C:\Games`). Other values (dwords, binary) are left out.
+    static func subkeys(of key: String, text: String) -> [String: [String: String]] {
+        let parent = key.lowercased() + #"\"#
+        var found: [String: [String: String]] = [:]
+        var current: String?
+        for line in text.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("["), let end = line.lastIndex(of: "]") {
+                let name = unescaped(line[line.index(after: line.startIndex)..<end])
+                current = name.lowercased().hasPrefix(parent) && !name.dropFirst(parent.count).contains(#"\"#)
+                    ? String(name.dropFirst(parent.count)) : nil
+                if let current { found[current] = [:] }
+            } else if let current, line.hasPrefix("\""), let split = line.range(of: "\"=\""), line.hasSuffix("\"") {
+                let name = unescaped(line[line.index(after: line.startIndex)..<split.lowerBound])
+                found[current]?[name.lowercased()] = unescaped(line[split.upperBound..<line.index(before: line.endIndex)])
+            }
+        }
+        return found
+    }
+
+    /// Undoes the escapes Wine writes in `.reg` files: `\\`, `\"`, `\n`, `\t` and `\xNNNN`.
+    static func unescaped(_ text: Substring) -> String {
+        var result = ""
+        var rest = text[...]
+        while let backslash = rest.firstIndex(of: "\\") {
+            result += rest[..<backslash]
+            rest = rest[rest.index(after: backslash)...]
+            guard let next = rest.first else { return result + "\\" }
+            rest = rest.dropFirst()
+            switch next {
+            case "n": result += "\n"
+            case "t": result += "\t"
+            case "x":
+                let hex = rest.prefix(4).prefix { $0.isHexDigit }
+                if let code = UInt32(hex, radix: 16), let scalar = Unicode.Scalar(code) {
+                    result.unicodeScalars.append(scalar)
+                    rest = rest.dropFirst(hex.count)
+                } else {
+                    result += "x"
+                }
+            default: result.append(next)
+            }
+        }
+        return result + rest
+    }
+
     /// Wine's own reading of an on/off string option (`IS_OPTION_TRUE` in winemac.drv).
     static func isTrue(_ data: String?) -> Bool {
         guard let first = data?.first else { return false }

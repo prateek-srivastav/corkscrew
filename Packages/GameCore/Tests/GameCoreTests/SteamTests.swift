@@ -109,6 +109,7 @@ struct SteamTests {
 
     @Test func opensAStorePageTheWaySteamsLinkHandlerDoes() {
         #expect(Steam.storePageArguments(appID: "3132990") == ["-noverifyfiles", "-norepairfiles", "--", "steam://store/3132990"])
+        #expect(Steam.uninstallArguments(appID: "3132990") == ["-noverifyfiles", "-norepairfiles", "--", "steam://uninstall/3132990"])
     }
 
     @Test func skipsEntriesTheLibraryAlreadyKnows() throws {
