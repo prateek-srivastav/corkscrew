@@ -3,38 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Corkscrew: Windows games on Apple Silicon Macs</title>
-<meta name="description" content="Corkscrew is a free, open-source macOS app that runs Windows games and launchers on Apple Silicon Macs, with Wine, D3DMetal, sandboxed bottles and one-click installs from zip, rar, 7z and iso downloads.">
+<title>Corkscrew: Windows games on your Mac</title>
+<meta name="description" content="Corkscrew is a free, open-source Mac app for Apple Silicon. Play your Windows games through Steam, or install programs straight from a .zip, .rar, .7z or .iso.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0d0609">
 <link rel="icon" type="image/png" href="img/icon.png">
 <link rel="apple-touch-icon" href="img/icon.png">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Corkscrew">
-<meta property="og:description" content="Run Windows games on Apple Silicon Macs. Free and open source.">
+<meta property="og:description" content="Windows games on your Mac, through Steam or straight from a .zip, .rar, .7z or .iso.">
 <meta property="og:url" content="https://prateek-srivastav.github.io/corkscrew/">
 <meta property="og:image" content="https://prateek-srivastav.github.io/corkscrew/img/library.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@100..900&family=Fragment+Mono&family=Instrument+Sans:wght@400..700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Instrument+Sans:wght@400..600&family=Instrument+Serif:ital@0;1&display=swap">
 <script>document.documentElement.className = "js";</script>
 <style>
-  /* Layout: one left-aligned column (1160px) on wine-black ink. Every gradient on the page is an
-     8×8 Bayer dither in wine: tone comes from how many dots are on, never from blur or opacity. */
+  /* Wine-black ink with a lot of empty space. The only dither on the page is the wine glow at the
+     bottom of the first screen and the screenshot, which develops from a dither when it scrolls in. */
   :root {
     --ink: #0d0609;
     --ink-raised: #170a10;
-    --line: #36202b;
+    --line: #2e1a24;
     --paper: #f1e9df;
-    --dust: #ae9aa3;
+    --dust: #a8949d;
     --wine: #8c1838;
     --wine-hi: #e2496f;
-    --display: "Doto", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
     --body: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
     --mono: "Fragment Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    --checker: repeating-conic-gradient(var(--wine) 0 25%, transparent 0 50%) 0 0 / 4px 4px;
-    --gutter: 24px;
+    --gutter: 32px;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -47,428 +46,217 @@
     -webkit-font-smoothing: antialiased;
   }
   ::selection { background: var(--wine); color: var(--paper); }
-  a { color: var(--wine-hi); text-decoration: underline dotted 1px; text-underline-offset: 3px; }
-  a:hover { text-decoration-style: solid; }
-  :focus-visible { outline: 2px dashed var(--wine-hi); outline-offset: 3px; }
+  a { color: var(--paper); text-decoration-color: var(--wine-hi); text-underline-offset: 4px; }
+  a:hover { color: var(--wine-hi); }
+  :focus-visible { outline: 2px solid var(--wine-hi); outline-offset: 3px; }
   img { max-width: 100%; }
+  em { font-style: italic; color: var(--wine-hi); }
   .wrap {
-    max-width: 1160px;
+    max-width: 1080px;
     margin: 0 auto;
     padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
     padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
   }
-  [data-dither] { image-rendering: pixelated; }
 
-  /* Header, with a dithered edge that dissolves the page as it scrolls under */
-  header.top { position: sticky; top: 0; z-index: 20; background: var(--ink); }
-  header.top .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
-  header.top .edge { position: absolute; left: 0; right: 0; top: 100%; height: 15px; pointer-events: none; background-image: linear-gradient(var(--ink), transparent); }
-  .brand { display: flex; align-items: center; gap: 10px; color: var(--paper); font: 900 24px/1 var(--display); letter-spacing: -.01em; text-decoration: none; }
-  .brand img { width: 28px; height: 28px; border-radius: 6px; }
-  header.top nav { margin-left: auto; display: flex; gap: 22px; font: 13px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
-  header.top nav a { color: var(--dust); text-decoration: none; }
-  header.top nav a:hover { color: var(--paper); }
-
-  /* Hero */
-  .hero { position: relative; overflow: hidden; padding-block: 72px 32px; }
-  .hero .glow {
-    position: absolute; inset: 0; z-index: 0; pointer-events: none;
-    background-image: radial-gradient(ellipse 55% 75% at 72% 0%, rgba(140, 24, 56, .45), transparent 70%);
-    background-repeat: no-repeat; background-position: right -120px top 0;
+  /* First screen: the headline, one line and the install command, nothing else */
+  .hero { position: relative; min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; overflow: hidden; }
+  .bar { position: relative; z-index: 1; width: 100%; display: flex; align-items: center; justify-content: space-between; height: 80px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--paper); font: 600 17px/1 var(--body); text-decoration: none; }
+  .brand img { width: 26px; height: 26px; border-radius: 6px; }
+  .bar .gh { color: var(--dust); font-size: 15px; text-decoration: none; }
+  .bar .gh:hover { color: var(--paper); }
+  .hero-main {
+    position: relative; z-index: 1; flex: 1; width: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+    padding-block: 24px 20vh;
   }
-  .hero > .wrap { position: relative; z-index: 1; }
-  .eyebrow { margin: 0; font: 13px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--wine-hi); }
-  h1 {
-    font: 900 clamp(46px, 9.4vw, 120px)/.96 var(--display);
-    letter-spacing: -.02em;
-    margin: 20px 0 40px;
-    text-wrap: balance;
+  h1 { font: 400 clamp(50px, 8.4vw, 112px)/1 var(--serif); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+  .lede { margin: 28px 0 56px; max-width: 36em; color: var(--dust); font-size: clamp(18px, 2vw, 21px); line-height: 1.5; text-wrap: balance; }
+  .lede span { display: block; }
+  .glow {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 34%; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse 55% 100% at 50% 100%, rgba(140, 24, 56, .45), transparent 70%);
+    image-rendering: pixelated;
   }
-  .hero-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 56px; align-items: end; }
-  .hero-copy { min-width: 0; max-width: 640px; }
-  .lede { font-size: clamp(18px, 2vw, 20px); color: var(--dust); margin: 0 0 28px; }
-  .lede strong { color: var(--paper); font-weight: 600; }
+  .cue { position: absolute; left: 50%; bottom: 28px; z-index: 1; margin-left: -20px; width: 40px; height: 40px; display: grid; place-items: center; color: var(--paper); opacity: .75; }
+  .cue:hover { opacity: 1; color: var(--paper); }
 
-  .cmd { display: flex; align-items: center; gap: 12px; background: var(--ink-raised); border: 1px solid var(--line); padding: 12px 12px 12px 16px; }
+  /* The install command */
+  .cmd {
+    display: flex; align-items: center; gap: 12px; width: 100%; max-width: 790px; text-align: left;
+    background: var(--ink-raised); border: 1px solid var(--line); border-radius: 12px; padding: 10px 10px 10px 18px;
+  }
   .cmd code { flex: 1; min-width: 0; font: 14px/1.5 var(--mono); color: var(--paper); overflow-wrap: anywhere; }
   .cmd code .p { color: var(--wine-hi); user-select: none; }
   .nw { white-space: nowrap; }
   button.copy {
-    flex: none; cursor: pointer; border: 0; padding: 11px 16px;
-    font: 13px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em;
-    color: var(--paper); background: var(--wine);
+    flex: none; cursor: pointer; border: 0; border-radius: 8px; padding: 11px 18px;
+    font: 600 14px/1 var(--body); color: var(--paper); background: var(--wine);
   }
-  button.copy:hover { background: repeating-conic-gradient(var(--wine-hi) 0 25%, var(--wine) 0 50%) 0 0 / 4px 4px; }
+  button.copy:hover { background: color-mix(in srgb, var(--wine) 75%, var(--wine-hi)); }
   button.copy:active { background: var(--wine-hi); }
-  .note { color: var(--dust); font-size: 14.5px; margin: 14px 2px 0; }
 
-  dl.spec { margin: 0; font: 13px/1.4 var(--mono); }
-  dl.spec div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px dotted var(--line); }
-  dl.spec div:first-child { border-top: 1px dotted var(--line); }
-  dl.spec dt { color: var(--dust); text-transform: uppercase; letter-spacing: .06em; }
-  dl.spec dd { margin: 0; text-align: right; color: var(--paper); }
+  /* Sections below the first screen */
+  section.block { padding-block: 168px 0; scroll-margin-top: 24px; }
+  h2 { font: 400 clamp(40px, 5.6vw, 68px)/1.04 var(--serif); letter-spacing: -.015em; margin: 0; max-width: 14em; text-wrap: balance; }
+  p.sub { margin: 24px 0 0; max-width: 31em; color: var(--dust); font-size: 19px; }
 
-  /* Screenshots: the dithered picture dissolves into the real one (see the script) */
-  .shot { position: relative; isolation: isolate; margin: 0; }
-  .shot::after { content: ""; position: absolute; inset: 0; z-index: -1; transform: translate(12px, 12px); background: var(--checker); border-radius: 1.8% / 3%; }
+  .formats { list-style: none; margin: 80px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .formats li { background: var(--ink); padding: 44px 12px; text-align: center; font: 400 clamp(34px, 4.6vw, 56px)/1 var(--mono); letter-spacing: -.02em; }
+  .formats li span { color: var(--wine-hi); }
+  .also { margin: 18px 0 0; color: var(--dust); font-size: 15px; }
+
+  ol.flow { list-style: none; margin: 96px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 56px; }
+  .n { display: block; font: 14px/1 var(--mono); color: var(--wine-hi); }
+  ol.flow h3 { font: 400 30px/1.15 var(--serif); margin: 18px 0 10px; }
+  ol.flow p { margin: 0; color: var(--dust); }
+
+  /* Screenshot: the dithered picture dissolves into the real one (see the script) */
+  .shot { position: relative; margin: 0; filter: drop-shadow(0 40px 80px rgba(140, 24, 56, .28)); }
   .shot img, .shot canvas { display: block; width: 100%; height: auto; }
   .shot canvas { position: absolute; inset: 0; height: 100%; image-rendering: pixelated; }
   .js .shot:not(.ready) img { opacity: 0; animation: unhide 0s 6s forwards; }
-  .js .shot:not(.ready) { background: var(--checker), var(--ink-raised); border-radius: 1.8% / 3%; }
+  .js .shot:not(.ready) { background: var(--ink-raised); border-radius: 1.8% / 3%; }
   @keyframes unhide { to { opacity: 1; } }
-  .hero-shot { margin-top: 64px; }
+  .caption { margin: 36px auto 0; max-width: 34em; text-align: center; color: var(--dust); font-size: 16px; }
 
-  /* Sections */
-  section.block { padding-block: 112px 0; scroll-margin-top: 48px; }
-  h2 { font: 900 clamp(36px, 5.4vw, 64px)/1 var(--display); letter-spacing: -.015em; margin: 0 0 16px; text-wrap: balance; }
-  h3 { font: 600 19px/1.3 var(--body); margin: 0 0 6px; }
-  p.sub { color: var(--dust); margin: 0 0 44px; max-width: 640px; }
-  .kicker { font: 13px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--dust); margin: 0 0 12px; }
+  ol.install { list-style: none; margin: 72px 0 0; padding: 0; max-width: 880px; }
+  ol.install li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; padding: 32px 0; border-top: 1px solid var(--line); }
+  ol.install li:last-child { border-bottom: 1px solid var(--line); }
+  ol.install .num { font: 400 40px/1 var(--serif); color: var(--wine-hi); }
+  ol.install p { margin: 2px 0 0; font-size: 20px; }
+  ol.install p span { display: block; margin-top: 4px; color: var(--dust); font-size: 16px; }
+  ol.install .cmd { margin-top: 20px; }
+  .fine { margin: 32px 0 0; color: var(--dust); font-size: 15px; }
 
-  .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-  .feature { padding: 26px 26px 28px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .feature .tag { font: 12px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--wine-hi); margin: 0 0 16px; }
-  .feature p { margin: 0; color: var(--dust); font-size: 15.5px; }
+  footer { margin-top: 168px; border-top: 1px solid var(--line); padding-block: 40px 56px; color: var(--dust); font-size: 14px; }
+  footer .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+  footer nav a { color: var(--dust); text-decoration: none; }
+  footer nav a:hover { color: var(--paper); }
+  footer p { margin: 28px 0 0; max-width: 60em; font-size: 13px; }
 
-  .stack { margin-top: 72px; }
-  .stack ol { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  .stack li { display: grid; grid-template-columns: 96px minmax(0, 300px) minmax(0, 1fr); gap: 24px; align-items: center; border-bottom: 1px solid var(--line); padding-right: 8px; }
-  .stack .swatch { align-self: stretch; min-height: 64px; background-color: var(--wine); }
-  .stack b { font: 14px/1.4 var(--mono); color: var(--paper); font-weight: 400; padding-block: 18px; }
-  .stack span { color: var(--dust); font-size: 15.5px; padding-block: 18px; }
-
-  .gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 32px; }
-  .gallery figcaption { color: var(--dust); font-size: 14.5px; margin-top: 22px; }
-  .gallery figure { margin: 0; min-width: 0; }
-
-  /* Install from a download */
-  .formats { display: flex; flex-wrap: wrap; gap: 8px; margin: -20px 0 48px; padding: 0; list-style: none; }
-  .formats li { font: 13.5px/1 var(--mono); color: var(--paper); border: 1px solid var(--line); background: var(--ink-raised); padding: 8px 11px; }
-  .formats li.split { color: var(--dust); border-style: dashed; }
-  .dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 460px); gap: 64px; align-items: start; }
-  ol.flow { list-style: none; margin: 0; padding: 0; }
-  ol.flow li { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 18px; padding-bottom: 28px; color: var(--dust); font-size: 15.5px; }
-  ol.flow li:last-child { padding-bottom: 0; }
-  ol.flow li::after { content: ""; position: absolute; left: 21px; top: 50px; bottom: 6px; border-left: 1px dotted var(--line); }
-  ol.flow li:last-child::after { display: none; }
-  ol.flow .tile { position: relative; width: 44px; height: 44px; background-color: var(--wine); display: grid; place-items: center; }
-  ol.flow .tile i { font: normal 12px/1 var(--mono); color: var(--paper); background: var(--ink); padding: 4px 5px; }
-  ol.flow strong { color: var(--paper); }
-  ol.flow .title { display: block; color: var(--paper); font-weight: 600; font-size: 17px; line-height: 1.3; margin: 2px 0 4px; }
-  kbd { font: 12.5px var(--mono); color: var(--paper); border: 1px solid var(--line); background: var(--ink-raised); padding: 1px 5px; }
-  .dl-note { color: var(--dust); font-size: 14.5px; margin: 32px 0 0; padding-top: 20px; border-top: 1px dotted var(--line); }
-
-  .sheet-fig { margin: 0; }
-  .sheet-fig .frame { position: relative; isolation: isolate; }
-  .sheet-fig .frame::after { content: ""; position: absolute; inset: 0; z-index: -1; transform: translate(12px, 12px); background: var(--checker); border-radius: 14px; }
-  .sheet { background: var(--ink-raised); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 14px; font-size: 14px; }
-  .sheet-head { display: flex; align-items: center; gap: 12px; }
-  .sheet-head svg { flex: none; }
-  .sheet-head b { display: block; color: var(--paper); font-size: 15.5px; }
-  .sheet-head span { color: var(--dust); font-size: 13.5px; }
-  .sheet .field { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
-  .sheet .field > span:first-child { white-space: nowrap; }
-  .sheet .select { display: inline-flex; align-items: center; gap: 6px; color: var(--dust); text-align: right; }
-  .sheet .label { color: var(--dust); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin: 2px 0 -6px; }
-  .sheet .opt { display: flex; gap: 12px; align-items: flex-start; background: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
-  .sheet .opt.on { border-color: var(--wine-hi); }
-  .sheet .opt i { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; border: 1.5px solid var(--dust); }
-  .sheet .opt.on i { border: 5px solid var(--wine-hi); }
-  .sheet .opt p { margin: 3px 0 0; color: var(--dust); font-size: 13.5px; line-height: 1.45; }
-  .sheet .space { margin: 0; color: var(--dust); font-size: 13px; }
-  .sheet .buttons { display: flex; justify-content: space-between; gap: 12px; margin-top: 4px; }
-  .sheet .btn { border-radius: 7px; padding: 7px 16px; font-weight: 600; font-size: 14px; background: var(--line); }
-  .sheet .btn.primary { background: var(--wine); outline: 2px dashed var(--wine-hi); outline-offset: 3px; }
-  .sheet-fig figcaption { color: var(--dust); font-size: 14.5px; margin-top: 26px; }
-
-  /* Tested games */
-  .table { overflow-x: auto; border: 1px solid var(--line); }
-  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
-  th, td { text-align: left; vertical-align: top; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-  tr:last-child td { border-bottom: 0; }
-  th { font: 12px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--dust); background: var(--ink-raised); }
-  td { color: var(--dust); }
-  td:first-child { color: var(--paper); font-weight: 600; white-space: nowrap; }
-
-  /* Install */
-  ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
-  ol.steps li { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 24px; padding: 28px 0; border-bottom: 1px solid var(--line); color: var(--dust); }
-  ol.steps .num { font: 900 64px/.9 var(--display); color: var(--wine-hi); }
-  ol.steps strong { color: var(--paper); }
-  ol.steps .cmd { margin: 14px 0 0; max-width: 720px; }
-  ol.steps p { margin: 0; }
-  .after { color: var(--dust); margin: 28px 0 0; }
-
-  /* Footer: the page fills with wine */
-  .horizon { height: 150px; margin-top: 128px; background-image: linear-gradient(transparent, var(--wine)); }
-  footer { background: var(--wine); color: var(--paper); padding-block: 8px 56px; }
-  footer .mark { font: 900 clamp(44px, 8vw, 96px)/1 var(--display); letter-spacing: -.02em; margin: 0 0 28px; }
-  footer .links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 24px; font: 13px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
-  footer a { color: var(--paper); }
-  footer p { margin: 6px 0; max-width: 780px; font-size: 14px; color: color-mix(in srgb, var(--paper) 82%, var(--wine)); }
-
-  /* Page load: the headline's dots swell from hairline to bold, the rest rises in */
+  /* Motion: the first screen fades up on load; the rest fades up as it scrolls into view */
   @media (prefers-reduced-motion: no-preference) {
-    h1 { animation: swell 1s cubic-bezier(.2, .7, .2, 1) both; }
-    .rise { animation: rise .7s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--i, 0) * 90ms + 150ms); }
+    .rise { animation: rise .9s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--i, 0) * 120ms + 100ms); }
+    .cue svg { animation: bob 2.4s ease-in-out 1.5s infinite; }
+    .js .reveal { opacity: 0; transform: translateY(24px); transition: opacity .9s ease, transform .9s cubic-bezier(.2, .7, .2, 1); transition-delay: calc(var(--i, 0) * 110ms); }
+    .js .reveal.in { opacity: 1; transform: none; }
   }
-  @keyframes swell { from { font-weight: 100; } to { font-weight: 900; } }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+  @keyframes bob { 50% { transform: translateY(6px); } }
 
-  @media (max-width: 960px) {
-    .hero-row { grid-template-columns: minmax(0, 1fr); gap: 40px; }
-    dl.spec { max-width: 420px; }
-    .features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .gallery { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
-    .dl { grid-template-columns: minmax(0, 1fr); gap: 56px; }
-    .sheet-fig { max-width: 520px; }
-    .stack li { grid-template-columns: 64px minmax(0, 1fr); gap: 4px 20px; }
-    .stack .swatch { grid-row: span 2; }
-    .stack b { padding-block: 16px 0; }
-    .stack span { padding-block: 0 16px; }
+  @media (max-width: 860px) {
+    ol.flow { grid-template-columns: minmax(0, 1fr); gap: 44px; max-width: 520px; }
   }
   @media (max-width: 640px) {
-    :root { --gutter: 16px; }
-    header.top nav a.hide-sm { display: none; }
-    .hero { padding-top: 48px; }
-    .hero .glow { background-position: right -420px top -150px; }
-    .cmd { flex-direction: column; align-items: stretch; }
-    .features { grid-template-columns: minmax(0, 1fr); }
-    ol.steps li { grid-template-columns: 52px minmax(0, 1fr); gap: 14px; }
-    ol.steps .num { font-size: 44px; }
-    td:first-child { white-space: normal; }
-    section.block { padding-top: 88px; }
+    :root { --gutter: 20px; }
+    .bar { height: 64px; }
+    .hero-main { padding-bottom: 18vh; }
+    .glow { height: 24%; }
+    .lede { margin: 22px 0 40px; }
+    .lede span { display: inline; }
+    .cmd { flex-direction: column; align-items: stretch; padding: 14px; }
+    .cmd code { font-size: 13.5px; }
+    section.block { padding-top: 128px; }
+    .formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .formats li { padding: 32px 8px; }
+    ol.install li { grid-template-columns: 40px minmax(0, 1fr); gap: 12px; }
+    ol.install .num { font-size: 32px; }
+    ol.install p { font-size: 18px; }
+    footer { margin-top: 128px; }
   }
 </style>
 </head>
 <body>
 
-<header class="top">
-  <div class="wrap">
-    <a class="brand" href="#"><img src="img/icon.png" alt="">Corkscrew</a>
-    <nav>
-      <a class="hide-sm" href="#features">Features</a>
-      <a class="hide-sm" href="#downloads">Zip, RAR, ISO</a>
-      <a class="hide-sm" href="#games">Games</a>
-      <a href="#install">Install</a>
-      <a href="https://github.com/Prateek-Srivastav/corkscrew">GitHub</a>
-    </nav>
-  </div>
-  <div class="edge" data-dither="fade" aria-hidden="true"></div>
-</header>
-
 <main>
   <section class="hero">
     <div class="glow" data-dither="glow" aria-hidden="true"></div>
-    <div class="wrap">
-      <p class="eyebrow rise" style="--i:0">Free and open source · GPL-3.0</p>
-      <h1>Windows games on your Mac.</h1>
-      <div class="hero-row">
-        <div class="hero-copy">
-          <p class="lede rise" style="--i:1">Corkscrew runs Windows games and launchers on Apple Silicon. It builds its own Wine, picks the graphics layer per game, <strong>installs programs from a .zip, .rar, .7z or .iso in one click</strong>, and can run programs you don’t trust in a sandbox.</p>
-          <div class="rise" style="--i:2" id="install-cmd">
-            <div class="cmd">
-              <code><span class="p">$ </span>curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh <span class="nw">| bash</span></code>
-              <button class="copy" type="button" data-copy="curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash">Copy</button>
-            </div>
-            <p class="note">Paste it into Terminal. It downloads the latest release, checks its SHA-256, puts Corkscrew in Applications and opens it. Run it again to update. <a href="install.sh">Read the script</a></p>
-          </div>
-        </div>
-        <dl class="spec rise" style="--i:3">
-          <div><dt>Mac</dt><dd>Apple Silicon</dd></div>
-          <div><dt>macOS</dt><dd>26 or 27</dd></div>
-          <div><dt>Download</dt><dd>About 320 MB</dd></div>
-          <div><dt>Disk</dt><dd>3.5 GB + your games</dd></div>
-          <div><dt>License</dt><dd>GPL-3.0</dd></div>
-        </dl>
-      </div>
-      <figure class="shot hero-shot">
-        <img src="img/library.webp" width="1600" height="979" alt="The Corkscrew Library: every program from every bottle, with the last-played ones in a carousel">
-      </figure>
+    <div class="wrap bar">
+      <a class="brand" href="#"><img src="img/icon.png" alt="">Corkscrew</a>
+      <a class="gh" href="https://github.com/Prateek-Srivastav/corkscrew">GitHub</a>
     </div>
-  </section>
-
-  <section class="block" id="features">
-    <div class="wrap">
-      <h2>What it does</h2>
-      <p class="sub">A native SwiftUI app around CodeWeavers’ open-source Wine, built for Apple Silicon and tuned for games.</p>
-      <div class="features">
-        <div class="feature">
-          <p class="tag">D3DMetal · DXMT · DXVK · WineD3D</p>
-          <h3>Graphics per game</h3>
-          <p>D3DMetal from Apple’s Game Porting Toolkit, DXMT, DXVK with MoltenVK, or WineD3D. Corkscrew picks one; you can switch per game.</p>
-        </div>
-        <div class="feature">
-          <p class="tag">DLSS → MetalFX</p>
-          <h3>MetalFX upscaling</h3>
-          <p>Turn on a game’s DLSS option and it runs on MetalFX. Retina mode, the Metal HUD and a performance overlay are a toggle away.</p>
-        </div>
-        <div class="feature">
-          <p class="tag">Steam · Rockstar Games Launcher</p>
-          <h3>Steam and Rockstar</h3>
-          <p>Steam installs, signs in, downloads and launches games, which show up in the Library on their own. The Rockstar Games Launcher works too.</p>
-        </div>
-        <div class="feature">
-          <p class="tag">macOS sandbox</p>
-          <h3>Sandboxed bottles</h3>
-          <p>Isolated bottles run in a macOS sandbox: no access to your files, keychain or clipboard, and no internet unless you turn it on.</p>
-        </div>
-        <div class="feature">
-          <p class="tag">msync · Game Mode</p>
-          <h3>Tuned for speed</h3>
-          <p>msync, Game Mode for fullscreen games, Wine debug output off, and background shader compiles.</p>
-        </div>
-        <div class="feature">
-          <p class="tag">SDL2</p>
-          <h3>Controllers</h3>
-          <p>Xbox controllers work in every tested game, through Wine’s SDL2 support.</p>
-        </div>
-      </div>
-
-      <div class="stack">
-        <p class="kicker">From your game down to the GPU</p>
-        <ol>
-          <li><div class="swatch" data-dither="level" data-level="0.1" aria-hidden="true"></div><b>Corkscrew.app</b><span>The SwiftUI app, and gamecore-cli for Terminal.</span></li>
-          <li><div class="swatch" data-dither="level" data-level="0.3" aria-hidden="true"></div><b>GameCore</b><span>Reads the program’s .exe, picks the graphics layer, and runs bottles, the sandbox and launches.</span></li>
-          <li><div class="swatch" data-dither="level" data-level="0.52" aria-hidden="true"></div><b>winecx 26.3</b><span>CodeWeavers’ open-source Wine, built for x86_64 and run under Rosetta 2.</span></li>
-          <li><div class="swatch" data-dither="level" data-level="0.76" aria-hidden="true"></div><b>D3DMetal · DXMT · DXVK · WineD3D</b><span>Translate the game’s Direct3D calls, chosen per launch.</span></li>
-          <li><div class="swatch" data-dither="level" data-level="1" aria-hidden="true"></div><b>Metal</b><span>Apple’s graphics API, on your Mac’s GPU.</span></li>
-        </ol>
+    <div class="wrap hero-main">
+      <h1 class="rise" style="--i:0">Windows games on your <em>Mac</em>.</h1>
+      <p class="lede rise" style="--i:1">Play your games through Steam, right inside Corkscrew. <span>Or install programs straight from a .zip, .rar, .7z or .iso.</span></p>
+      <div class="cmd rise" style="--i:2">
+        <code><span class="p">$ </span>curl -fsSL https://<wbr>prateek-srivastav.github.io/<wbr>corkscrew/install.sh <span class="nw">| bash</span></code>
+        <button class="copy" type="button" data-copy="curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash">Copy</button>
       </div>
     </div>
-  </section>
-
-  <section class="block" aria-label="Screenshots">
-    <div class="wrap">
-      <div class="gallery">
-        <figure>
-          <div class="shot"><img src="img/steam.webp" width="1600" height="979" alt="The Steam page: the signed-in account's Steam library"></div>
-          <figcaption>Your Steam library, from the account you sign in with.</figcaption>
-        </figure>
-        <figure>
-          <div class="shot"><img src="img/game.webp" width="1600" height="979" alt="A game page with its art, Open in Steam, and details from the Steam store"></div>
-          <figcaption>Game pages with store art, details and per-game settings.</figcaption>
-        </figure>
-        <figure>
-          <div class="shot"><img src="img/online.webp" width="1600" height="979" alt="Online Programs, a protected bottle with internet on and a Steam of its own"></div>
-          <figcaption>Protected bottles keep other programs away from your files.</figcaption>
-        </figure>
-      </div>
-    </div>
+    <a class="cue" href="#downloads" aria-label="More about Corkscrew">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M5 8l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
   </section>
 
   <section class="block" id="downloads">
     <div class="wrap">
-      <h2>One-click install from a download</h2>
-      <p class="sub">Got a program as a .zip, .rar, .7z or .iso? Drop it on Corkscrew and click Install. Corkscrew unpacks it into a bottle, puts a disc image in the drive, runs the setup and adds the program to your Library. You don’t need an unpacking app or Terminal.</p>
-      <ul class="formats" aria-label="File types Corkscrew installs from">
-        <li>.zip</li>
-        <li>.rar</li>
-        <li>.7z</li>
-        <li>.iso</li>
-        <li>.tar.gz</li>
-        <li class="split">.part1.rar</li>
-        <li class="split">.r00</li>
-        <li class="split">.7z.001</li>
+      <h2 class="reveal">Install straight from the <em>download</em>.</h2>
+      <p class="sub reveal" style="--i:1">No unpacking app, no Terminal. Corkscrew unpacks the file, puts a disc image in the drive and runs the setup for you.</p>
+      <ul class="formats reveal" style="--i:2" aria-label="File types Corkscrew installs from">
+        <li><span>.</span>zip</li>
+        <li><span>.</span>rar</li>
+        <li><span>.</span>7z</li>
+        <li><span>.</span>iso</li>
       </ul>
-      <div class="dl">
-        <div>
-          <ol class="flow">
-            <li><span class="tile" data-dither="level" data-level="0.14" aria-hidden="true"><i>1</i></span><div><span class="title">Drop the download on Corkscrew</span>Drag it onto the window, use <strong>Add Program…</strong> (<kbd>⌘O</kbd>), or pick Corkscrew in Finder’s Open With menu. For a split download, pick any part.</div></li>
-            <li><span class="tile" data-dither="level" data-level="0.34" aria-hidden="true"><i>2</i></span><div><span class="title">Click Install</span>Choose the bottle, and Copy to keep your file or Move to delete it after unpacking and save the space.</div></li>
-            <li><span class="tile" data-dither="level" data-level="0.55" aria-hidden="true"><i>3</i></span><div><span class="title">Corkscrew unpacks it</span>Into the bottle, with the unpacker built into macOS. A disc image goes into the bottle’s D: drive, like a DVD. Big downloads take a while: click Hide and Corkscrew keeps going.</div></li>
-            <li><span class="tile" data-dither="level" data-level="0.78" aria-hidden="true"><i>4</i></span><div><span class="title">Run the setup</span>Click Run Setup and follow its steps. Keep the install folder it suggests.</div></li>
-            <li><span class="tile" data-dither="level" data-level="1" aria-hidden="true"><i>5</i></span><div><span class="title">Add it to your Library</span>When the setup closes, Corkscrew shows the program it installed. Click Add to Library. It deletes the setup files and ejects the disc.</div></li>
-          </ol>
-          <p class="dl-note">If the download is the program itself, with no setup, Corkscrew skips the setup and adds it to your Library. Password-protected archives and split zips (.z01) don’t work yet.</p>
-        </div>
-        <figure class="sheet-fig">
-          <div class="frame">
-            <div class="sheet" role="img" aria-label="Corkscrew's install window: Install into Offline Programs, Copy selected, and an Install button">
-              <div class="sheet-head">
-                <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
-                  <path d="M9 4h18l8 8v28H9z" fill="#2b1a22" stroke="#ae9aa3" stroke-width="1.5" stroke-linejoin="round"/>
-                  <path d="M27 4v8h8" fill="none" stroke="#ae9aa3" stroke-width="1.5" stroke-linejoin="round"/>
-                  <path d="M19 8h3M22 11h3M19 14h3M22 17h3M19 20h3" stroke="#e2496f" stroke-width="2" stroke-linecap="round"/>
-                  <rect x="18" y="23" width="8" height="7" rx="1.5" fill="#8c1838" stroke="#e2496f" stroke-width="1.2"/>
-                </svg>
-                <div><b>Install MyProgram</b><span>MyProgram.7z, 21.6 GB</span></div>
-              </div>
-              <div class="field"><span>Install into</span><span class="select">Offline Programs (protected) <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5l3 3 3-3" fill="none" stroke="#ae9aa3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
-              <div class="label">Your file</div>
-              <div class="opt on"><i></i><div><b>Copy</b><p>Your file stays where it is. Corkscrew unpacks what’s inside into the bottle, so you need room for both.</p></div></div>
-              <div class="opt"><i></i><div><b>Move</b><p>Corkscrew deletes your file as soon as it’s unpacked, to free the space. To install again, you’d need to download it again.</p></div></div>
-              <p class="space">412 GB free. Unpacking needs about 21.6 GB, and the installed program about as much again.</p>
-              <div class="buttons"><span class="btn">Cancel</span><span class="btn primary">Install</span></div>
-            </div>
-          </div>
-          <figcaption>The first step, for a .7z download. One click on Install starts the rest.</figcaption>
-        </figure>
-      </div>
+      <p class="also reveal" style="--i:2">Split downloads too: .part1.rar, .r00, .7z.001.</p>
+      <ol class="flow">
+        <li class="reveal"><span class="n">01</span><h3>Drop the file</h3><p>On Corkscrew’s window, or open it with Corkscrew from Finder.</p></li>
+        <li class="reveal" style="--i:1"><span class="n">02</span><h3>Click Install</h3><p>Choose where it goes, with or without internet. Keep the file, or let Corkscrew delete it to save space.</p></li>
+        <li class="reveal" style="--i:2"><span class="n">03</span><h3>Run the setup</h3><p>Corkscrew adds the program to your Library and cleans up.</p></li>
+      </ol>
     </div>
   </section>
 
-  <section class="block" id="games">
+  <section class="block" aria-label="Screenshot">
     <div class="wrap">
-      <h2>Tested games</h2>
-      <p class="sub">On a 14″ MacBook Pro (M4, 16 GB, macOS 27). Reports for other games are welcome.</p>
-      <div class="table">
-        <table>
-          <thead><tr><th>Game</th><th>Setup</th><th>Result</th></tr></thead>
-          <tbody>
-            <tr><td>Red Dead Redemption 2</td><td>Steam → Rockstar Games Launcher, DX12 on D3DMetal</td><td>About 50 FPS with Ultra textures, High shadows and lighting, DLSS as MetalFX.</td></tr>
-            <tr><td>Black Myth: Wukong Benchmark Tool</td><td>Steam, DX12 + MetalFX on D3DMetal</td><td>50 FPS average at 1512×982 (Medium, MetalFX 59%).</td></tr>
-            <tr><td>God of War (2018)</td><td>Isolated bottle, internet off, DX11 on D3DMetal with a depth-test fix</td><td>Plays on the Ultra preset.</td></tr>
-            <tr><td>Last Pirates Die Together</td><td>Isolated bottle, internet on, its own Steam, DX11 on D3DMetal</td><td>Plays; online co-op works.</td></tr>
-            <tr><td>Emily is Away</td><td>32-bit, DX11 on DXVK</td><td>Runs.</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <figure class="shot reveal">
+        <img src="img/library.webp" width="1600" height="979" alt="The Corkscrew Library: Steam games and installed programs, with the last-played ones in a carousel">
+      </figure>
+      <p class="caption reveal">Steam games and everything you install, in one Library.</p>
     </div>
   </section>
 
   <section class="block" id="install">
     <div class="wrap">
-      <h2>Install</h2>
-      <p class="sub">You need an Apple Silicon Mac with macOS 26 or 27.</p>
-      <ol class="steps">
-        <li>
+      <h2 class="reveal">Install in <em>one line</em>.</h2>
+      <ol class="install">
+        <li class="reveal">
           <span class="num" aria-hidden="true">1</span>
           <div>
-            <p><strong>Run the install command in Terminal.</strong> It downloads about 320 MB, puts Corkscrew in Applications and opens it.</p>
+            <p>Paste this into Terminal.</p>
             <div class="cmd">
-              <code><span class="p">$ </span>curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh <span class="nw">| bash</span></code>
+              <code><span class="p">$ </span>curl -fsSL https://<wbr>prateek-srivastav.github.io/<wbr>corkscrew/install.sh <span class="nw">| bash</span></code>
               <button class="copy" type="button" data-copy="curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash">Copy</button>
             </div>
           </div>
         </li>
-        <li>
+        <li class="reveal">
           <span class="num" aria-hidden="true">2</span>
-          <p><strong>Click Set Up Corkscrew.</strong> It installs Rosetta if needed, unpacks the Wine runtime that comes inside the app, and creates a Steam bottle and two protected bottles.</p>
+          <p>Click Set Up Corkscrew.<span>It sets up Steam and everything else it needs.</span></p>
         </li>
-        <li>
+        <li class="reveal">
           <span class="num" aria-hidden="true">3</span>
-          <p><strong>Open Steam from the Library,</strong> sign in, and install your games. Or drop in a program you downloaded as a <a href="#downloads">.zip, .rar, .7z or .iso</a>.</p>
+          <p>Open Steam, or drop in a download.</p>
         </li>
       </ol>
-      <p class="after">To remove everything, use <strong>Settings → Clean Up and Uninstall</strong>. To build from source, see the <a href="https://github.com/Prateek-Srivastav/corkscrew#building">README</a>.</p>
+      <p class="fine reveal">Free and open source. Apple Silicon Mac with macOS 26 or 27. About 330 MB. Run the command again to update. <a href="install.sh">Read the script</a></p>
     </div>
   </section>
 </main>
 
-<div class="horizon" data-dither="rise" aria-hidden="true"></div>
 <footer>
   <div class="wrap">
-    <p class="mark" aria-hidden="true">Corkscrew</p>
-    <div class="links">
-      <a href="https://github.com/Prateek-Srivastav/corkscrew">Source code</a>
-      <a href="https://github.com/Prateek-Srivastav/corkscrew/releases">Release notes</a>
-      <a href="https://github.com/Prateek-Srivastav/corkscrew#known-issues">Known issues</a>
-      <a href="https://github.com/Prateek-Srivastav/corkscrew/discussions">Discussions</a>
-      <a href="https://github.com/Prateek-Srivastav/corkscrew/blob/main/CONTRIBUTING.md">Contributing</a>
+    <div class="row">
+      <a class="brand" href="#"><img src="img/icon.png" alt="">Corkscrew</a>
+      <nav>
+        <a href="https://github.com/Prateek-Srivastav/corkscrew">Source code</a>
+        <a href="https://github.com/Prateek-Srivastav/corkscrew/releases">Release notes</a>
+        <a href="https://github.com/Prateek-Srivastav/corkscrew#known-issues">Known issues</a>
+      </nav>
     </div>
-    <p>Corkscrew is free software under the GNU General Public License, version 3 or later. It comes with no warranty. It doesn’t bypass DRM or copy protection.</p>
-    <p>Steam, Rockstar Games, Red Dead Redemption, Black Myth: Wukong, God of War, DirectX, DLSS, Metal and other names are trademarks of their owners. Corkscrew isn’t affiliated with or endorsed by any of them.</p>
+    <p>Free software under the GNU General Public License, version 3 or later, with no warranty. Corkscrew doesn’t bypass DRM or copy protection. Steam and other names are trademarks of their owners; Corkscrew isn’t affiliated with them.</p>
   </div>
 </footer>
 
@@ -490,48 +278,50 @@
     var shots = document.querySelectorAll(".shot");
     function showAll() { shots.forEach(function (shot) { shot.classList.add("ready"); }); }
 
+    // Fade-ups: each block shows once it scrolls into view.
+    var reveals = document.querySelectorAll(".reveal");
+    if (reduce || !("IntersectionObserver" in window)) {
+      reveals.forEach(function (el) { el.classList.add("in"); });
+    } else {
+      var seen = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          seen.unobserve(entry.target);
+          entry.target.classList.add("in");
+        });
+      }, { threshold: 0.15, rootMargin: "0px 0px -8% 0px" });
+      reveals.forEach(function (el) { seen.observe(el); });
+    }
+
     try {
-      // Textures: w×h cells, one canvas pixel per cell, scaled up with crisp edges.
-      var paint = function (el, w, h, color, density, repeat) {
+      // The glow: one canvas pixel per cell, at the element's size, scaled up with crisp edges.
+      var glow = document.querySelector("[data-dither=glow]"), glowWidth = 0;
+      var paintGlow = function () {
+        if (!glow || glow.offsetWidth === glowWidth) return;
+        glowWidth = glow.offsetWidth;
+        var w = Math.max(1, Math.round(glow.offsetWidth / CELL)), h = Math.max(1, Math.round(glow.offsetHeight / CELL));
         var canvas = document.createElement("canvas");
         canvas.width = w; canvas.height = h;
         var ctx = canvas.getContext("2d"), image = ctx.createImageData(w, h), px = image.data;
         for (var y = 0; y < h; y++) {
           for (var x = 0; x < w; x++) {
-            if (density(x, y) <= threshold(x, y)) continue;
+            var dx = (x - w / 2) / Math.min(w * 0.5, h * 3.2), dy = (h - y) / h;
+            var d = 1 - Math.sqrt(dx * dx + dy * dy);
+            if ((d > 0 ? Math.pow(d, 2.2) * 0.55 : 0) <= threshold(x, y)) continue;
             var i = (y * w + x) * 4;
-            px[i] = color[0]; px[i + 1] = color[1]; px[i + 2] = color[2]; px[i + 3] = 255;
+            px[i] = wine[0]; px[i + 1] = wine[1]; px[i + 2] = wine[2]; px[i + 3] = 255;
           }
         }
         ctx.putImageData(image, 0, 0);
-        el.style.backgroundImage = "url(" + canvas.toDataURL() + ")";
-        el.style.backgroundSize = w * CELL + "px " + h * CELL + "px";
-        el.style.backgroundRepeat = repeat;
-        el.style.backgroundColor = "transparent";
+        glow.style.background = "url(" + canvas.toDataURL() + ") 0 0 / " + w * CELL + "px " + h * CELL + "px no-repeat";
       };
-      document.querySelectorAll("[data-dither]").forEach(function (el) {
-        var kind = el.getAttribute("data-dither");
-        var rows = Math.max(1, Math.round(el.offsetHeight / CELL));
-        if (kind === "glow") {
-          var w = 420, h = 200;
-          paint(el, w, h, wine, function (x, y) {
-            var dx = (x - w * 0.72) / (w * 0.42), dy = y / (h * 0.8);
-            var d = 1 - Math.sqrt(dx * dx + dy * dy);
-            return d > 0 ? Math.pow(d, 1.6) * 0.75 : 0;
-          }, "no-repeat");
-        } else if (kind === "fade") {
-          paint(el, 8, rows, ink, function (x, y) { return 1 - (y + 0.5) / rows; }, "repeat-x");
-        } else if (kind === "rise") {
-          paint(el, 8, rows, wine, function (x, y) { return Math.pow((y + 1) / rows, 1.2); }, "repeat-x");
-        } else if (kind === "level") {
-          var level = parseFloat(el.getAttribute("data-level"));
-          paint(el, 8, 8, wine, function () { return level; }, "repeat");
-        }
-      });
+      paintGlow();
+      var resizing;
+      window.addEventListener("resize", function () { clearTimeout(resizing); resizing = setTimeout(paintGlow, 150); });
 
-      // Screenshots: drawn first as a three-ink dither (ink, wine, paper; the window's clear corners
-      // stay clear), which then dissolves,
-      // cell by cell in Bayer order and top first, into the real picture underneath.
+      // The screenshot: drawn first as a three-ink dither (ink, wine, paper; the window's clear
+      // corners stay clear), which then dissolves, cell by cell in Bayer order and top first, into
+      // the real picture underneath.
       var dither = function (img) {
         var w = Math.round(img.clientWidth / CELL), h = Math.round(img.clientHeight / CELL);
         if (!w || !h) return null;
@@ -555,7 +345,7 @@
         ctx.putImageData(image, 0, 0);
         return { canvas: canvas, ctx: ctx, image: image, order: order };
       };
-      var reveal = function (d) {
+      var develop = function (d) {
         var start = null, duration = 1300, px = d.image.data, order = d.order;
         var frame = function (now) {
           if (start === null) start = now;
@@ -576,9 +366,9 @@
             if (!entry.isIntersecting) return;
             observer.unobserve(entry.target);
             var d = entry.target._dither;
-            setTimeout(function () { reveal(d); }, entry.target.classList.contains("hero-shot") ? 450 : 100);
+            setTimeout(function () { develop(d); }, 500);
           });
-        }, { threshold: 0.2 });
+        }, { threshold: 0.3 });
         shots.forEach(function (shot) {
           var img = shot.querySelector("img");
           var start = function () {
