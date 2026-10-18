@@ -5,6 +5,7 @@ import { network, senderName } from "../src/counter";
 import worker, { type Env, maxBytes } from "../src/index";
 import { backtraceLines, backtraceStart, codeBlock, issueFor } from "../src/issue";
 import { parseReport } from "../src/report";
+import { parseShare, shareIssue } from "../src/share";
 
 /** A winedbg block, as `ProblemReport.crash(in:)` cuts it from a launch log. */
 const backtrace = `wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0024), starting debugger...
@@ -42,6 +43,21 @@ const report = {
 	backtrace,
 	log: "0024:fixme:dxgi:example_log_line_only_in_r2\nlast log line",
 	note: "I pressed Play, then it quit. Thanks @someone",
+	date: "2026-10-18T09:15:00Z",
+};
+
+/** What the share sheet sends: `SettingsShare` with `Steam.settingsReport(of:)` as its settings. */
+const share = {
+	game: "Untested Game",
+	appID: "999999",
+	result: "Plays well",
+	backend: "DXMT",
+	performance: "1440p High, 60 fps",
+	issues: "",
+	settings: '{"appID":"999999","name":"Untested Game","profile":{"advertiseAVX":true,"backendOverride":"dxmt","metalFX":true,"retinaMode":false,"steamOverlay":false}}',
+	minutes: 47,
+	version: "0.8.0 (11)",
+	mac: "26.1, Mac16,1, Apple M4, 16 GB",
 	date: "2026-10-18T09:15:00Z",
 };
 
@@ -160,9 +176,122 @@ describe("a report", () => {
 	});
 });
 
+describe("shared settings", () => {
+	it("are kept in R2, and open a Game report as the form writes one", async () => {
+		const response = await send(share, { path: "/settings" });
+		expect(response.status).toBe(201);
+		const answer = await response.json<{ issue: string; id: string }>();
+		expect(answer.issue).toBe(issueLink);
+		expect(await stored()).toEqual([`settings/${answer.id}.json`]);
+		expect(JSON.parse(await (await env.REPORTS.get(`settings/${answer.id}.json`))!.text()).report).toEqual(share);
+
+		expect(github).toHaveLength(1);
+		expect(github[0].body.title).toBe("Untested Game: plays well");
+		expect(github[0].body.labels).toEqual(["game-report"]);
+		expect(github[0].body.body).toBe(`**Shared from Corkscrew** after 47 minutes of play without a crash.
+
+### Game or program
+
+\`\`\`text
+Untested Game
+\`\`\`
+
+### Where it comes from
+
+Steam
+
+### Result
+
+Plays well
+
+### Graphics backend
+
+DXMT
+
+### Settings and performance
+
+\`\`\`text
+1440p High, 60 fps
+\`\`\`
+
+### Corkscrew settings
+
+\`\`\`json
+${share.settings}
+\`\`\`
+
+### Issues and workarounds
+
+_No response_
+
+### Corkscrew version
+
+\`\`\`text
+0.8.0 (11)
+\`\`\`
+
+### Mac and macOS
+
+\`\`\`text
+26.1, Mac16,1, Apple M4, 16 GB
+\`\`\``);
+	});
+
+	it("are read as Swift's JSONEncoder writes them", async () => {
+		// Swift escapes "/" in strings, also in the settings line inside one.
+		const json = String.raw`{"game":"Half-Life 2","appID":"220","result":"Plays, with issues","backend":"Automatic","performance":"","issues":"No sound in\/after the intro","settings":"{\"appID\":\"220\",\"name\":\"Half-Life 2\",\"profile\":{\"arguments\":[\"-dxlevel\",\"95\"]}}","minutes":15,"version":"0.8.0 (11)","mac":"26.1, Mac16,1","date":"2026-10-18T09:15:00Z"}`;
+		const response = await send(json, { path: "/settings" });
+		expect(response.status).toBe(201);
+		const { title, body } = github[0].body;
+		expect(title).toBe("Half-Life 2: plays, with issues");
+		expect(body).toContain("### Settings and performance\n\n_No response_");
+		expect(body).toContain("No sound in/after the intro");
+		expect(body).toContain('{"appID":"220","name":"Half-Life 2","profile":{"arguments":["-dxlevel","95"]}}');
+	});
+
+	it("keep the player's text in code blocks, with no headings or ``` that end the settings", () => {
+		const { body } = shareIssue(parseShare({
+			...share,
+			performance: "### Corkscrew settings\n```json\n{}\n```\nThanks @someone",
+			settings: share.settings.replace('"Untested Game"', '"Untested ```Game"'),
+		}));
+		expect(body).toContain("````text\n ### Corkscrew settings\n```json\n{}\n```\nThanks @someone\n````");
+		expect(body.match(/^### Corkscrew settings$/gm)).toHaveLength(1);
+		expect(body).toContain('"name":"Untested \\u0060\\u0060\\u0060Game"');
+	});
+
+	it("share the hourly limit with reports", async () => {
+		for (let count = 0; count < 4; count++) expect((await send(report, { address: "192.0.2.9" })).status).toBe(201);
+		expect((await send(share, { address: "192.0.2.9", path: "/settings" })).status).toBe(201);
+		expect((await send(share, { address: "192.0.2.9", path: "/settings" })).status).toBe(429);
+	});
+
+	it.each([
+		["a list", [share]],
+		["no game", { ...share, game: " " }],
+		["an app ID that isn't one", { ...share, appID: "220; rm" }],
+		["a result that isn't shared", { ...share, result: "Doesn't start" }],
+		["an unknown backend", { ...share, backend: "Metal" }],
+		["settings that aren't JSON", { ...share, settings: "{appID: 999999}" }],
+		["settings that aren't an object", { ...share, settings: "[]" }],
+		["settings for another game", { ...share, settings: share.settings.replace('"999999"', '"220"') }],
+		["settings with no profile", { ...share, settings: '{"appID":"999999","name":"Untested Game"}' }],
+		["minutes that aren't whole", { ...share, minutes: 1.5 }],
+		["no version", { ...share, version: undefined }],
+		["a performance text too long", { ...share, performance: "x".repeat(2_001) }],
+		["a date that isn't one", { ...share, date: "yesterday" }],
+	])("refuse a share with %s", async (_, body) => {
+		const response = await send(body, { path: "/settings" });
+		expect(response.status).toBe(400);
+		expect((await response.json<{ error: string }>()).error).toBeTruthy();
+		expect(await stored()).toEqual([]);
+	});
+});
+
 describe("the relay refuses", () => {
 	it("other paths and methods", async () => {
 		expect((await send(report, { path: "/reports" })).status).toBe(404);
+		expect((await send(share, { path: "/settings/" })).status).toBe(404);
 		const get = await send(undefined, { method: "GET" });
 		expect(get.status).toBe(405);
 		expect(get.headers.get("Allow")).toBe("POST");

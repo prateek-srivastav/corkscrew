@@ -117,20 +117,41 @@ extension Steam {
             .map { String(decoding: $0, as: UTF8.self) }
     }
 
-    /// A new Game report for a Steam game that ran well, filled in. Its "Corkscrew settings" field
-    /// is `settingsReport(of:)`, which a maintainer's "tested" label adds to the tested list.
-    public static func shareURL(of game: Game, repository: URL, playsWell: Bool, performance: String, issues: String,
-                                version: String, mac: String) -> URL? {
-        guard let settings = settingsReport(of: game) else { return nil }
-        let result = playsWell ? "Plays well" : "Plays, with issues"
-        var components = URLComponents(url: repository.appending(path: "issues/new"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            ("template", "game_report.yml"), ("title", "\(game.name): \(result.lowercased())"), ("game", game.name), ("store", "Steam"),
-            ("result", result), ("backend", game.profile.backendOverride?.formName ?? "Automatic"),
-            ("settings", performance.trimmingCharacters(in: .whitespacesAndNewlines)),
-            ("issues", issues.trimmingCharacters(in: .whitespacesAndNewlines)),
-            ("corkscrew", settings), ("version", version), ("mac", mac),
-        ].map { URLQueryItem(name: $0.0, value: $0.1) }
-        return components.url
+    /// What the share sheet sends for a Steam game that ran well. Nil for a game that isn't from Steam.
+    public static func share(of game: Game, playsWell: Bool, performance: String, issues: String, minutes: Int,
+                             version: String, mac: String, date: Date = .now) -> SettingsShare? {
+        guard let appID = game.store?.appID, let settings = settingsReport(of: game) else { return nil }
+        return SettingsShare(game: game.name, appID: appID, result: playsWell ? "Plays well" : "Plays, with issues",
+                             backend: game.profile.backendOverride?.formName ?? "Automatic",
+                             performance: performance.trimmingCharacters(in: .whitespacesAndNewlines),
+                             issues: issues.trimmingCharacters(in: .whitespacesAndNewlines),
+                             settings: settings, minutes: minutes, version: version, mac: mac, date: date)
     }
+}
+
+/// Settings a player shares, for the relay's `settings` path (`relay/src/share.ts`). The relay
+/// opens a Game report on GitHub with them; its "Corkscrew settings" field is `settings`, which a
+/// maintainer's "tested" label adds to the tested list.
+public struct SettingsShare: Codable, Equatable, Sendable {
+    public var game: String
+    public var appID: String
+    /// The Game report's result: "Plays well" or "Plays, with issues".
+    public var result: String
+    /// The Game report's graphics backend: "Automatic" or `GraphicsBackend.formName`.
+    public var backend: String
+    public var performance: String
+    public var issues: String
+    /// `Steam.settingsReport(of:)`.
+    public var settings: String
+    /// How long the game ran, without a crash, before the app asked.
+    public var minutes: Int
+    public var version: String
+    public var mac: String
+    public var date: Date
+
+    /// The share as JSON, for the relay at `relay`.
+    public func request(to relay: URL) throws -> URLRequest { try ProblemReport.post(self, to: relay.appending(path: "settings")) }
+
+    /// Posts the share. Throws unless the relay kept it.
+    public func send(to relay: URL) async throws { _ = try await ProblemReport.send(request(to: relay)) }
 }

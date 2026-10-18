@@ -8,6 +8,9 @@
 #  - The loader declares the games category, and programs run from an app bundle that carries it,
 #    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
+#  - Full-screen windows stay at the normal window level, so Mission Control can move them to
+#    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
+#    while the program is active instead.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -255,6 +258,128 @@ new = '''    /* Corkscrew: Rockstar's Social Club draws from Chromium's GPU proc
 if new not in s:
     assert s.count(anchor) == 1, "process.c changed upstream; update this patch"
     p.write_text(s.replace(anchor, new))
+PATCH
+
+log "Patching winemac: full-screen windows stay at the normal window level"
+# Mission Control moves a window to another desktop only when it is at the normal level (tested
+# 2026-10-18 with test windows: levels 21 and 26 stay put, level 0 moves, also when not movable).
+# Wine raised a full-screen window to level 26 (27 if topmost) while its program is active, to
+# cover the menu bar and Dock. Since Wine ad8a3f5eb2 (2025-08) every topmost window also goes
+# above the Dock (level 21) while its program is inactive, which overrode WindowsFloatWhenInactive
+# (default: full-screen windows don't float when inactive); Direct3D's exclusive full screen sets
+# WS_EX_TOPMOST on the game's window. So after Mission Control, Command-Tab or a switch to another
+# desktop, the game covered every window on its desktop, and Mission Control couldn't move it.
+# Now a full-screen window stays at level 0 (unless the displays are captured), the menu bar and
+# Dock hide while the program is active and has a full-screen window on the current desktop, and
+# the topmost floor skips windows at the normal level. Smaller topmost windows still float.
+# Verified 2026-10-18 with God of War: Mission Control moves it to another desktop, the menu bar
+# and Dock stay hidden while it is active, and Game Mode still turns on (test window).
+python3 - "$WINE_SRC/dlls/winemac.drv" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("cocoa_window.m", '''            if (captured || fullscreen)
+            {
+                if (captured)
+                    level = CGShieldingWindowLevel() + 1; /* Need +1 or we don't get mouse moves */
+                else
+                    level = NSStatusWindowLevel + 1;
+
+                if (self.floating)
+                    level++;
+            }''', '''            if (captured)
+            {
+                level = CGShieldingWindowLevel() + 1; /* Need +1 or we don't get mouse moves */
+
+                if (self.floating)
+                    level++;
+            }
+            /* Corkscrew: Mission Control can't move a window above the normal level to another
+             * desktop. -updateFullscreenPresentation hides the menu bar and Dock instead. */
+            else if (fullscreen)
+                level = NSNormalWindowLevel;''')
+
+patch("cocoa_app.m", '''            NSInteger newLevel = [window minimumLevelForActive:active];
+
+            if (window.floating)
+            {''', '''            NSInteger newLevel = [window minimumLevelForActive:active];
+
+            /* Corkscrew: a topmost window at the normal level (a full-screen one) stays there. */
+            if (window.floating && newLevel != NSNormalWindowLevel)
+            {''')
+
+patch("cocoa_app.m", '''    - (void) adjustWindowLevels:(BOOL)active
+    {''', '''    /* Corkscrew: full-screen windows stay at the normal level, so hide the menu bar and Dock
+     * while one is on the current desktop. macOS applies these only while the program is active. */
+    - (void) updateFullscreenPresentation
+    {
+        static const NSApplicationPresentationOptions hidden = NSApplicationPresentationHideDock |
+                                                               NSApplicationPresentationHideMenuBar;
+        NSApplicationPresentationOptions current = [NSApp presentationOptions];
+        NSApplicationPresentationOptions wanted = NSApplicationPresentationDefault;
+        NSWindow* window;
+
+        // Leave other options alone, such as those of a window in native full screen.
+        if (current != NSApplicationPresentationDefault && current != hidden)
+            return;
+
+        if ([NSApp isActive] && ![NSApp isHidden])
+        {
+            for (window in [NSApp windows])
+            {
+                if ([window isKindOfClass:[WineWindow class]] && [(WineWindow*)window isFullscreen] &&
+                    [window isVisible] && ![window isMiniaturized] && [window isOnActiveSpace])
+                {
+                    wanted = hidden;
+                    break;
+                }
+            }
+        }
+
+        if (wanted != current)
+            [NSApp setPresentationOptions:wanted];
+    }
+
+    - (void) adjustWindowLevels:(BOOL)active
+    {''')
+
+patch("cocoa_app.m", '''        __block WineWindow* prev = nil;
+        WineWindow* window;
+
+        if ([NSApp isHidden]) return;''', '''        __block WineWindow* prev = nil;
+        WineWindow* window;
+
+        [self updateFullscreenPresentation];
+
+        if ([NSApp isHidden]) return;''')
+
+patch("cocoa_app.m", '''    - (void) updateFullscreenWindows
+    {
+        if (capture_displays_for_fullscreen''', '''    - (void) updateFullscreenWindows
+    {
+        [self updateFullscreenPresentation];
+
+        if (capture_displays_for_fullscreen''')
+
+patch("cocoa_app.m", '''        [nc addObserver:self
+               selector:@selector(keyboardSelectionDidChange)''', '''        /* Corkscrew: a window that Mission Control moves to another desktop only changes its
+         * occlusion state. */
+        [nc addObserverForName:NSWindowDidChangeOcclusionStateNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note){
+            if ([[note object] isKindOfClass:[WineWindow class]])
+                [self updateFullscreenPresentation];
+        }];
+
+        [nc addObserver:self
+               selector:@selector(keyboardSelectionDidChange)''')
 PATCH
 
 log "Staging MoltenVK $MOLTENVK_VERSION"

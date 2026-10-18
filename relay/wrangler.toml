@@ -1,5 +1,5 @@
-# Corkscrew's report relay: takes crash and error reports from the app, keeps each whole report in a
-# private R2 bucket and opens a GitHub issue with a summary. Deploy steps: README.md.
+# Corkscrew's report relay: takes crash and error reports and shared settings from the app, keeps each
+# one in a private R2 bucket and opens a GitHub issue. Deploy steps: README.md.
 name = "corkscrew-relay"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"

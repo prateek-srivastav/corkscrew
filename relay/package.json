@@ -1,7 +1,7 @@
 {
   "name": "corkscrew-relay",
   "private": true,
-  "description": "Takes Corkscrew's crash and error reports: keeps the whole report private in R2 and opens a GitHub issue with a summary.",
+  "description": "Takes Corkscrew's crash and error reports and shared settings: keeps each one in R2 and opens a GitHub issue.",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {

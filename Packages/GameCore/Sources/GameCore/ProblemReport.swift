@@ -90,19 +90,25 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     public static let relayURL: URL? = URL(string: "https://corkscrew-relay.corkscrew-relay.workers.dev/")
 
     /// The report as JSON, for the server at `relay`.
-    public func request(to relay: URL) throws -> URLRequest {
-        var request = URLRequest(url: relay, timeoutInterval: 30)
+    public func request(to relay: URL) throws -> URLRequest { try Self.post(self, to: relay) }
+
+    /// Posts the report. The server answers `{"issue": "<link>"}` with the issue it opened, if any.
+    public func send(to relay: URL) async throws -> URL? { try await Self.send(request(to: relay)) }
+
+    /// `value` as JSON, posted to the relay: a report, or settings a player shares.
+    static func post(_ value: some Encodable, to url: URL) throws -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        request.httpBody = try encoder.encode(self)
+        request.httpBody = try encoder.encode(value)
         return request
     }
 
-    /// Posts the report. The server answers `{"issue": "<link>"}` with the issue it opened, if any.
-    public func send(to relay: URL) async throws -> URL? {
-        let (data, response) = try await URLSession.shared.data(for: request(to: relay))
+    /// Sends a request from `post(_:to:)`. Throws unless the relay answers 2xx; returns the issue's link, if any.
+    static func send(_ request: URLRequest) async throws -> URL? {
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let status = (response as? HTTPURLResponse)?.statusCode, (200..<300).contains(status) else {
             throw URLError(.badServerResponse)
         }

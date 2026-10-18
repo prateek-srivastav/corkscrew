@@ -1,7 +1,8 @@
 # Corkscrew report relay
 
-A small Cloudflare Worker that takes the crash and error reports Corkscrew sends with **Send Report**.
-For each report it:
+A small Cloudflare Worker that takes what Corkscrew sends to GitHub, so players need no GitHub
+account: the crash and error reports from **Send Report** (`POST /`), and the settings players share
+from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)). For each report it:
 
 1. checks the size (1 MB at most) and the shape, and limits how many reports one network can send;
 2. keeps the whole report, with the full backtrace and the end of the log, in a private R2 bucket
@@ -13,6 +14,22 @@ For each report it:
 
 The app posts `ProblemReport` from `Packages/GameCore/Sources/GameCore/ProblemReport.swift` as JSON
 (`request(to:)`) and reads `{"issue": "<link>"}` from the answer (`send(to:)`).
+
+## Shared settings
+
+After a Steam game runs 15 minutes without a crash, with settings that aren't on the tested list,
+the app offers to share them. **Share** posts `SettingsShare` from
+`Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift` to `/settings`: the game and its Steam
+app ID, the result (Plays well, or Plays, with issues), the graphics backend, the player's notes, the
+Corkscrew settings line (`Steam.settingsReport(of:)`), the minutes played, the Corkscrew version and
+the Mac.
+
+The relay keeps the share in R2 under `settings/<id>.json` and opens a Game report labelled
+`game-report`. The issue has the fields in the layout GitHub gives a filled-in
+`.github/ISSUE_TEMPLATE/game_report.yml`, so a maintainer's **tested** label runs
+`scripts/tested-settings.py` on it as on a report from the form. All of the share is public. The
+player's text is in code blocks, so it can't mention people, render as Markdown or add a field.
+Shares count against the same limits as reports.
 
 ## What is public and what is private
 
@@ -61,7 +78,7 @@ You need Node.js 22 or later and the GitHub CLI (`gh`). Run the commands in this
    The rate-limit counters are Durable Objects. `wrangler deploy` makes them from `wrangler.toml`, so
    there is no KV namespace or other storage to make.
 
-4. **Make the `crash-report` label** (`bug` exists already):
+4. **Make the `crash-report` label** (`bug` and `game-report` exist already):
 
    ```bash
    gh label create crash-report --repo Prateek-Srivastav/corkscrew --color d93f0b --description "Sent with Send Report in Corkscrew"
@@ -128,7 +145,7 @@ npx wrangler r2 object get corkscrew-reports/reports/<id>.json --remote --file r
 ```
 
 Or open **R2 → corkscrew-reports → reports/** in the Cloudflare dashboard. The file holds the id, the
-time the relay received it and the report as the app sent it.
+time the relay received it and the report as the app sent it. Shared settings are under `settings/`.
 
 To watch the relay live (errors from GitHub, reports kept without an issue), run `npx wrangler tail`.
 
@@ -151,13 +168,14 @@ Over the daily issue limit, the relay still keeps reports, without an issue.
 | 201 | `{"issue", "id"}` | The report is kept and the issue is open. |
 | 202 | `{"id"}` | The report is kept, without an issue: the daily limit, or GitHub failed. |
 | 400 | `{"error"}` | The body isn't JSON, or isn't a report. |
-| 404, 405 | `{"error"}` | Not `POST /`. |
+| 404, 405 | `{"error"}` | Not `POST /` or `POST /settings`. |
 | 413 | `{"error"}` | The report is larger than 1 MB. |
 | 415 | `{"error"}` | The body isn't `application/json`. |
 | 429 | `{"error"}`, `Retry-After` | Too many reports from this address in this hour. |
 | 503 | `{"error"}` | A secret isn't set. |
 
-The app treats every 2xx as sent and shows "Report sent". It doesn't open the issue.
+The app treats every 2xx as sent and shows "Report sent" (or "Shared. Thanks!" for settings). It
+doesn't open the issue.
 
 ## Develop
 

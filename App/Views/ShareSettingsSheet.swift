@@ -1,10 +1,9 @@
-import AppKit
 import GameCore
 import SwiftUI
 
 /// Offered after a Steam game ran a while without a crash, with settings that Corkscrew's tested
-/// list doesn't have: share them in a Game report, and after a maintainer checks it, other players'
-/// copies of the game start with them.
+/// list doesn't have: Share sends them to the relay, which opens a Game report on GitHub. After a
+/// maintainer checks it, other players' copies of the game start with them.
 struct ShareSettingsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -12,6 +11,9 @@ struct ShareSettingsSheet: View {
     @State private var playsWell = true
     @State private var performance = ""
     @State private var issues = ""
+    @State private var isSending = false
+    @State private var sent = false
+    @State private var sendError: String?
 
     private var game: Game { prompt.game }
 
@@ -36,32 +38,44 @@ struct ShareSettingsSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.surface, in: .rect(cornerRadius: 8))
 
-            Picker("Result", selection: $playsWell) {
-                Text("Plays well").tag(true)
-                Text("Plays, with issues").tag(false)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            Group {
+                Picker("Result", selection: $playsWell) {
+                    Text("Plays well").tag(true)
+                    Text("Plays, with issues").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            TextField("In-game settings, resolution and frame rate (optional)", text: $performance, axis: .vertical)
-                .lineLimit(1...3)
-                .textFieldStyle(.roundedBorder)
-            if !playsWell {
-                TextField("What doesn't work, and what helped (optional)", text: $issues, axis: .vertical)
+                TextField("In-game settings, resolution and frame rate (optional)", text: $performance, axis: .vertical)
                     .lineLimit(1...3)
                     .textFieldStyle(.roundedBorder)
+                if !playsWell {
+                    TextField("What doesn't work, and what helped (optional)", text: $issues, axis: .vertical)
+                        .lineLimit(1...3)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
+            .disabled(sent || isSending)
 
-            Text("Share on GitHub opens a new Game report on Corkscrew's GitHub page with this filled in. "
-                 + "GitHub issues are public; the report has the game, these settings, and your Mac and macOS.")
+            Text("Share sends this to Corkscrew's server, which adds it as a public Game report on Corkscrew's GitHub page "
+                 + "with the game, these settings, your notes, and your Mac and macOS.")
                 .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
+            if let sendError {
+                Label(sendError, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            }
+
             HStack {
-                Button("Not Now", role: .cancel) { dismiss() }
+                Button(sent ? "Close" : "Not Now", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Share on GitHub…") { share() }
-                    .keyboardShortcut(.defaultAction)
+                if sent {
+                    Label("Shared. Thanks!", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                } else if let relay = AppModel.reportRelay {
+                    Button(isSending ? "Sharing…" : "Share") { share(to: relay) }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isSending)
+                }
             }
         }
         .padding(20)
@@ -81,12 +95,21 @@ struct ShareSettingsSheet: View {
         return lines
     }
 
-    private func share() {
+    /// Says the settings are shared and stays open; the issue the relay opens isn't shown.
+    private func share(to relay: URL) {
         let form = model.formVersionAndMac()
-        if let url = Steam.shareURL(of: game, repository: AboutPanel.source, playsWell: playsWell, performance: performance,
-                                    issues: playsWell ? "" : issues, version: form.version, mac: form.mac) {
-            NSWorkspace.shared.open(url)
+        guard let share = Steam.share(of: game, playsWell: playsWell, performance: performance, issues: playsWell ? "" : issues,
+                                      minutes: prompt.minutes, version: form.version, mac: form.mac) else { return }
+        isSending = true
+        sendError = nil
+        Task {
+            defer { isSending = false }
+            do {
+                try await share.send(to: relay)
+                sent = true
+            } catch {
+                sendError = "Couldn't share the settings: \(AppModel.describe(error)). Try again later."
+            }
         }
-        dismiss()
     }
 }
