@@ -74,11 +74,17 @@ final class AppModel {
     private(set) var runningSteamApps: Set<String> = []
     func isPending(_ action: Pending) -> Bool { pending.contains(action) }
 
-    /// Programs opened from Finder, dropped on the window or picked with Add Program, waiting for
-    /// the user to choose "Run Once" or "Add to Library".
-    var openRequests: [URL] = []
-    /// The bottle to offer first for an opened program, when it was opened from that bottle.
-    private(set) var openBottles: [URL: Bottle.ID] = [:]
+    /// A program for the Add Program sheet: opened from Finder or dropped on the window, or nil
+    /// from Add Program, where the sheet asks for the file.
+    struct OpenRequest: Identifiable, Equatable {
+        let id = UUID()
+        let program: URL?
+        /// The bottle to offer first: the page Add Program was clicked on, or the program was dropped on.
+        let bottleID: Bottle.ID?
+    }
+
+    /// Add Program sheets waiting their turn, one at a time.
+    var openRequests: [OpenRequest] = []
     /// Games installed from downloads (zip, rar, 7z, disc images), one at a time.
     @ObservationIgnored private(set) lazy var installer = ProgramInstaller(model: self)
     /// What the app is busy with (shown at the bottom of the window), nil when idle.
@@ -626,18 +632,25 @@ final class AppModel {
         if programs.count + downloads.count < files.count {
             errorMessage = "Only Windows programs (.exe), installers (.msi), archives (.zip, .rar, .7z) and disc images (.iso) can be opened."
         }
-        for program in programs { openBottles[program] = bottle?.role == .steam ? nil : bottle?.id }
-        openRequests += programs.filter { !openRequests.contains($0) }
+        for program in programs where !openRequests.contains(where: { $0.program == program }) {
+            openRequests.append(OpenRequest(program: program, bottleID: bottle?.role == .steam ? nil : bottle?.id))
+        }
     }
 
-    /// The bottle the Open sheet selects first for `program`.
-    func openBottle(for program: URL) -> Bottle? {
-        programBottles.first { $0.id == openBottles[program] } ?? suggestedBottle(for: program)
+    /// Add Program: the sheet asks where the program goes and for its file. `bottle`, the page it was
+    /// clicked on, is selected first.
+    func addProgram(in bottle: Bottle? = nil) {
+        guard !openRequests.contains(where: { $0.program == nil }) else { return }
+        openRequests.append(OpenRequest(program: nil, bottleID: bottle?.role == .steam ? nil : bottle?.id))
     }
 
-    func closeOpenRequest(_ program: URL) {
-        openRequests.removeAll { $0 == program }
-        openBottles[program] = nil
+    /// The bottle the Add Program sheet selects first.
+    func openBottle(for request: OpenRequest) -> Bottle? {
+        programBottles.first { $0.id == request.bottleID } ?? suggestedBottle(for: request.program)
+    }
+
+    func closeOpenRequest(_ request: OpenRequest) {
+        openRequests.removeAll { $0.id == request.id }
     }
 
     /// `corkscrew://launch/<game id>` and `corkscrew://stop/<game id>`, for shortcuts and scripts.
@@ -664,9 +677,9 @@ final class AppModel {
 
     /// Where a new program goes unless the user picks another bottle: the bottle it's already in,
     /// otherwise the offline sandbox. Never the Steam bottle, which only has Steam's games.
-    func suggestedBottle(for program: URL) -> Bottle? {
+    func suggestedBottle(for program: URL?) -> Bottle? {
         let bottles = programBottles
-        return bottle(containing: program).flatMap { found in bottles.first { $0.id == found.id } }
+        return program.flatMap(bottle(containing:)).flatMap { found in bottles.first { $0.id == found.id } }
             ?? bottles.first { $0.role == .sandbox }
             ?? bottles.first
     }
@@ -1320,14 +1333,11 @@ final class AppModel {
     /// Where Send Report posts reports; `-ReportRelayURL <url>` tries another server.
     static var reportRelay: URL? { UserDefaults.standard.string(forKey: "ReportRelayURL").flatMap(URL.init(string:)) ?? ProblemReport.relayURL }
 
-    /// Settings → "Privacy": offer a report after a crash or an error. Nothing is sent without a click.
-    static let offersReportsKey = "OffersProblemReports"
-    static var offersReports: Bool { UserDefaults.standard.object(forKey: offersReportsKey) as? Bool ?? true }
     /// When the app last looked for its own crash reports.
     private static let crashReportsCheckedKey = "CrashReportsChecked"
 
+    /// A report after a crash or an error. Nothing is sent without a click.
     private func offer(_ report: ProblemReport, logFile: URL? = nil, backend: GraphicsBackend? = nil) {
-        guard Self.offersReports else { return }
         pendingReport = PendingReport(report: report, logFile: logFile, backend: backend?.formName ?? "Not related to graphics")
     }
 
@@ -1336,7 +1346,6 @@ final class AppModel {
     /// tested list doesn't have, an offer to share them.
     private func sessionEnded(_ game: Game, result: RunResult, backend: GraphicsBackend?, log: URL, played: Duration,
                               ranOwnSettings: Bool) async {
-        guard Self.offersReports else { return }
         let found = await Task.detached(priority: .utility) {
             (crash: ProblemReport.crash(inLog: log), tail: ProblemReport.logTail(of: log))
         }.value
@@ -1374,7 +1383,7 @@ final class AppModel {
     private func offerAppCrashReport() {
         let since = UserDefaults.standard.object(forKey: Self.crashReportsCheckedKey) as? Date
         UserDefaults.standard.set(Date(), forKey: Self.crashReportsCheckedKey)
-        guard let since, Self.offersReports else { return }
+        guard let since else { return }
         let details = reportDetails()
         let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/DiagnosticReports", directoryHint: .isDirectory)
         Task {

@@ -52,7 +52,7 @@ struct CorkscrewApp: App {
                     .keyboardShortcut(",")
             }
             CommandGroup(after: .newItem) {
-                Button("Add Program…") { model.open(Pickers.programs()) }
+                Button("Add Program…") { model.addProgram(in: model.bottles.first { $0.id == navigator.route.bottleID }) }
                     .keyboardShortcut("o")
             }
         }
@@ -144,12 +144,13 @@ enum AboutPanel {
 
 /// Open panels for the few files the app asks for.
 enum Pickers {
-    static func programs() -> [URL] {
-        let panel = configured("Choose Windows programs (.exe), installers (.msi), or a downloaded game (.zip, .rar, .7z, .iso).",
+    /// For the Add Program sheet: one program, installer or download (one part of a split archive
+    /// brings the others).
+    static func program() -> URL? {
+        let panel = configured("Choose a Windows program (.exe), an installer (.msi), or a downloaded program (.zip, .rar, .7z, .iso).",
                                types: [.init("com.microsoft.windows-executable"), .init("com.microsoft.msi")].compactMap { $0 }
-                                   + ["zip", "rar", "7z", "iso", "001", "tar", "gz", "tgz", "xz", "bz2"].compactMap { UTType(filenameExtension: $0) },
-                               multiple: true)
-        return panel.runModal() == .OK ? panel.urls : []
+                                   + ["zip", "rar", "7z", "iso", "001", "tar", "gz", "tgz", "xz", "bz2"].compactMap { UTType(filenameExtension: $0) })
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     static func folder(_ message: String) -> URL? {
@@ -169,14 +170,13 @@ enum Pickers {
     /// for it (over a second at times); a panel used before opens at once.
     private static let shared = NSOpenPanel()
 
-    private static func configured(_ message: String, types: [UTType] = [], folders: Bool = false, multiple: Bool = false,
+    private static func configured(_ message: String, types: [UTType] = [], folders: Bool = false,
                                    in directory: URL? = nil) -> NSOpenPanel {
         let panel = shared
         panel.message = message
         panel.allowedContentTypes = types
         panel.canChooseFiles = !folders
         panel.canChooseDirectories = folders
-        panel.allowsMultipleSelection = multiple
         if let directory { panel.directoryURL = directory }
         return panel
     }

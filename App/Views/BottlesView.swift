@@ -123,7 +123,7 @@ struct BottlesView: View {
     }
 
     private func runProgram(in bottle: Bottle) {
-        model.open(Pickers.programs(), in: bottle)
+        model.addProgram(in: bottle)
     }
 }
 
@@ -217,7 +217,7 @@ private struct BottleDetail: View {
             }
             Section {
                 if bottle.role != .steam {
-                    Button("Run Program…") { model.open(Pickers.programs(), in: bottle) }
+                    Button("Run Program…") { model.addProgram(in: bottle) }
                 }
                 Button("Show C: Drive in Finder") { NSWorkspace.shared.open(model.driveC(of: bottle)) }
                 if model.steamInstalls.contains(bottle.id) {

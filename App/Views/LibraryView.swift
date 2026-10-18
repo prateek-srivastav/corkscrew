@@ -230,7 +230,7 @@ private struct GamesPage: View {
                     .buttonStyle(.destructivePill)
                 }
             } else if bottle != nil || isAll {
-                Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
+                Button("Add Program…", systemImage: "plus") { model.addProgram(in: bottle) }
                     .buttonStyle(.pill)
                     .disabled(!model.isSetUp)
             }
@@ -282,7 +282,7 @@ private struct GamesPage: View {
                                isBusy: model.isPending(.openSteam)) { model.openSteam() }
                         .buttonStyle(.prominentPill)
                 }
-                Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs()) }
+                Button("Add Program…", systemImage: "plus") { model.addProgram() }
                     .buttonStyle(.pill)
                     .disabled(!model.isSetUp)
             }
@@ -291,7 +291,7 @@ private struct GamesPage: View {
                         hasLaunchers ? "Get games with a launcher below, or drop a Windows program (.exe) or downloaded game (.zip, .rar, .iso) here."
                                      : "Drop a Windows program (.exe), installer (.msi) or downloaded game (.zip, .rar, .iso) here, or add one.") {
                 if bottle != nil {
-                    Button("Add Program…", systemImage: "plus") { model.open(Pickers.programs(), in: bottle) }
+                    Button("Add Program…", systemImage: "plus") { model.addProgram(in: bottle) }
                         .buttonStyle(.prominentPill)
                         .disabled(!model.isSetUp)
                 }

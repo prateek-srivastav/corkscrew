@@ -56,8 +56,8 @@ struct ContentView: View {
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
         .preferredColorScheme(.dark)
         .sheet(isPresented: Binding(get: { !model.openRequests.isEmpty }, set: { if !$0 { model.openRequests = [] } })) {
-            if let program = model.openRequests.first {
-                OpenProgramSheet(program: program).id(program)
+            if let request = model.openRequests.first {
+                OpenProgramSheet(request: request).id(request.id)
             }
         }
         // Its own view: one view can't hold two sheets.
@@ -69,7 +69,7 @@ struct ContentView: View {
         }
         .alert("Something went wrong", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
-            if AppModel.offersReports { Button("Report…") { model.reportError() } }
+            Button("Report…") { model.reportError() }
         } message: {
             Text(model.errorMessage ?? "")
         }
@@ -98,6 +98,9 @@ private struct ActivityBar: View {
     var body: some View {
         let install = model.installer.isShown ? nil : model.installer.job
         let update = model.isUpdateDismissed ? nil : model.availableUpdate
+        // The last case below: a newer version, not downloading yet.
+        let showsUpdateButtons = install == nil && model.enginePackProgress == nil && model.activity == nil
+            && update != nil && model.updateProgress == nil
         ZStack {
             if model.enginePackProgress != nil || model.activity != nil || install != nil || update != nil {
                 Group {
@@ -143,20 +146,29 @@ private struct ActivityBar: View {
                                 .help(model.updateSize > update.app.size
                                       ? "Includes a new Wine (engine pack \(update.enginePack.version)), which Corkscrew downloads when the new version opens."
                                       : "")
-                            Button("Update") { model.installUpdate() }
-                                .fontWeight(.semibold)
-                                .foregroundStyle(isHoveringUpdate ? .primary : .secondary)
-                                .onHover { isHoveringUpdate = $0 }
-                            Button("Later") { model.isUpdateDismissed = true }
-                                .foregroundStyle(isHoveringLater ? .primary : .secondary)
-                                .onHover { isHoveringLater = $0 }
+                            // Update on white, as the app's main buttons; Later on grey.
+                            Button { model.installUpdate() } label: {
+                                Text("Update")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.black)
+                                    .barButton(.white.opacity(isHoveringUpdate ? 0.88 : 1))
+                            }
+                            .onHover { isHoveringUpdate = $0 }
+                            Button { model.isUpdateDismissed = true } label: {
+                                Text("Later").barButton(.white.opacity(isHoveringLater ? 0.2 : 0.13))
+                            }
+                            .onHover { isHoveringLater = $0 }
                         }
                         .buttonStyle(.plain)
+                        .animation(.easeOut(duration: 0.12), value: isHoveringUpdate)
+                        .animation(.easeOut(duration: 0.12), value: isHoveringLater)
                     }
                 }
                 .font(.body)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.leading, 16)
+                // The buttons sit as far from the bar's edge as from its top and bottom.
+                .padding(.trailing, showsUpdateButtons ? Self.buttonInset : 16)
+                .padding(.vertical, showsUpdateButtons ? Self.buttonInset : 10)
                 .glassEffect(.regular, in: .capsule)
                 .padding(.horizontal, 100)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -166,6 +178,19 @@ private struct ActivityBar: View {
         .animation(.snappy, value: model.installer.isShown)
         .animation(.snappy, value: update?.version)
         .animation(.snappy, value: model.updateProgress == nil)
+    }
+
+    /// Between the bar's edge and its buttons, so their round ends follow the bar's.
+    private static let buttonInset: CGFloat = 6
+}
+
+private extension View {
+    /// A small capsule button on the activity bar.
+    func barButton(_ fill: Color) -> some View {
+        padding(.horizontal, 14)
+            .frame(height: 26)
+            .background(fill, in: .capsule)
+            .contentShape(.capsule)
     }
 }
 

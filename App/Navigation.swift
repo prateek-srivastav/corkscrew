@@ -1,4 +1,5 @@
 import AppKit
+import GameCore
 import SwiftUI
 
 /// Where the window is (sidebar place and Library page) and where it has been in that place, for
@@ -91,6 +92,12 @@ extension Navigator.Route {
     /// The sidebar place the route is in.
     var place: Navigator.Route {
         section == .library ? Navigator.Route(section: .library, library: library.place) : Navigator.Route(section: section)
+    }
+
+    /// The bottle whose place is open (its page, or one of its games' pages).
+    var bottleID: Bottle.ID? {
+        guard section == .library, case .bottle(let id) = library.place else { return nil }
+        return id
     }
 }
 

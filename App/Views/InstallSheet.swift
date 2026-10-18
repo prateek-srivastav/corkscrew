@@ -96,20 +96,8 @@ struct InstallSheet: View {
         .formStyle(.grouped)
         .frame(height: 70)
 
-        SectionLabel("Your file")
-        Option(title: "Copy", systemImage: "doc.on.doc", isSelected: job.original == .copy,
-               text: job.isDiscImage
-                   ? "Your disc image stays where it is. Corkscrew only reads it."
-                   : "Your file stays where it is. Corkscrew unpacks what's inside into the bottle, so you need room for both.") {
-            installer.setOriginal(.copy)
-        }
-        Option(title: "Move", systemImage: "arrow.right.doc.on.clipboard", isSelected: job.original == .move,
-               text: job.isDiscImage
-                   ? "Corkscrew uses your disc image, then deletes it when the setup is done. Saves space; to install again, you'd need to download it again."
-                   : "Corkscrew deletes your file as soon as it's unpacked, to free the space. To install again, you'd need to download it again.") {
-            installer.setOriginal(.move)
-        }
-        spaceNote(job)
+        OriginalChoice(original: Binding(get: { job.original }, set: { installer.setOriginal($0) }),
+                       isDiscImage: job.isDiscImage, size: job.size, freeSpace: installer.freeSpace)
 
         buttons {
             cancelButton(job)
@@ -117,21 +105,6 @@ struct InstallSheet: View {
             Button("Install") { installer.start() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(installer.bottle == nil)
-        }
-    }
-
-    @ViewBuilder
-    private func spaceNote(_ job: ProgramInstaller.Job) -> some View {
-        if let free = installer.freeSpace {
-            // Unpacked, a download takes about its own size (programs inside are compressed); the installed program as much again.
-            let needed = job.isDiscImage ? job.size : job.size * 2
-            let tight = free < needed
-            Label("\(bytes(free)) free. " + (job.isDiscImage
-                    ? "The installed program needs about \(bytes(job.size))."
-                    : "Unpacking needs about \(bytes(job.size)), and the installed program about as much again."),
-                  systemImage: tight ? "exclamationmark.triangle" : "internaldrive")
-                .font(.subheadline)
-                .foregroundStyle(tight ? .orange : .secondary)
         }
     }
 
@@ -243,6 +216,51 @@ struct InstallSheet: View {
 
     private var hideButton: some View {
         Button("Hide") { installer.hide() }.help("Corkscrew keeps going; click the bar at the bottom to come back")
+    }
+
+    private func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
+}
+
+/// What happens to the picked download, Copy or Move, and the space it needs. Asked before it's
+/// unpacked: here, or by the Add Program sheet.
+struct OriginalChoice: View {
+    @Binding var original: ProgramInstaller.Job.Original
+    let isDiscImage: Bool
+    let size: Int64
+    let freeSpace: Int64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel("Your file")
+            Option(title: "Copy", systemImage: "doc.on.doc", isSelected: original == .copy,
+                   text: isDiscImage
+                       ? "Your disc image stays where it is. Corkscrew only reads it."
+                       : "Your file stays where it is. Corkscrew unpacks what's inside into the bottle, so you need room for both.") {
+                original = .copy
+            }
+            Option(title: "Move", systemImage: "arrow.right.doc.on.clipboard", isSelected: original == .move,
+                   text: isDiscImage
+                       ? "Corkscrew uses your disc image, then deletes it when the setup is done. Saves space; to install again, you'd need to download it again."
+                       : "Corkscrew deletes your file as soon as it's unpacked, to free the space. To install again, you'd need to download it again.") {
+                original = .move
+            }
+            spaceNote
+        }
+    }
+
+    @ViewBuilder
+    private var spaceNote: some View {
+        if let free = freeSpace {
+            // Unpacked, a download takes about its own size (programs inside are compressed); the installed program as much again.
+            let needed = isDiscImage ? size : size * 2
+            let tight = free < needed
+            Label("\(bytes(free)) free. " + (isDiscImage
+                    ? "The installed program needs about \(bytes(size))."
+                    : "Unpacking needs about \(bytes(size)), and the installed program about as much again."),
+                  systemImage: tight ? "exclamationmark.triangle" : "internaldrive")
+                .font(.subheadline)
+                .foregroundStyle(tight ? .orange : .secondary)
+        }
     }
 
     private func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
