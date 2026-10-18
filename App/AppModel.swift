@@ -197,6 +197,8 @@ final class AppModel {
 
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
+        // Before the library reads it.
+        updateTestedList()
         reload()
         if runningBottles.isEmpty { unregisterLoaderBundles() }
         removeInstallLeftovers()
@@ -1195,6 +1197,28 @@ final class AppModel {
             guard let update = try? await AppUpdate.check(url), update.isNewer(than: installed) else { return }
             updateSize = update.downloadSize(paths: paths)
             availableUpdate = update
+        }
+    }
+
+    /// Where the tested list comes from: main, or `-TestedListURL <url>`. Debug builds keep their
+    /// own tested.json unless given one, so edits to it show.
+    static var testedListURL: URL? {
+        if let url = UserDefaults.standard.string(forKey: "TestedListURL") { return URL(string: url) }
+        return isDebugBuild ? nil : Steam.testedListURL
+    }
+
+    /// Uses the last tested list this version downloaded, then reads the newest once per launch, so
+    /// settings accepted since this release apply. Offline, the saved list stays, else the app's own.
+    private func updateTestedList() {
+        guard let url = Self.testedListURL else { return }
+        let paths = self.paths
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        if let saved = Steam.savedTestedList(paths: paths, version: version) { Steam.useTestedList(saved) }
+        Task {
+            guard let games = try? await Steam.downloadTestedList(from: url) else { return }
+            try? Steam.saveTestedList(games, paths: paths, version: version)
+            // Steam library entries carry the tested settings.
+            if Steam.useTestedList(games) { syncStores() }
         }
     }
 

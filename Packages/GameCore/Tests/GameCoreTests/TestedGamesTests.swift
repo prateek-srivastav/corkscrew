@@ -5,13 +5,70 @@ import Testing
 struct TestedGamesTests {
     /// `scripts/tested-settings.py` edits the JSON; a mistake there would empty the list.
     @Test func testedListReads() throws {
-        let data = Data(Steam.testedJSON.utf8)
-        #expect(try JSONDecoder().decode([TestedGame].self, from: data) == Steam.tested)
+        // Every entry reads (none is left out as a newer version's), and the app carries this file.
+        let file = Self.repo.appending(path: "Packages/GameCore/Sources/GameCore/Stores/tested.json")
+        #expect(try JSONDecoder().decode([TestedGame].self, from: Data(contentsOf: file)) == Steam.builtInTested)
+        #expect(Steam.tested == Steam.builtInTested)
         #expect(Steam.tested.count >= 3)
         #expect(Steam.tested.allSatisfy { !$0.appID.isEmpty && $0.appID.allSatisfy(\.isNumber) })
         #expect(Set(Steam.tested.map(\.appID)).count == Steam.tested.count, "one entry per game")
         #expect(Steam.testedGames.map(\.appID) == ["1174180", "3132990", "417860"])
         #expect(Steam.testedProfiles["1174180"] == GameProfile(backendOverride: .d3dmetal, metalFX: true))
+    }
+
+    /// The app downloads the list from this path on main, so the file must stay there.
+    @Test func testedListURLNamesTheFile() throws {
+        let path = try #require(Steam.testedListURL.path.components(separatedBy: "/main/").last)
+        #expect(FileManager.default.fileExists(atPath: Self.repo.appending(path: path).path))
+    }
+
+    static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../../..").standardized
+
+    /// A newer version's list may have settings this one doesn't know: those entries are left out.
+    @Test func downloadedListSkipsEntriesItCannotRead() async throws {
+        try await withTempDir { root in
+            let list = root.appending(path: "tested.json")
+            try list.write("""
+            [
+              {"appID": "1", "name": "Known", "profile": {"backendOverride": "dxmt"}},
+              {"appID": "2", "name": "Newer", "profile": {"backendOverride": "a-backend-from-later"}}
+            ]
+            """)
+            #expect(try await Steam.downloadTestedList(from: list) ==
+                    [TestedGame(appID: "1", name: "Known", profile: GameProfile(backendOverride: .dxmt))])
+        }
+    }
+
+    /// The last download is used offline, by the version that saved it only.
+    @Test func savedListIsForTheVersionThatSavedIt() throws {
+        try withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)
+            let games = [TestedGame(appID: "1", name: "Known", listed: true, profile: GameProfile(backendOverride: .dxmt), notes: "Plays.")]
+            #expect(Steam.savedTestedList(paths: paths, version: "0.9.0") == nil)
+
+            try Steam.saveTestedList(games, paths: paths, version: "0.9.0")
+            #expect(Steam.savedTestedList(paths: paths, version: "0.9.0") == games)
+            #expect(Steam.savedTestedList(paths: paths, version: "0.9.1") == nil)
+
+            // The next download replaces it.
+            let newer = games + [TestedGame(appID: "2", name: "Added", profile: GameProfile())]
+            try Steam.saveTestedList(newer, paths: paths, version: "0.9.0")
+            #expect(Steam.savedTestedList(paths: paths, version: "0.9.0") == newer)
+
+            try Steam.savedTestedListFile(paths: paths).write("not JSON")
+            #expect(Steam.savedTestedList(paths: paths, version: "0.9.0") == nil)
+        }
+    }
+
+    /// The built-in list stays when the download isn't a list with a game in it.
+    @Test func downloadedListWithNoGameFails() async throws {
+        try await withTempDir { root in
+            for text in ["[]", "{}", "<html>Not found</html>", #"[{"name": "No app ID"}]"#] {
+                let list = root.appending(path: "tested.json")
+                try list.write(text)
+                await #expect(throws: (any Error).self, "\(text)") { try await Steam.downloadTestedList(from: list) }
+            }
+        }
     }
 
     /// Only what changes how a game runs is shared, with its own arguments and not Steam's.

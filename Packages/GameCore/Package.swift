@@ -15,7 +15,7 @@ let package = Package(
     targets: [
         // libarchive's prototypes; the library is macOS's own.
         .target(name: "CArchive", linkerSettings: [.linkedLibrary("archive")]),
-        .target(name: "GameCore", dependencies: ["CArchive"]),
+        .target(name: "GameCore", dependencies: ["CArchive"], resources: [.copy("Stores/tested.json")]),
         .executableTarget(
             name: "gamecore-cli",
             dependencies: ["GameCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]

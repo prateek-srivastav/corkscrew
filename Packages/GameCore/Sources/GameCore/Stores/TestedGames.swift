@@ -1,8 +1,9 @@
 import Foundation
+import Synchronization
 
 /// A Steam game with settings that ran well: tested on the developer's Mac (no `source`), or
 /// shared by a player from Corkscrew and accepted. A maintainer's "tested" label on the Game
-/// report runs `scripts/tested-settings.py`, which adds the entry to `Steam.testedJSON` in a pull request.
+/// report runs `scripts/tested-settings.py`, which adds the entry to `tested.json` in a pull request.
 public struct TestedGame: Codable, Sendable, Equatable {
     public var appID: String
     public var name: String
@@ -39,39 +40,75 @@ public struct TestedGame: Codable, Sendable, Equatable {
 }
 
 extension Steam {
-    /// The tested games, in the library's order. Edited by hand or by `scripts/tested-settings.py`,
-    /// which keeps this layout: one JSON array in a raw string. `SteamTests` checks that it reads.
-    static let testedJSON = #"""
-    [
-      {
-        "appID": "1174180",
-        "name": "Red Dead Redemption 2",
-        "listed": true,
-        "profile": {"backendOverride": "d3dmetal", "metalFX": true},
-        "notes": "DX12 through D3DMetal (GPTK 3.0) with MetalFX, Retina off. Its in-game settings start from RockstarLauncher.rdr2TestedSettings."
-      },
-      {
-        "appID": "3132990",
-        "name": "Black Myth: Wukong Benchmark Tool",
-        "listed": true,
-        "profile": {"backendOverride": "d3dmetal", "metalFX": true, "retinaMode": true},
-        "notes": "DX12 through D3DMetal (GPTK 3.0) with MetalFX (pick DLSS in the game), Retina on. In game: Super Resolution ~34, Medium with GI/Reflections/Shadows Low, Frame Generation off (it crashes on DX12)."
-      },
-      {
-        "appID": "417860",
-        "name": "Emily is Away",
-        "listed": true,
-        "profile": {"backendOverride": "dxvk"},
-        "notes": "32-bit, DX11 through DXVK."
-      }
-    ]
-    """#
+    /// `tested.json` on main, which the app reads when it opens: settings accepted after a release
+    /// reach players without a new one. Older versions read it too, so add keys; don't rename or
+    /// remove them, and don't move the file.
+    public static let testedListURL = URL(string: "https://raw.githubusercontent.com/Prateek-Srivastav/corkscrew/main/Packages/GameCore/Sources/GameCore/Stores/tested.json")!
 
-    public static let tested: [TestedGame] = (try? JSONDecoder().decode([TestedGame].self, from: Data(testedJSON.utf8))) ?? []
+    /// The list this version carries, `tested.json` (edited by hand or by `scripts/tested-settings.py`).
+    static let builtInTested: [TestedGame] = {
+        guard let url = Bundle.module.url(forResource: "tested", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return [] }
+        return (try? testedList(from: data)) ?? []
+    }()
+
+    private static let testedList = Mutex(builtInTested)
+
+    /// The tested games, in the library's order: the built-in list, or the one `useTestedList` set.
+    public static var tested: [TestedGame] { testedList.withLock { $0 } }
+
+    /// Uses `games` as the tested list from now on. Returns whether the list changed.
+    @discardableResult
+    public static func useTestedList(_ games: [TestedGame]) -> Bool {
+        testedList.withLock { list in
+            defer { list = games }
+            return list != games
+        }
+    }
+
+    /// Reads the tested list at `url`, the one on main by default.
+    public static func downloadTestedList(from url: URL = testedListURL) async throws -> [TestedGame] {
+        let (data, response) = try await URLSession(configuration: .ephemeral).data(from: url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw URLError(.badServerResponse) }
+        return try testedList(from: data)
+    }
+
+    /// The list the last download saved in the caches, if this version of the app saved it. Another
+    /// version's copy doesn't count: a newer version's own list is at least as new.
+    public static func savedTestedList(paths: AppPaths, version: String) -> [TestedGame]? {
+        guard let data = try? Data(contentsOf: savedTestedListFile(paths: paths)),
+              let saved = try? JSONDecoder().decode(SavedTestedList.self, from: data), saved.version == version else { return nil }
+        return saved.games
+    }
+
+    /// Saves a downloaded list in the caches, in place of the one saved before.
+    public static func saveTestedList(_ games: [TestedGame], paths: AppPaths, version: String) throws {
+        try FileManager.default.createDirectory(at: paths.cachesRoot, withIntermediateDirectories: true)
+        try JSONEncoder().encode(SavedTestedList(version: version, games: games)).write(to: savedTestedListFile(paths: paths), options: .atomic)
+    }
+
+    private struct SavedTestedList: Codable {
+        var version: String
+        var games: [TestedGame]
+    }
+
+    static func savedTestedListFile(paths: AppPaths) -> URL { paths.cachesRoot.appending(path: "tested.json") }
+
+    /// Entries this version can't read (a newer version's settings) are left out. Throws when none reads.
+    static func testedList(from data: Data) throws -> [TestedGame] {
+        struct Entry: Decodable {
+            var game: TestedGame?
+            init(from decoder: Decoder) { game = try? TestedGame(from: decoder) }
+        }
+        let games = try JSONDecoder().decode([Entry].self, from: data).compactMap(\.game)
+        guard !games.isEmpty else { throw URLError(.cannotDecodeContentData) }
+        return games
+    }
 
     /// Settings that ran well, by Steam app id; the detected backend covers everything else.
-    public static let testedProfiles: [String: GameProfile] =
+    public static var testedProfiles: [String: GameProfile] {
         Dictionary(tested.map { ($0.appID, $0.profile) }, uniquingKeysWith: { first, _ in first })
+    }
 
     /// Games tested with Corkscrew, shown in the library before they're installed: their button opens
     /// their store page in Steam, and they start with their tested settings once downloaded.

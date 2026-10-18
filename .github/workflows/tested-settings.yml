@@ -1,8 +1,9 @@
 name: Tested settings
 
 # A maintainer's "tested" label on a Game report that Corkscrew filled in adds the game's settings
-# to the tested list (Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift) in a pull
-# request. scripts/tested-settings.py checks them: the report is untrusted.
+# to the tested list (Packages/GameCore/Sources/GameCore/Stores/tested.json) in a pull request.
+# The app reads that file from main when it opens. scripts/tested-settings.py checks the settings:
+# the report is untrusted.
 # Needs Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
 on:
   issues:
