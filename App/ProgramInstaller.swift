@@ -63,8 +63,9 @@ final class ProgramInstaller {
     private(set) var job: Job?
     /// Whether the install sheet is up; hidden while a long step runs, the activity bar brings it back.
     var isShown = false
-    /// Downloads waiting their turn, by first part, with the bottle they were dropped on.
-    @ObservationIgnored private var queue: [(parts: [URL], bottle: Bottle.ID?)] = []
+    /// Downloads waiting their turn, by first part, with the bottle they were dropped on, and Copy
+    /// or Move when the Add Program sheet asked already.
+    @ObservationIgnored private var queue: [(parts: [URL], bottle: Bottle.ID?, original: Job.Original?)] = []
     @ObservationIgnored private var task: Task<Void, Never>?
 
     init(model: AppModel) { self.model = model }
@@ -75,8 +76,9 @@ final class ProgramInstaller {
 
     // MARK: Queue
 
-    /// Takes downloads in; several picked parts of one split archive are one download.
-    func enqueue(_ urls: [URL], bottle: Bottle?) {
+    /// Takes downloads in; several picked parts of one split archive are one download. With
+    /// `original` (the Add Program sheet asked for the bottle and it), the download unpacks at once.
+    func enqueue(_ urls: [URL], bottle: Bottle?, original: Job.Original? = nil) {
         for url in urls {
             let parts: [URL]
             do { parts = try Archive.parts(of: url) } catch {
@@ -85,7 +87,7 @@ final class ProgramInstaller {
             }
             let known = queue.map(\.parts.first) + [job?.source]
             guard !known.contains(parts.first) else { continue }
-            queue.append((parts, bottle?.id))
+            queue.append((parts, bottle?.id, original))
         }
         if job == nil { startNext() }
     }
@@ -96,8 +98,10 @@ final class ProgramInstaller {
         var job = Job(parts: next.parts, size: Archive.size(of: next.parts))
         job.bottleID = model.programBottles.first { $0.id == next.bottle }?.id
             ?? model.programBottles.first { $0.role == .sandbox }?.id ?? model.programBottles.first?.id
+        if let original = next.original { job.original = original }
         self.job = job
         isShown = true
+        if next.original != nil { start() }
     }
 
     /// Space left where bottles live, in bytes.
@@ -181,7 +185,9 @@ final class ProgramInstaller {
     private func offerPrograms(in folders: [URL]) {
         let candidates = SetupFinder.candidates(in: folders)
         guard !candidates.isEmpty else {
-            job?.step = .failed("There's no Windows program (.exe or .msi) in \(job?.name ?? "the download").")
+            // Read first: `job?.step = …` holds `job` while the right side runs.
+            let name = job?.name ?? "the download"
+            job?.step = .failed("There's no Windows program (.exe or .msi) in \(name).")
             return
         }
         job?.candidates = candidates
@@ -211,7 +217,8 @@ final class ProgramInstaller {
             await model.session(for: setup)?.task?.value
             if case .failed(let message) = model.session(for: setup)?.status {
                 self.job?.note = "The setup didn't start: \(message)"
-                self.job?.step = .pickSetup(self.job?.candidates ?? [])
+                let candidates = self.job?.candidates ?? []
+                self.job?.step = .pickSetup(candidates)
                 return
             }
             // Some setups start another program from the download and quit; wait for those too.
@@ -237,7 +244,8 @@ final class ProgramInstaller {
 
     func runSetupAgain() {
         job?.note = nil
-        job?.step = .pickSetup(job?.candidates ?? [])
+        let candidates = job?.candidates ?? []
+        job?.step = .pickSetup(candidates)
     }
 
     /// Adds the installed program, then deletes the setup files.

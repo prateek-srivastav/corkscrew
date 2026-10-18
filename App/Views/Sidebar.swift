@@ -64,7 +64,8 @@ struct Sidebar: View {
             VStack(alignment: .leading, spacing: 4) {
                 Rectangle().fill(Theme.stroke).frame(height: 1).padding(.horizontal, 6).padding(.bottom, 8)
                 SidebarRow(title: "Add Program…", icon: .symbol("plus"), tint: .white, isSelected: false) {
-                    model.open(Pickers.programs())
+                    // Into the open place's bottle first.
+                    model.addProgram(in: model.bottles.first { $0.id == navigator.route.bottleID })
                 }
                 .disabled(!model.isSetUp)
                 .help("Add Program… (⌘O)")
