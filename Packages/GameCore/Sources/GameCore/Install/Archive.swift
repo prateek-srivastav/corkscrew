@@ -155,17 +155,27 @@ public enum Archive {
                 archive_entry_set_hardlink_utf8(entry, root + "/" + linkPath)
             }
             guard archive_write_header(writer, entry) >= ARCHIVE_WARN else { throw error(writer) }
-            if archive_entry_size(entry) > 0 {
+            let size = archive_entry_size(entry)
+            if size > 0 {
                 var buffer: UnsafeRawPointer?
                 var count = 0
                 var offset: Int64 = 0
+                var reached: Int64 = 0
                 while true {
                     let read = archive_read_data_block(reader, &buffer, &count, &offset)
                     if read == ARCHIVE_EOF { break }
                     guard read >= ARCHIVE_WARN else { throw error(reader) }
                     guard archive_write_data_block(writer, buffer, count, offset) >= 0 else { throw error(writer) }
+                    reached = max(reached, offset + Int64(count))
                     try Task.checkCancellation()
                     progress(min(Double(archive_filter_bytes(reader, -1)) / total, 1))
+                }
+                // A RAR5 archive without its last part ends mid-file with no error, and the disk writer
+                // pads the file with zeros. Only RAR: a sparse tar file or an ISO folder legitimately
+                // ends short of its size.
+                let format = archive_format(reader) & ARCHIVE_FORMAT_BASE_MASK
+                if reached < size, format == ARCHIVE_FORMAT_RAR || format == ARCHIVE_FORMAT_RAR_V5 {
+                    throw Error.unreadable("\(path) stops early")
                 }
             }
             guard archive_write_finish_entry(writer) >= ARCHIVE_WARN else { throw error(writer) }

@@ -19,6 +19,10 @@ struct archive_entry;
 #define ARCHIVE_FAILED (-25)
 #define ARCHIVE_FATAL (-30)
 
+#define ARCHIVE_FORMAT_BASE_MASK 0xff0000
+#define ARCHIVE_FORMAT_RAR 0xD0000
+#define ARCHIVE_FORMAT_RAR_V5 0x100000
+
 #define ARCHIVE_EXTRACT_TIME (0x0004)
 #define ARCHIVE_EXTRACT_SECURE_SYMLINKS (0x0100)
 #define ARCHIVE_EXTRACT_SECURE_NODOTDOT (0x0200)
@@ -35,6 +39,7 @@ int archive_read_free(struct archive *);
 int64_t archive_filter_bytes(struct archive *, int);
 const char *archive_error_string(struct archive *);
 const char *archive_format_name(struct archive *);
+int archive_format(struct archive *);
 
 struct archive *archive_write_disk_new(void);
 int archive_write_disk_set_options(struct archive *, int flags);
