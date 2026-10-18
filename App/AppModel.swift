@@ -64,6 +64,7 @@ final class AppModel {
         case addComponents
         case importToolkit
         case uninstall
+        case update
     }
 
     private(set) var pending: Set<Pending> = []
@@ -108,6 +109,15 @@ final class AppModel {
     }
     /// While a new engine pack replaces the runtime, games must not start.
     @ObservationIgnored private var isInstallingEngine = false
+
+    /// A newer Corkscrew, found at launch; nil when this one is the newest or the check failed.
+    private(set) var availableUpdate: AppUpdate?
+    /// What updating downloads: the app, plus the engine pack when the new version pins a newer one.
+    private(set) var updateSize: Int64 = 0
+    /// The update's download (0…1), while it runs.
+    private(set) var updateProgress: Double?
+    /// "Later": the update bar stays hidden until the next launch.
+    var isUpdateDismissed = false
 
     /// Programs can run: Rosetta, a runtime and the Steam bottle are there.
     var isSetUp: Bool { hasRosetta && !runtimes.isEmpty && launcherBottle != nil }
@@ -187,6 +197,8 @@ final class AppModel {
 
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
+        // Before the library reads it.
+        updateTestedList()
         reload()
         if runningBottles.isEmpty { unregisterLoaderBundles() }
         removeInstallLeftovers()
@@ -216,6 +228,7 @@ final class AppModel {
         trimCaches()
         countFirstLaunch()
         offerAppCrashReport()
+        checkForUpdate()
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -1161,6 +1174,111 @@ final class AppModel {
             // Not awaited: setup is done, and the count may take seconds.
             Task { await count("setup_done", ["seconds": .int(seconds), "installed_rosetta": .bool(installsRosetta), "engine": .string(engine)]) }
         }
+    }
+
+    // MARK: Updates
+
+    /// Where the update check reads update.json: the latest release, or `-UpdateURL <url>` to try a
+    /// local copy. Debug builds don't check without one: they aren't installed copies.
+    static var updateURL: URL? {
+        if let url = UserDefaults.standard.string(forKey: "UpdateURL") { return URL(string: url) }
+        return isDebugBuild ? nil : AppUpdate.latestURL
+    }
+
+    /// Looks for a newer release once per launch. Offline, or with no update.json, nothing shows.
+    private func checkForUpdate() {
+        let app = Bundle.main.bundleURL
+        // Left by an update that didn't finish.
+        try? FileManager.default.removeItem(at: AppUpdate.stagingFolder(nextTo: app))
+        guard let url = Self.updateURL else { return }
+        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let paths = self.paths
+        Task {
+            guard let update = try? await AppUpdate.check(url), update.isNewer(than: installed) else { return }
+            updateSize = update.downloadSize(paths: paths)
+            availableUpdate = update
+        }
+    }
+
+    /// Where the tested list comes from: main, or `-TestedListURL <url>`. Debug builds keep their
+    /// own tested.json unless given one, so edits to it show.
+    static var testedListURL: URL? {
+        if let url = UserDefaults.standard.string(forKey: "TestedListURL") { return URL(string: url) }
+        return isDebugBuild ? nil : Steam.testedListURL
+    }
+
+    /// Uses the last tested list this version downloaded, then reads the newest once per launch, so
+    /// settings accepted since this release apply. Offline, the saved list stays, else the app's own.
+    private func updateTestedList() {
+        guard let url = Self.testedListURL else { return }
+        let paths = self.paths
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        if let saved = Steam.savedTestedList(paths: paths, version: version) { Steam.useTestedList(saved) }
+        Task {
+            guard let games = try? await Steam.downloadTestedList(from: url) else { return }
+            try? Steam.saveTestedList(games, paths: paths, version: version)
+            // Steam library entries carry the tested settings.
+            if Steam.useTestedList(games) { syncStores() }
+        }
+    }
+
+    /// Downloads the update, puts it where this app is, and restarts into it. Not while programs run
+    /// in a bottle (Steam too) or setup runs: the new app may replace Wine when it opens.
+    func installUpdate() {
+        guard let update = availableUpdate, !isPending(.update) else { return }
+        guard runningBottles.isEmpty else {
+            errorMessage = "Quit your games and Steam first: Corkscrew restarts to update."
+            return
+        }
+        guard setupTask == nil else {
+            errorMessage = "Corkscrew can update when setup is done."
+            return
+        }
+        pending.insert(.update)
+        updateProgress = 0
+        let app = Bundle.main.bundleURL
+        let bundleID = Bundle.main.bundleIdentifier ?? "io.github.prateek-srivastav.Corkscrew"
+        let downloads = paths.cachesRoot.appending(path: "Downloads")
+        Task {
+            defer {
+                pending.remove(.update)
+                updateProgress = nil
+            }
+            do {
+                let staged = try await Task.detached(priority: .userInitiated) {
+                    try await update.stage(nextTo: app, bundleIdentifier: bundleID, downloads: downloads) { fraction in
+                        Task { @MainActor in
+                            // Late ones, after the download ended, are dropped.
+                            if let progress = self.updateProgress { self.updateProgress = max(progress, fraction) }
+                        }
+                    }
+                }.value
+                // A game may have started during the download.
+                guard runningBottles.isEmpty else {
+                    try? FileManager.default.removeItem(at: AppUpdate.stagingFolder(nextTo: app))
+                    throw AppError("quit your games and Steam, then click Update again")
+                }
+                try AppUpdate.install(staged, replacing: app)
+                relaunch(app)
+            } catch {
+                errorMessage = "Couldn't update Corkscrew: \(Self.describe(error))"
+            }
+        }
+    }
+
+    /// Quits, and opens `app` once this process is gone (`open` would only bring a running copy forward).
+    private func relaunch(_ app: URL) {
+        let opener = Process()
+        opener.executableURL = URL(fileURLWithPath: "/bin/sh")
+        opener.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; open \"$2\"", "sh",
+                            String(ProcessInfo.processInfo.processIdentifier), app.path]
+        do {
+            try opener.run()
+        } catch {
+            errorMessage = "Corkscrew is updated. Quit it and open it again to use the new version."
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     // MARK: Usage counts

@@ -5,6 +5,8 @@
 # so setup downloads only Steam. The pack comes from dist/runtime-<release>/ when it's there, else
 # from its release; either way it must match the pinned SHA-256. Its release has to be published
 # (it holds the source code), which this checks, unless CORKSCREW_TRY_DMG=1 (to try a DMG out locally).
+# For the in-app updater (AppUpdate.swift) it also writes dist/Corkscrew-<version>-app.zip, the app
+# without the engine pack, and dist/update.json, which names the zip and the pinned pack.
 # Usage: make-dmg.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,6 +15,7 @@ PIN=Packages/GameCore/Sources/GameCore/Engines/EnginePackPin.swift
 PACK_URL=$(sed -nE 's/.*URL\(string: "([^"]+)"\).*/\1/p' "$PIN")
 PACK_SHA256=$(sed -nE 's/.*sha256: "([0-9a-f]+)".*/\1/p' "$PIN")
 PACK_RELEASE=$(sed -nE 's/.*version: "([^"]+)".*/\1/p' "$PIN")
+PACK_SIZE=$(sed -nE 's/.*size: ([0-9]+).*/\1/p' "$PIN")
 PACK_NAME=$(basename "$PACK_URL")
 if ! curl -sfIL -o /dev/null "$PACK_URL"; then
   echo "The engine pack isn't published yet: $PACK_URL" >&2
@@ -38,6 +41,20 @@ APP=build/DerivedData/Build/Products/Release/Corkscrew.app
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
 
 mkdir -p dist
+# The app alone: an update downloads about 7 MB, and the new app downloads the engine pack only when
+# it pins a newer one.
+ZIP="dist/Corkscrew-$VERSION-app.zip"
+codesign --verify --deep --strict "$APP"
+rm -f "$ZIP"
+ditto -c -k --keepParent "$APP" "$ZIP"
+cat >dist/update.json <<EOF
+{
+  "version": "$VERSION",
+  "app": {"name": "$(basename "$ZIP")", "sha256": "$(shasum -a 256 "$ZIP" | cut -d' ' -f1)", "size": $(stat -f %z "$ZIP")},
+  "enginePack": {"version": "$PACK_RELEASE", "url": "$PACK_URL", "sha256": "$PACK_SHA256", "size": $PACK_SIZE}
+}
+EOF
+
 DMG="dist/Corkscrew-$VERSION.dmg"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT

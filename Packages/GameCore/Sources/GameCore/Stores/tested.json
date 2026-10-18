@@ -1,0 +1,23 @@
+[
+  {
+    "appID": "1174180",
+    "name": "Red Dead Redemption 2",
+    "listed": true,
+    "profile": {"backendOverride": "d3dmetal", "metalFX": true},
+    "notes": "DX12 through D3DMetal (GPTK 3.0) with MetalFX, Retina off. Its in-game settings start from RockstarLauncher.rdr2TestedSettings."
+  },
+  {
+    "appID": "3132990",
+    "name": "Black Myth: Wukong Benchmark Tool",
+    "listed": true,
+    "profile": {"backendOverride": "d3dmetal", "metalFX": true, "retinaMode": true},
+    "notes": "DX12 through D3DMetal (GPTK 3.0) with MetalFX (pick DLSS in the game), Retina on. In game: Super Resolution ~34, Medium with GI/Reflections/Shadows Low, Frame Generation off (it crashes on DX12)."
+  },
+  {
+    "appID": "417860",
+    "name": "Emily is Away",
+    "listed": true,
+    "profile": {"backendOverride": "dxvk"},
+    "notes": "32-bit, DX11 through DXVK."
+  }
+]

@@ -27,7 +27,7 @@ You need an Apple Silicon Mac with macOS 26 or 27, and about 3.5 GB of free disk
    curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | bash
    ```
 
-   The [script](scripts/install.sh) downloads the latest release (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. Run it again to update.
+   The [script](scripts/install.sh) downloads the latest release (about 320 MB), checks its SHA-256, copies Corkscrew to Applications (replacing an older one) and opens it. When a new version is out, Corkscrew shows it when it opens: click **Update**. Or run the command again.
 2. Click **Set Up Corkscrew**. It installs Rosetta if needed, unpacks the Wine runtime and graphics translators that come inside the app (checked against a built-in SHA-256), creates a Steam bottle with Steam, and makes two protected bottles for other programs: Offline Programs (no internet) and Online Programs.
 3. Open Steam from the Library, sign in, and install your games. Or install a program you downloaded (below).
 
@@ -73,7 +73,7 @@ Corkscrew turns off Wine's crash dialog in each bottle, so Wine writes the backt
 
 After you play a Steam game for 15 minutes without a crash, with settings that aren't on the tested list, Corkscrew asks whether it ran well. **Share** sends the game, its Corkscrew settings, your notes, and your Mac and macOS to Corkscrew's [relay](relay/), which opens a public [game report](https://github.com/Prateek-Srivastav/corkscrew/issues?q=label%3Agame-report) on GitHub. You need no GitHub account. It asks once for each game and set of settings.
 
-When a maintainer checks the report and labels it **tested**, a workflow adds the settings to [the tested list](Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift) in a pull request. After the next release, everyone's copy of that game starts with them. The workflow takes only the settings Corkscrew shares, and never changes the games tested here.
+When a maintainer checks the report and labels it **tested**, a workflow adds the settings to [the tested list](Packages/GameCore/Sources/GameCore/Stores/tested.json) in a pull request. Corkscrew downloads that list from GitHub when it opens (offline, it uses the last list it downloaded, or the one it came with), so once the pull request is merged, everyone's copy of that game starts with them. No new release is needed. The workflow takes only the settings Corkscrew shares, and never changes the games tested here.
 
 ## What works
 
@@ -190,7 +190,7 @@ If something doesn't work, check [Known issues](#known-issues), then the game's 
 - **M3:** game profiles. **Isolation:** a blocked-actions panel and a network-block check.
 - **M4:** shortcuts and controller settings. **M5:** Epic Games and Battle.net launchers.
 - **M6:** an ARM64 Wine with FEX for x86 emulation, before Rosetta 2 is retired.
-- **Distribution:** Developer ID signing, notarization, and automatic updates.
+- **Distribution:** Developer ID signing and notarization.
 
 ## Contributing
 

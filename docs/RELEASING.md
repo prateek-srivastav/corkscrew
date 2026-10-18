@@ -68,11 +68,13 @@ The app takes the same override: `-EnginePackURL <url>`.
    git tag v0.3.0 && git push origin v0.3.0
    ```
 
-4. The **Release** workflow downloads the pinned engine pack, puts it in the app, builds the DMG and creates a draft release with it. Read the notes, try the DMG, then publish the draft.
+4. The **Release** workflow downloads the pinned engine pack, puts it in the app, builds the DMG, the app-only zip and `update.json`, and creates a draft release with them. Read the notes, try the DMG, then publish the draft.
 
 To build the DMG locally instead: `scripts/make-dmg.sh`. It takes the pack from `dist/runtime-<release>/` when it's there, and needs `CORKSCREW_TRY_DMG=1` while the pack isn't published yet.
 
 `scripts/install.sh` (the `curl … | bash` install in the README, served from GitHub Pages as `https://prateek-srivastav.github.io/corkscrew/install.sh`) installs the release that `releases/latest` points at, so it picks up a new version once the draft is published. It expects the assets to keep their names, `Corkscrew-<version>.dmg` and `Corkscrew-<version>.dmg.sha256`, on a `v<version>` tag. To try a DMG with it before publishing, serve a folder laid out as `download/v<version>/<assets>` and run `CORKSCREW_RELEASES=http://127.0.0.1:8765 CORKSCREW_VERSION=<version> CORKSCREW_APP_DIR=/tmp/apps scripts/install.sh`.
+
+The app looks for a new version each time it opens. It reads `update.json` from `releases/latest`, so it sees a release once the draft is published. When the version is newer, it shows an Update bar with the download size: the app-only zip (`Corkscrew-<version>-app.zip`, about 7 MB), plus the engine pack when the new version pins a newer one. **Update** downloads the zip, checks its SHA-256, puts the new app in place of the old one and restarts. The new app downloads its engine pack when it opens. `update.json` names the zip, so keep the asset names. Versions up to 0.8.1 have no updater: their users update with the install script. To try an update before publishing, serve a folder with the zip and `update.json`, and open an older build with `-UpdateURL http://127.0.0.1:8765/update.json`. Debug builds look for updates only with `-UpdateURL`.
 
 The app is ad hoc signed, so users confirm it once with **Open Anyway**. Signing with a Developer ID and notarizing would remove that step; it needs an Apple Developer Program membership.
 

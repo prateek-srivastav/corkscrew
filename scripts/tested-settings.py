@@ -3,9 +3,8 @@
 
 Corkscrew fills in the report's "Corkscrew settings" field when a player shares the settings of a
 Steam game that ran well. A maintainer's "tested" label on the report runs this script (from
-.github/workflows/tested-settings.yml), which checks the settings, writes them into Steam.testedJSON
-(Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift), and writes the pull request's title
-and text.
+.github/workflows/tested-settings.yml), which checks the settings, writes them into the tested list
+(Packages/GameCore/Sources/GameCore/Stores/tested.json), and writes the pull request's title and text.
 
 The report is untrusted: only known settings with safe values are taken, the entry isn't listed in
 the library, and a game tested here (an entry without "source") is never replaced.
@@ -21,10 +20,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-SWIFT_FILE = Path(__file__).resolve().parent.parent / "Packages/GameCore/Sources/GameCore/Stores/TestedGames.swift"
-OPEN = '    static let testedJSON = #"""\n'
-CLOSE = '\n    """#\n'
-INDENT = "    "
+LIST_FILE = Path(__file__).resolve().parent.parent / "Packages/GameCore/Sources/GameCore/Stores/tested.json"
 
 SETTINGS_HEADING = "Corkscrew settings"
 BACKENDS = {"d3dmetal", "dxmt", "dxvk", "wined3d"}
@@ -143,15 +139,6 @@ def entry_from(body, source):
     return entry
 
 
-def read_list(swift):
-    start = swift.find(OPEN)
-    end = swift.find(CLOSE, start)
-    if start < 0 or end < start:
-        raise SystemExit(f"Can't find Steam.testedJSON in {SWIFT_FILE}.")
-    text = swift[start + len(OPEN):end]
-    return json.loads(text), swift[:start + len(OPEN)], swift[end:]
-
-
 def format_list(entries):
     """The layout of the hand-written list: one key per line, the profile on one line."""
     def value(v):
@@ -164,13 +151,12 @@ def format_list(entries):
             lines.append(f"    {value(key)}: {value(entry[key])}" + ("," if k < len(keys) - 1 else ""))
         lines.append("  }" + ("," if index < len(entries) - 1 else ""))
     lines.append("]")
-    return "\n".join(INDENT + line for line in lines)
+    return "\n".join(lines) + "\n"
 
 
 def add(entry):
     """Adds or replaces the entry. Returns the replaced one, if any."""
-    swift = SWIFT_FILE.read_text()
-    entries, head, tail = read_list(swift)
+    entries = json.loads(LIST_FILE.read_text())
     old = next((e for e in entries if e.get("appID") == entry["appID"]), None)
     if old is not None and not old.get("source"):
         raise Rejected(f"{old['name']} is tested on the developer's Mac; its settings are changed by hand, not from a report.")
@@ -179,7 +165,7 @@ def add(entry):
         entries[entries.index(old)] = entry
     else:
         entries.append(entry)
-    SWIFT_FILE.write_text(head + format_list(entries) + tail)
+    LIST_FILE.write_text(format_list(entries))
     return old
 
 
