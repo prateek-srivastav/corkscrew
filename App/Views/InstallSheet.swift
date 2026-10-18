@@ -31,7 +31,7 @@ struct InstallSheet: View {
             Button("Stop and Delete Setup Files", role: .destructive) { installer.cancel() }
             Button("Keep Installing", role: .cancel) {}
         } message: {
-            Text("You chose Move, so your download is already deleted. The setup files go too: to try again, you'd need to download it again.")
+            Text("You'd need to download it again.")
         }
     }
 
@@ -53,25 +53,25 @@ struct InstallSheet: View {
         switch job.step {
         case .choose: choose(job)
         case .unpacking(let fraction):
-            working("Unpacking… \(Int(fraction * 100))%", fraction: fraction,
-                    detail: "Big downloads take a while. You can hide this window: Corkscrew keeps going.")
+            working("Unpacking… \(Int(fraction * 100))%", fraction: fraction, detail: "You can hide this window: Corkscrew keeps going.")
             buttons { cancelButton(job); Spacer(); hideButton }
         case .disc(let images): disc(images, job: job)
         case .preparingDisc(let mounting):
             working(mounting ? "Putting the disc in the drive…" : "Copying the files out of the disc image…", fraction: nil,
-                    detail: mounting ? nil : "Big disc images take a while. You can hide this window: Corkscrew keeps going.")
+                    detail: mounting ? nil : "You can hide this window: Corkscrew keeps going.")
             buttons { cancelButton(job); Spacer(); if !mounting { hideButton } }
         case .pickSetup(let candidates): pickSetup(candidates, job: job)
         case .runningSetup:
-            working("The setup is running", fraction: nil,
-                    detail: "Follow the steps in the setup's window. Keep the install folder it suggests. "
+            working("The setup is running", fraction: nil, detail: "Follow the steps in the setup's window.",
+                    info: "Follow the steps in the setup's window. Keep the install folder it suggests. "
                         + "When the setup closes, Corkscrew deletes the setup files and asks which program to add to your library.")
             buttons {
                 cancelButton(job)
                 Spacer()
                 hideButton
-                Button("Setup Is Finished") { installer.setupIsDone() }
-                    .help("The setup's window is closed, but Corkscrew still waits")
+                Button("Show Setup") { installer.showSetup() }
+                    .keyboardShortcut(.defaultAction)
+                    .help("Bring the setup's window to the front")
             }
         case .pickProgram(let programs): pickProgram(programs)
         case .finishing:
@@ -115,13 +115,15 @@ struct InstallSheet: View {
              : "This download has \(images.count) disc images: \(images.map(\.lastPathComponent).joined(separator: ", ")).")
             .font(.body)
         Option(title: "Use the disc image (recommended)", systemImage: "opticaldisc", isSelected: mountsDisc,
-               text: "Corkscrew puts the disc image in the bottle's drive, like a DVD, and runs the setup from it. "
+               text: "Fast, and needs no extra space.",
+               detail: "Corkscrew puts the disc image in the bottle's drive, like a DVD, and runs the setup from it. "
                    + "Fast, and needs no extra space. After the setup, the disc comes out again. "
                    + "A few old programs ask for their disc every time they start; those won't start then.") {
             mountsDisc = true
         }
         Option(title: "Unpack the disc image", systemImage: "square.and.arrow.down.on.square", isSelected: !mountsDisc,
-               text: "Corkscrew copies every file out of the disc image first, then runs the setup from those files. "
+               text: "Slower. For setups that fail on the disc.",
+               detail: "Corkscrew copies every file out of the disc image first, then runs the setup from those files. "
                    + "Slower, and needs as much free space again as the disc image, until the setup is done. "
                    + "Choose this when the setup doesn't work with the disc image.") {
             mountsDisc = false
@@ -136,12 +138,12 @@ struct InstallSheet: View {
     @ViewBuilder
     private func pickSetup(_ candidates: [SetupFinder.Candidate], job: ProgramInstaller.Job) -> some View {
         let picked = candidate.flatMap { candidates.contains($0) ? $0 : nil } ?? candidates[0]
-        Text(picked.isSetup
-             ? "Corkscrew runs the setup once. Follow its steps and keep the install folder it suggests. "
-                + "When it's done, Corkscrew deletes the setup files and adds the program to your library."
-             : "There's no setup in this download: it's the program itself. Corkscrew keeps its files in the bottle "
-                + "(in C:\\Games) and adds it to your library.")
-            .font(.body)
+        InfoLine(picked.isSetup ? "Corkscrew runs this setup once." : "No setup here: this is the program itself.",
+                 info: picked.isSetup
+                     ? "Corkscrew runs the setup once. Follow its steps and keep the install folder it suggests. "
+                        + "When it's done, Corkscrew deletes the setup files and adds the program to your library."
+                     : "There's no setup in this download: it's the program itself. Corkscrew keeps its files in the bottle "
+                        + "(in C:\\Games) and adds it to your library.")
         Form {
             Picker(picked.isSetup ? "Setup" : "Program", selection: Binding(get: { picked }, set: { candidate = $0 })) {
                 ForEach(candidates) { item in
@@ -163,7 +165,8 @@ struct InstallSheet: View {
     private func pickProgram(_ programs: [URL]) -> some View {
         let picked = program.flatMap { programs.contains($0) ? $0 : nil } ?? programs.first
         if let picked {
-            Text("The setup is done. Pick the program to add to your library; the setup files are deleted then.").font(.body)
+            InfoLine("The setup is done. Pick the program to add.",
+                     info: "The setup is done. Pick the program to add to your library; the setup files are deleted then.")
             Form {
                 Picker("Program", selection: Binding(get: { picked }, set: { program = $0; name = Game.defaultName(for: $0) })) {
                     ForEach(programs, id: \.self) { item in Text(installer.displayPath(of: item)).tag(item) }
@@ -194,14 +197,14 @@ struct InstallSheet: View {
 
     // MARK: Parts
 
-    private func working(_ title: String, fraction: Double?, detail: String?) -> some View {
+    private func working(_ title: String, fraction: Double?, detail: String?, info: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 if fraction == nil { ProgressView().controlSize(.small) }
                 Text(title).font(.headline)
             }
             if let fraction { ProgressView(value: fraction) }
-            if let detail { Text(detail).font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            if let detail { InfoLine(detail, info: info).foregroundStyle(.secondary) }
         }
     }
 
@@ -233,13 +236,15 @@ struct OriginalChoice: View {
         VStack(alignment: .leading, spacing: 16) {
             SectionLabel("Your file")
             Option(title: "Copy", systemImage: "doc.on.doc", isSelected: original == .copy,
-                   text: isDiscImage
+                   text: isDiscImage ? "Keeps your disc image." : "Keeps your file. Needs room for both.",
+                   detail: isDiscImage
                        ? "Your disc image stays where it is. Corkscrew only reads it."
                        : "Your file stays where it is. Corkscrew unpacks what's inside into the bottle, so you need room for both.") {
                 original = .copy
             }
             Option(title: "Move", systemImage: "arrow.right.doc.on.clipboard", isSelected: original == .move,
-                   text: isDiscImage
+                   text: isDiscImage ? "Deletes your disc image after the setup." : "Deletes your file once it's unpacked.",
+                   detail: isDiscImage
                        ? "Corkscrew uses your disc image, then deletes it when the setup is done. Saves space; to install again, you'd need to download it again."
                        : "Corkscrew deletes your file as soon as it's unpacked, to free the space. To install again, you'd need to download it again.") {
                 original = .move
@@ -254,24 +259,27 @@ struct OriginalChoice: View {
             // Unpacked, a download takes about its own size (programs inside are compressed); the installed program as much again.
             let needed = isDiscImage ? size : size * 2
             let tight = free < needed
-            Label("\(bytes(free)) free. " + (isDiscImage
+            HStack(spacing: 6) {
+                Label("\(bytes(free)) free, about \(bytes(needed)) needed", systemImage: tight ? "exclamationmark.triangle" : "internaldrive")
+                InfoButton(text: isDiscImage
                     ? "The installed program needs about \(bytes(size))."
-                    : "Unpacking needs about \(bytes(size)), and the installed program about as much again."),
-                  systemImage: tight ? "exclamationmark.triangle" : "internaldrive")
-                .font(.subheadline)
-                .foregroundStyle(tight ? .orange : .secondary)
+                    : "Unpacking needs about \(bytes(size)), and the installed program about as much again.")
+            }
+            .font(.subheadline)
+            .foregroundStyle(tight ? .orange : .secondary)
         }
     }
 
     private func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
 }
 
-/// A choice with a short explanation of what it means.
+/// A choice with a short explanation of what it means; its info button shows the full one.
 private struct Option: View {
     let title: String
     let systemImage: String
     let isSelected: Bool
     let text: String
+    let detail: String
     let action: () -> Void
     @State private var isHovering = false
 
@@ -288,6 +296,7 @@ private struct Option: View {
                 Spacer(minLength: 0)
             }
             .padding(12)
+            .padding(.trailing, 28)
             .contentShape(.rect)
             .background(isSelected || isHovering ? Theme.surfaceHover : Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
             .overlay {
@@ -295,7 +304,52 @@ private struct Option: View {
             }
         }
         .buttonStyle(.plain)
+        // Over the row, not in it: a button in a button doesn't get the click.
+        .overlay(alignment: .trailing) {
+            InfoButton(text: detail, help: "More about \(title)", inset: 12).font(.system(size: Theme.controlIconSize))
+        }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
+}
+
+/// A short line, with an info button for the full explanation (none without one).
+struct InfoLine: View {
+    let text: String
+    let info: String?
+
+    init(_ text: String, info: String?) {
+        self.text = text
+        self.info = info
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(text)
+            if let info { InfoButton(text: info) }
+        }
+        .font(.body)
+    }
+}
+
+/// An "i" that shows the full explanation of what's next to it.
+struct InfoButton: View {
+    let text: String
+    var help = "More about this"
+    /// Room around the icon that also takes the click.
+    var inset: CGFloat = 0
+    @State private var isShown = false
+
+    var body: some View {
+        Button { isShown.toggle() } label: {
+            Image(systemName: "info.circle").padding(inset).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isShown ? .primary : .secondary)
+        .help(help)
+        .accessibilityLabel(help)
+        .popover(isPresented: $isShown, arrowEdge: .trailing) {
+            Text(text).font(.body).fixedSize(horizontal: false, vertical: true).frame(width: 280, alignment: .leading).padding(14)
+        }
     }
 }

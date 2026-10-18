@@ -119,6 +119,29 @@ public enum BottleProcesses {
         })
     }
 
+    /// The bottle's processes with a normal window, front to back: those with one on screen, then
+    /// those whose windows are minimized or on another Space. The first is the one to bring forward.
+    public static func windowOwners(prefix: URL) -> [pid_t] {
+        let entries = list(prefix: prefix)
+        guard !entries.isEmpty else { return [] }
+        // Every Wine program with a window also keeps hidden ones; off screen, Wine's desktop
+        // process (explorer.exe) has only those. On screen it is the virtual desktop, if one is on.
+        let all = Set(entries.map(\.pid))
+        let programs = Set(entries.filter { !$0.program.hasSuffix("\\explorer.exe") }.map(\.pid))
+        var owners: [pid_t] = []
+        let passes: [(CGWindowListOption, Set<pid_t>)] = [([.optionOnScreenOnly, .excludeDesktopElements], all),
+                                                          ([.optionAll, .excludeDesktopElements], programs)]
+        for (options, pids) in passes {
+            let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+            for window in windows where (window[kCGWindowLayer as String] as? Int) == 0 {
+                guard let owner = (window[kCGWindowOwnerPID as String] as? Int).map(pid_t.init),
+                      pids.contains(owner), !owners.contains(owner) else { continue }
+                owners.append(owner)
+            }
+        }
+        return owners
+    }
+
     /// Programs started from a Steam game's folder (`steamapps\common\<installDir>\…`), on any drive.
     static func isFromSteamGame(_ program: String, installDir: String) -> Bool {
         program.contains("\\steamapps\\common\\\(installDir.lowercased())\\")

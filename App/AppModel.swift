@@ -50,9 +50,11 @@ final class AppModel {
         case launch(Game.ID)
         /// Open Steam, in the launcher bottle: until Steam's window shows.
         case openSteam
-        /// Open in Steam (a game's store page): until Steam shows it.
+        /// Open in Steam (a game's store page) or Uninstall of a Steam game: until Steam shows it.
         case steamPage(Game.ID)
         case stop(Game.ID)
+        /// Uninstall of a program outside Steam: until its folder is deleted.
+        case uninstallGame(Game.ID)
         /// Quit Steam, in the launcher bottle.
         case quitSteam
         case stopBottle(Bottle.ID)
@@ -619,6 +621,65 @@ final class AppModel {
         do { try LibraryStore(paths: paths).save(library) } catch { errorMessage = Self.describe(error) }
     }
 
+    // MARK: Uninstalling
+
+    /// What Uninstall deletes for a program outside Steam, shown before it does.
+    struct UninstallPlan: Identifiable {
+        let game: Game
+        let removal: ProgramUninstaller.Removal
+        /// Bytes it frees.
+        let size: Int64
+        /// Other library entries inside the deleted folder; they go too.
+        let others: [Game]
+        var id: Game.ID { game.id }
+    }
+
+    /// Finds what Uninstall deletes for the program; nil (with the reason shown) when it won't delete it.
+    func uninstallPlan(for game: Game) async -> UninstallPlan? {
+        let prefix = BottleLocation(bottleID: game.bottleID, paths: paths).prefix
+        let candidates = games.filter { $0.id != game.id && $0.bottleID == game.bottleID }
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                let removal = try ProgramUninstaller.removal(of: game.executable, prefix: prefix)
+                return UninstallPlan(game: game, removal: removal, size: ProgramUninstaller.size(of: removal.target),
+                                     others: candidates.filter { removal.deletes($0.executable) })
+            }.value
+        } catch {
+            errorMessage = "Corkscrew can't uninstall \(game.name): \(Self.describe(error))."
+            return nil
+        }
+    }
+
+    /// Deletes the program's folder for good, takes it off the bottle's uninstall list, and removes it
+    /// (with the other entries inside the folder) from the library. Files it saved elsewhere stay.
+    func uninstall(_ plan: UninstallPlan) {
+        guard !isPending(.uninstallGame(plan.game.id)), let bottle = bottle(for: plan.game) else { return }
+        let entries = [plan.game] + plan.others
+        if let running = entries.first(where: isRunning) {
+            errorMessage = "Stop \(running.name) before uninstalling."
+            return
+        }
+        pending.insert(.uninstallGame(plan.game.id))
+        let paths = self.paths
+        Task {
+            defer { pending.remove(.uninstallGame(plan.game.id)) }
+            await perform("Uninstalling \(plan.game.name)…") {
+                let location = BottleLocation(bottleID: bottle.id, paths: paths)
+                let context = try RuntimeStore(paths: paths).engine(id: bottle.engineID).map {
+                    WineContext(engine: $0, bottle: bottle, location: location, paths: paths, hostEnvironment: ProcessInfo.processInfo.environment)
+                }
+                try await ProgramUninstaller.remove(plan.removal, in: context,
+                                                    log: paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/uninstall.log"))
+            }
+            // Gone even when its uninstall list entry stayed.
+            guard !FileManager.default.fileExists(atPath: plan.removal.target.path) else { return }
+            for entry in entries {
+                remove(entry)
+                icons[entry.id] = nil
+            }
+        }
+    }
+
     // MARK: Opening programs
 
     /// Asks whether to run each program once or add it to the library; `bottle` is offered first.
@@ -787,11 +848,21 @@ final class AppModel {
     /// Opens a Steam game's store page in Steam, to download it (again). Steam starts as its library
     /// entry, with its own settings; when Steam already runs, the link goes to the Steam there.
     func openInSteam(_ game: Game) {
+        send(game, toSteam: Steam.storePageArguments)
+    }
+
+    /// Asks Steam to uninstall the game; Steam shows its own prompt.
+    func uninstallInSteam(_ game: Game) {
+        send(game, toSteam: Steam.uninstallArguments)
+    }
+
+    /// Hands a `steam://` link for the game (`arguments` for its app id) to Steam in its bottle.
+    private func send(_ game: Game, toSteam arguments: (String) -> [String]) {
         guard let appID = game.store?.appID, !isPending(.steamPage(game.id)), let bottle = bottle(for: game) else { return }
         let entry = games.first { $0.bottleID == game.bottleID && $0.store == StoreItem(store: Steam.store) }
         var steam = entry ?? Game(name: "Steam", executable: game.executable, bottleID: game.bottleID,
                                   profile: Steam.clientProfile, store: StoreItem(store: Steam.store))
-        steam.profile.arguments = Steam.storePageArguments(appID: appID)
+        steam.profile.arguments = arguments(appID)
         if sessions[steam.id]?.isActive == true || isSteamRunning(in: bottle) {
             // This steam.exe only hands the link over.
             let ended = forward(steam)

@@ -466,6 +466,8 @@ struct GameHero: View {
     let showSettings: (() -> Void)?
     /// Nil on the Steam page, which lists the account's library as it is.
     let remove: (() -> Void)?
+    /// Nil when there's nothing to uninstall (Steam itself, a Steam game that isn't installed).
+    let uninstall: (() -> Void)?
 
     var body: some View {
         let session = model.session(for: game)
@@ -491,7 +493,10 @@ struct GameHero: View {
                     BusyButton("Play", busyTitle: "Starting…", isBusy: true) {}
                         .buttonStyle(.prominentPill)
                 }
-                if isActive {
+                if model.isPending(.uninstallGame(game.id)) {
+                    BusyButton("Uninstall", busyTitle: "Uninstalling…", isBusy: true) {}
+                        .buttonStyle(.destructivePill)
+                } else if isActive {
                     BusyButton("Stop", systemImage: "stop.fill", busyTitle: "Stopping…", isBusy: model.isPending(.stop(game.id))) {
                         model.stop(game)
                     }
@@ -548,10 +553,14 @@ struct GameHero: View {
         Menu {
             Button("Show Program in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.iconSource ?? game.executable]) }
                 .disabled(state != .installed)
+            if uninstall != nil || remove != nil { Divider() }
+            if let uninstall {
+                Button("Uninstall…", role: .destructive, action: uninstall)
+                    .disabled(isActive || model.isPending(.uninstallGame(game.id)) || model.isPending(.steamPage(game.id)))
+            }
             if let remove {
-                Divider()
                 Button("Remove from Library", role: .destructive, action: remove)
-                    .disabled(isActive)
+                    .disabled(isActive || model.isPending(.uninstallGame(game.id)))
             }
         } label: {
             Image(systemName: "ellipsis")

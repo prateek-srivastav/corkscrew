@@ -15,9 +15,19 @@ struct GamePage: View {
     @State private var isLoading = true
     @State private var showsSettings = false
     @State private var screenshot: URL?
+    @State private var uninstallPlan: AppModel.UninstallPlan?
+    @State private var isPlanningUninstall = false
 
     private var inLibrary: Bool { model.games.contains { $0.id == game.id } }
     private var isSteamBottle: Bool { model.bottle(for: game)?.role == .steam }
+
+    /// Steam games through Steam; programs in other bottles by deleting their folder.
+    private var uninstall: (() -> Void)? {
+        if game.store?.appID != nil {
+            return model.installState(of: game) == .installed ? { model.uninstallInSteam(game) } : nil
+        }
+        return isSteamBottle || !inLibrary ? nil : { planUninstall() }
+    }
 
     var body: some View {
         ScrollView {
@@ -29,7 +39,8 @@ struct GamePage: View {
                         Spacer(minLength: 24)
                         GameHero(game: game,
                                  showSettings: inLibrary ? { showsSettings = true } : nil,
-                                 remove: isSteamBottle || !inLibrary ? nil : { remove() })
+                                 remove: isSteamBottle || !inLibrary ? nil : { remove() },
+                                 uninstall: uninstall)
                     }
                     .padding(.horizontal, 40)
                     .padding(.top, 20)
@@ -53,6 +64,27 @@ struct GamePage: View {
             details = await model.storeDetails(for: game)
             isLoading = false
         }
+        .alert(uninstallTitle, isPresented: Binding(get: { uninstallPlan != nil }, set: { if !$0 { uninstallPlan = nil } }),
+               presenting: uninstallPlan) { plan in
+            Button("Uninstall", role: .destructive) { model.uninstall(plan) }
+            Button("Cancel", role: .cancel) {}
+        } message: { plan in
+            Text("Deletes \(ByteCountFormatter.string(fromByteCount: plan.size, countStyle: .file)) for good.")
+        }
+    }
+
+    private func planUninstall() {
+        guard !isPlanningUninstall else { return }
+        isPlanningUninstall = true
+        Task {
+            uninstallPlan = await model.uninstallPlan(for: game)
+            isPlanningUninstall = false
+        }
+    }
+
+    /// Names the other library entries the uninstall deletes too, so the message stays one line.
+    private var uninstallTitle: String {
+        "Uninstall \(([game] + (uninstallPlan?.others ?? [])).map(\.name).formatted(.list(type: .and)))?"
     }
 
     private var topBar: some View {

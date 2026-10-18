@@ -78,6 +78,11 @@ public enum Steam {
         clientArguments + ["--", "steam://store/\(appID)"]
     }
 
+    /// Asks Steam to uninstall the game; Steam shows its own prompt first.
+    public static func uninstallArguments(appID: String) -> [String] {
+        clientArguments + ["--", "steam://uninstall/\(appID)"]
+    }
+
     /// `C:\Program Files (x86)\Steam` in the bottle, if Steam is installed there.
     public static func root(inPrefix prefix: URL) -> URL? {
         ["drive_c/Program Files (x86)/Steam", "drive_c/Program Files/Steam"]

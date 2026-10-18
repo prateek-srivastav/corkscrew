@@ -26,9 +26,8 @@ struct OpenProgramSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Add Program").font(.title2.weight(.bold))
-                Text("A Windows program (.exe), an installer (.msi), or a downloaded program (.zip, .rar, .7z, .iso).")
+                Text("An .exe, .msi, .zip, .rar, .7z or .iso file.")
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             field("Install into") {
@@ -59,7 +58,7 @@ struct OpenProgramSheet: View {
                                size: download.size, freeSpace: model.installer.freeSpace)
             }
             if model.programBottles.isEmpty {
-                Label("Set up Corkscrew in Settings first: setup makes the bottles programs go in.", systemImage: "exclamationmark.triangle")
+                Label("Set up Corkscrew in Settings first.", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
 
@@ -95,11 +94,12 @@ struct OpenProgramSheet: View {
             }
         }
         if let bottle, let file, model.needsImport(file, into: bottle) {
-            Label("A protected bottle only sees its own C: drive, so the program (and files next to it named like it) "
-                  + "is copied into the bottle's Downloads folder. A game made of many files should be installed inside the bottle instead.",
-                  systemImage: "lock.shield")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Label("The program is copied into the bottle first.", systemImage: "lock.shield")
+                InfoButton(text: "A protected bottle only sees its own C: drive, so the program (and files next to it named like it) "
+                    + "is copied into the bottle's Downloads folder. A program made of many files should be installed inside the bottle instead.")
+            }
+            .font(.subheadline).foregroundStyle(.secondary)
         }
     }
 
@@ -172,7 +172,7 @@ struct OpenProgramSheet: View {
                 fileError = "\(picked.lastPathComponent): \(AppModel.describe(error))"
             }
         } else {
-            fileError = "Only Windows programs (.exe), installers (.msi), archives (.zip, .rar, .7z) and disc images (.iso) can be added."
+            fileError = "Only .exe, .msi, .zip, .rar, .7z and .iso files."
         }
     }
 
