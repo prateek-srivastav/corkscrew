@@ -1,0 +1,42 @@
+name: Upstream releases
+
+# Every Monday, opens an issue for each component in scripts/runtime-pins.env with a newer upstream
+# release (scripts/check-upstream.sh), once per version. A source that can't be read fails the run.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check upstream releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # to open the issues
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Open issues for new releases
+        run: |
+          status=0
+          scripts/check-upstream.sh >"$RUNNER_TEMP/new" || status=$?
+          while IFS=$'\t' read -r name pinned latest url note; do
+            title="$name $latest is out"
+            if gh issue list --state all --search "\"$title\" in:title" --json title --jq '.[].title' | grep -qxF "$title"; then
+              continue
+            fi
+            body="$name $latest is out; scripts/runtime-pins.env pins $pinned. Release: $url"
+            body+=$'\n\n'"To update, change its pins in scripts/runtime-pins.env (versions, URLs and sha256s together), then build and publish a new engine pack (docs/RELEASING.md)."
+            [[ -z $note ]] || body+=$'\n\n'"$note"
+            gh issue create --title "$title" --body "$body" </dev/null
+          done <"$RUNNER_TEMP/new"
+          exit "$status"

@@ -9,6 +9,8 @@ A release has two parts:
 
 Needed when `scripts/build-runtime.sh`, `scripts/install-components.sh` or `scripts/runtime-pins.env` change.
 
+The **Upstream releases** workflow runs `scripts/check-upstream.sh` every Monday. It opens an issue for each CrossOver, DXMT, DXVK, MoltenVK, Wine Mono or Game Porting Toolkit release newer than its pin, once per version. For the Game Porting Toolkit it reads Apple's public page, which names only the major version, so a minor release (for example 3.1) doesn't open an issue.
+
 1. Commit the script changes. The packaging script refuses uncommitted changes in `scripts/` and `tools/`, so the published build scripts match the runtime.
 2. Build the runtime and components:
 
