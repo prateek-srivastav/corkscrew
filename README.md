@@ -96,6 +96,7 @@ When a maintainer checks the report and labels it **tested**, a workflow adds th
 | **Red Dead Redemption 2** | Steam → Rockstar Games Launcher, DX12 on D3DMetal | Plays at about 50 FPS (25 in Retina mode) with the tested settings: Ultra textures, High shadows and lighting, DLSS as MetalFX. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX on D3DMetal | 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964. |
 | **God of War (2018)** | Isolated bottle, internet off, DX11 on D3DMetal with a depth-test fix | Plays with the tested settings (Ultra preset, HDR off, no film grain), with no white specks on the characters ([#14](https://github.com/Prateek-Srivastav/corkscrew/issues/14)). |
+| **FIFA 23** | Isolated bottle, internet off, DX12 on D3DMetal, AVX on | Starts and reaches its first menu, full screen with no crop. Needs engine pack 26.3.0-6: loopback inside the bottle ([#40](https://github.com/Prateek-Srivastav/corkscrew/pull/40)) and emulated display modes ([#42](https://github.com/Prateek-Srivastav/corkscrew/pull/42)). |
 | **Last Pirates Die Together** | Isolated bottle, internet on, with its own Steam; DX11 on D3DMetal | Plays; online co-op works. |
 | **Emily is Away** | 32-bit, DX11 on DXVK | Runs |
 
@@ -220,4 +221,4 @@ This repository only contains Corkscrew's own code. The build scripts download e
 
 **Our changes to Wine** are patches applied by `scripts/build-runtime.sh`: the loader's Info.plist (bundle identifier, Game Mode keys); starting programs from an app bundle so Game Mode turns on; an opt-out of the loader's re-exec link for sandboxed bottles; `--in-process-gpu` for Rockstar's Social Club; full-screen windows at the normal window level, for Mission Control (winemac); display modes up to the panel's pixel size when mode changes are emulated (win32u); and loopback only to the bottle's own listeners in offline bottles (wineserver).
 
-Steam, Rockstar Games, Red Dead Redemption, Black Myth: Wukong, God of War, DirectX, DLSS, FSR, Metal and other names are trademarks of their owners. Corkscrew isn't affiliated with or endorsed by any of them.
+Steam, Rockstar Games, Red Dead Redemption, Black Myth: Wukong, God of War, FIFA, DirectX, DLSS, FSR, Metal and other names are trademarks of their owners. Corkscrew isn't affiliated with or endorsed by any of them.
