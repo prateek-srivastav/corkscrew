@@ -6,6 +6,9 @@ public struct RunResult: Sendable, Equatable {
     public let log: URL
     /// A signal ended the program (11 is SIGSEGV) instead of an exit.
     public var crashed = false
+    /// Programs from the game's folder that ran on after the program quit (a launcher's game),
+    /// lowercased: `fifa23.exe`.
+    public var followed: [String] = []
 
     /// "exit 3" or "crashed, signal 11", for error messages.
     public var outcome: String { crashed ? "crashed, signal \(status)" : "exit \(status)" }

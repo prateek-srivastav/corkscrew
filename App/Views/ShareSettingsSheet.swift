@@ -87,7 +87,8 @@ struct ShareSettingsSheet: View {
         let profile = Steam.sharedProfile(of: game)
         var lines = ["Graphics: \(profile.backendOverride?.displayName ?? "Automatic")",
                      "MetalFX: \(profile.metalFX ? "on" : "off")   Retina mode: \(profile.retinaMode ? "on" : "off")   "
-                         + "AVX: \(profile.advertiseAVX ? "on" : "off")   Steam overlay: \(profile.steamOverlay ? "on" : "off")"]
+                         + "AVX: \(profile.advertiseAVX ? "on" : "off")   Steam overlay: \(profile.steamOverlay ? "on" : "off")"
+                         + (profile.modHooks ? "   Mod hooks: on" : "")]
         if !profile.arguments.isEmpty { lines.append("Arguments: \(profile.arguments.joined(separator: " "))") }
         if !profile.environment.isEmpty {
             lines.append("Environment: " + profile.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))

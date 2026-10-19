@@ -18,10 +18,23 @@ struct CorkscrewApp: App {
                 .environment(navigator)
                 .frame(minWidth: 1080, minHeight: 620)
                 .background {
-                    Color.clear.sheet(item: $model.pendingReport) { ReportSheet(pending: $0) }
+                    Color.clear.sheet(item: $model.pendingReport) { ReportSheet(pending: $0).environment(model) }
+                }
+                .background {
+                    Color.clear.sheet(item: $model.programChange) { ChangeProgramSheet(game: $0).environment(model) }
                 }
                 .background {
                     Color.clear.sheet(item: $model.pendingShare) { ShareSettingsSheet(prompt: $0).environment(model) }
+                }
+                .background {
+                    Color.clear.alert("A fix for \(model.fixedGame?.name ?? "the game") is ready",
+                                      isPresented: Binding(get: { model.fixedGame != nil }, set: { if !$0 { model.fixedGame = nil } }),
+                                      presenting: model.fixedGame) { game in
+                        Button("Play Again") { model.play(game) }
+                        Button("Later", role: .cancel) {}
+                    } message: { _ in
+                        Text("Start the game again to use it.")
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)

@@ -132,6 +132,8 @@ public enum LaunchPlanner {
         var env = baseEnvironment(context, verboseLogging: game.profile.verboseLogging)
         if context.engine.architecture == .x86_64, game.profile.advertiseAVX { env["ROSETTA_ADVERTISE_AVX"] = "1" }
         if game.profile.metalHUD { env["MTL_HUD_ENABLED"] = "1" }
+        // Our Wine's ntdll: VirtualProtect outside Wine's memory (a hook into D3DMetal's functions).
+        if game.profile.modHooks { env["CORKSCREW_HOST_MEMORY_PROTECT"] = "1" }
         env.merge(performanceEnvironment) { _, tuned in tuned }
         let shaderCache = context.paths.shaderCache(for: game.gameID).path
         switch backend {

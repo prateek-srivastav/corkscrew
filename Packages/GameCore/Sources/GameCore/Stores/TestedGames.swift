@@ -4,8 +4,13 @@ import Synchronization
 /// A Steam game with settings that ran well: tested on the developer's Mac (no `source`), or
 /// shared by a player from Corkscrew and accepted. A maintainer's "tested" label on the Game
 /// report runs `scripts/tested-settings.py`, which adds the entry to `tested.json` in a pull request.
+/// A game that isn't from Steam has a `program` instead of an app id.
 public struct TestedGame: Codable, Sendable, Equatable {
+    /// Empty for a game that isn't from Steam.
     public var appID: String
+    /// A game that isn't from Steam: a program in its folder (`FIFA23.exe`). The settings apply to
+    /// a program added from a folder that has it.
+    public var program: String?
     public var name: String
     /// Shown in the library before it's installed (`Steam.testedGames`). Shared games aren't,
     /// until someone here plays them: their settings only apply once the game is installed.
@@ -18,8 +23,10 @@ public struct TestedGame: Codable, Sendable, Equatable {
     /// The Game report it came from.
     public var source: String?
 
-    public init(appID: String, name: String, listed: Bool = false, profile: GameProfile, notes: String? = nil, source: String? = nil) {
+    public init(appID: String, program: String? = nil, name: String, listed: Bool = false, profile: GameProfile, notes: String? = nil,
+                source: String? = nil) {
         self.appID = appID
+        self.program = program
         self.name = name
         self.listed = listed
         self.profile = profile
@@ -27,10 +34,16 @@ public struct TestedGame: Codable, Sendable, Equatable {
         self.source = source
     }
 
-    /// A missing `listed` is false: the Game report's settings don't have it.
+    /// A missing `listed` is false: the Game report's settings don't have it. Versions before
+    /// `program` skip entries without an app id.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        appID = try c.decode(String.self, forKey: .appID)
+        program = try c.decodeIfPresent(String.self, forKey: .program)
+        if program == nil {
+            appID = try c.decode(String.self, forKey: .appID)
+        } else {
+            appID = try c.decodeIfPresent(String.self, forKey: .appID) ?? ""
+        }
         name = try c.decode(String.self, forKey: .name)
         listed = try c.decodeIfPresent(Bool.self, forKey: .listed) ?? false
         profile = try c.decode(GameProfile.self, forKey: .profile)
@@ -107,7 +120,16 @@ extension Steam {
 
     /// Settings that ran well, by Steam app id; the detected backend covers everything else.
     public static var testedProfiles: [String: GameProfile] {
-        Dictionary(tested.map { ($0.appID, $0.profile) }, uniquingKeysWith: { first, _ in first })
+        Dictionary(tested.filter { !$0.appID.isEmpty }.map { ($0.appID, $0.profile) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Settings that ran well for a program that isn't from Steam: the entry whose `program` is in
+    /// the same folder (the game's own program, or its launcher next to it).
+    public static func testedProfile(forProgram executable: URL) -> GameProfile? {
+        let folder = executable.deletingLastPathComponent()
+        return tested.first { entry in
+            entry.program.map { !$0.isEmpty && !$0.contains("/") && FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } ?? false
+        }?.profile
     }
 
     /// Games tested with Corkscrew, shown in the library before they're installed: their button opens
@@ -129,7 +151,7 @@ extension Steam {
 
     private static func shared(_ profile: GameProfile, arguments: [String]) -> GameProfile {
         GameProfile(backendOverride: profile.backendOverride, metalFX: profile.metalFX, retinaMode: profile.retinaMode,
-                    advertiseAVX: profile.advertiseAVX, steamOverlay: profile.steamOverlay,
+                    advertiseAVX: profile.advertiseAVX, steamOverlay: profile.steamOverlay, modHooks: profile.modHooks,
                     arguments: arguments, environment: profile.environment)
     }
 
@@ -147,6 +169,8 @@ extension Steam {
         var settings: [String: Any] = ["metalFX": profile.metalFX, "retinaMode": profile.retinaMode,
                                        "advertiseAVX": profile.advertiseAVX, "steamOverlay": profile.steamOverlay]
         if let backend = profile.backendOverride { settings["backendOverride"] = backend.rawValue }
+        // Only when on: reports for other games stay as they were.
+        if profile.modHooks { settings["modHooks"] = true }
         if !profile.arguments.isEmpty { settings["arguments"] = profile.arguments }
         if !profile.environment.isEmpty { settings["environment"] = profile.environment }
         let report: [String: Any] = ["appID": appID, "name": game.name, "profile": settings]

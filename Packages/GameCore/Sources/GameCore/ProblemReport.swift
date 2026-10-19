@@ -210,12 +210,13 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     // MARK: Crash dumps
 
     /// The newest crash dump (`*.dmp`, `*.mdmp`) changed since `since` in `folders` and their
-    /// subfolders (not through links) that the program `executable` (a file name) wrote of itself
+    /// subfolders (not through links) that one of `executables` (file names) wrote of itself
     /// with its own crash handler, which Wine's log doesn't show. Helpers (Steam, launchers, crash
     /// reporters) write dumps too: their first module is another program. `file` is the dump's name,
-    /// with the Mac's name (some handlers put the computer name in it) as `<host>`.
-    public static func crashDump(in folders: [URL], since: Date, executable: String, host: String? = nil)
-        -> (summary: String, file: String)? {
+    /// with the Mac's name (some handlers put the computer name in it) as `<host>`. `wrote` is the
+    /// address an access violation wrote to.
+    public static func crashDump(in folders: [URL], since: Date, executables: [String], host: String? = nil)
+        -> (summary: String, file: String, wrote: UInt64?)? {
         var dumps: [(url: URL, date: Date)] = []
         for folder in folders {
             guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
@@ -228,17 +229,18 @@ public struct ProblemReport: Sendable, Equatable, Codable {
         let host = host ?? hostName
         for dump in dumps.sorted(by: { $0.date > $1.date }) {
             guard let data = try? Data(contentsOf: dump.url, options: .alwaysMapped),
-                  let summary = crashDump(data, executable: executable) else { continue }
+                  let crash = executables.lazy.compactMap({ crashDump(data, executable: $0) }).first else { continue }
             let file = dump.url.lastPathComponent
-            return (summary, host.count < 3 ? file : file.replacingOccurrences(of: host, with: "<host>", options: .caseInsensitive))
+            return (crash.summary, host.count < 3 ? file : file.replacingOccurrences(of: host, with: "<host>", options: .caseInsensitive),
+                    crash.wrote)
         }
         return nil
     }
 
     /// The exception in a minidump and where it happened, "Access violation (c0000005) at
-    /// Game.exe+0x27c2fc9". Nil unless the dump holds an exception and its first module, the
-    /// program, is `executable`.
-    static func crashDump(_ dump: Data, executable: String) -> String? {
+    /// Game.exe+0x27c2fc9", and the address an access violation wrote to. Nil unless the dump holds
+    /// an exception and its first module, the program, is `executable`.
+    static func crashDump(_ dump: Data, executable: String) -> (summary: String, wrote: UInt64?)? {
         func read(_ offset: Int, _ size: Int) -> UInt64? {
             guard offset >= 0, offset <= dump.count - size else { return nil }
             return dump.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
@@ -253,7 +255,8 @@ public struct ProblemReport: Sendable, Equatable, Codable {
             guard let type = u32(entry), let offset = u32(entry + 8) else { return nil }
             streams[type] = streams[type] ?? offset
         }
-        // Exception stream (6): thread id, alignment, then code, flags, record, address.
+        // Exception stream (6): thread id, alignment, then code, flags, record, address, parameter
+        // count, alignment, parameters. An access violation's are (1 for a write, the address).
         // Module list (4): count, then 108-byte entries: base, size, …, name at +20 (byte length, UTF-16LE).
         guard let exception = streams[6], let code = u32(exception + 8), let address = read(exception + 24, 8),
               let list = streams[4], let modules = u32(list).map({ min($0, 4096) }) else { return nil }
@@ -267,7 +270,8 @@ public struct ProblemReport: Sendable, Equatable, Codable {
         guard modules > 0, module(0)?.name.lowercased() == executable.lowercased() else { return nil }
         let place = (0..<modules).lazy.compactMap(module).first { address >= $0.base && address - $0.base < $0.size }
             .map { "\($0.name)+0x\(String(address - $0.base, radix: 16))" } ?? "0x\(String(address, radix: 16))"
-        return "\(exceptionNames[code] ?? "Exception") (\(String(format: "%08x", UInt32(code)))) at \(place)"
+        let wrote = code == 0xc000_0005 && (u32(exception + 32) ?? 0) >= 2 && read(exception + 40, 8) == 1 ? read(exception + 48, 8) : nil
+        return ("\(exceptionNames[code] ?? "Exception") (\(String(format: "%08x", UInt32(code)))) at \(place)", wrote)
     }
 
     /// Windows exception codes crash handlers catch most.
@@ -275,6 +279,37 @@ public struct ProblemReport: Sendable, Equatable, Codable {
                                  0xc000_0094: "Integer division by zero", 0xc000_00fd: "Stack overflow",
                                  0xc000_0374: "Heap corruption", 0xc000_0409: "Stack buffer overrun",
                                  0x8000_0003: "Breakpoint", 0xe06d_7363: "C++ exception"]
+
+    // MARK: Mod hooks
+
+    /// What our Wine prints when it refuses a program's VirtualProtect outside Wine's memory, such as
+    /// on D3DMetal's functions: `wine: refused VirtualProtect on host memory 0x21235e000-0x21235f000`.
+    static let refusedChangeMarker = "wine: refused VirtualProtect on host memory "
+
+    /// Whether the program crashed writing to memory that Wine had refused to make writable for it:
+    /// a mod's hook into D3DMetal, which `GameProfile.modHooks` lets through.
+    public static func refusedHook(inLog url: URL, wrote address: UInt64, maxBytes: Int = 4 << 20) -> Bool {
+        tail(of: url, maxBytes: maxBytes).map { refusedHook(in: $0, wrote: address) } ?? false
+    }
+
+    static func refusedHook(in text: String, wrote address: UInt64) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { line in
+            guard let start = line.range(of: refusedChangeMarker)?.upperBound else { return false }
+            let bounds = line[start...].split(separator: "-").compactMap(hex)
+            return bounds.count == 2 && bounds[0] <= address && address < bounds[1]
+        }
+    }
+
+    /// The address in a Wine crash's "page fault on write access to 000000021235E14E" (winedbg:
+    /// "0x21235e14e"). Nil for any other crash.
+    public static func writeAddress(inCrash summary: String) -> UInt64? {
+        summary.range(of: "write access to ").flatMap { hex(summary[$0.upperBound...].prefix { !$0.isWhitespace }) }
+    }
+
+    static func hex(_ text: Substring) -> UInt64? {
+        let digits = text.trimmingCharacters(in: .whitespaces)
+        return UInt64(digits.hasPrefix("0x") ? String(digits.dropFirst(2)) : digits, radix: 16)
+    }
 
     /// The Mac's name up to its first dot, as Wine's computer name starts.
     static var hostName: String {

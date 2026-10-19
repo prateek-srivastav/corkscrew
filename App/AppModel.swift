@@ -610,6 +610,42 @@ final class AppModel {
         saveLibrary()
     }
 
+    /// The game whose Change Program sheet is open.
+    var programChange: Game?
+
+    /// Starts the game with `program` from now on, such as the launcher it must start through. The
+    /// program must be in the game's bottle. The entry keeps the icon of the program it was added
+    /// with, as a Steam game keeps its own while steam.exe starts it.
+    func changeProgram(of game: Game, to program: URL) {
+        guard game.store == nil, bottle(containing: program)?.id == game.bottleID else { return }
+        var changed = game
+        let original = game.iconSource ?? game.executable
+        changed.executable = program
+        changed.iconSource = program.standardizedFileURL.path == original.standardizedFileURL.path ? nil : original
+        update(changed)
+    }
+
+    /// Change Program's Choose…: any program in the game's bottle. Nil when the user cancels or
+    /// picks one in another bottle.
+    func chooseProgram(for game: Game) -> URL? {
+        guard let bottle = bottle(for: game),
+              let program = Pickers.file("Choose the program (.exe) that starts \(game.name).", extensions: ["exe"],
+                                         in: game.executable.deletingLastPathComponent())
+        else { return nil }
+        guard self.bottle(containing: program)?.id == bottle.id else {
+            errorMessage = "Choose a program in \(bottle.name), the bottle \(game.name) is in."
+            return nil
+        }
+        return program
+    }
+
+    /// The crash sheet's Use and Play: starts the game with `program` from now on, and now.
+    func play(_ gameID: Game.ID, with program: URL) {
+        guard let game = games.first(where: { $0.id == gameID }) else { return }
+        changeProgram(of: game, to: program)
+        if let changed = games.first(where: { $0.id == gameID }) { play(changed) }
+    }
+
     /// Takes the game out of the library; Steam entries aren't added back.
     func remove(_ game: Game) {
         library.remove(game.id)
@@ -757,7 +793,8 @@ final class AppModel {
     @discardableResult
     func addToLibrary(_ program: URL, bottle: Bottle, name: String? = nil) async -> Game? {
         guard let executable = await prepareProgram(program, for: bottle) else { return nil }
-        let game = Game(name: name ?? Game.defaultName(for: executable), executable: executable, bottleID: bottle.id)
+        let game = Game(name: name ?? Game.defaultName(for: executable), executable: executable, bottleID: bottle.id,
+                        profile: Steam.testedProfile(forProgram: executable) ?? GameProfile())
         library.games.append(game)
         saveLibrary()
         return game
@@ -1398,9 +1435,14 @@ final class AppModel {
         var logFile: URL?
         /// The Bug report form's name for the graphics backend.
         var backend = "Not related to graphics"
+        /// The game that crashed, and the other programs in its folder it could start with instead.
+        var gameID: Game.ID?
+        var otherPrograms: [URL] = []
     }
 
     var pendingReport: PendingReport?
+    /// A game that crashed on a known cause, now fixed in its settings: the app asks to start it again.
+    var fixedGame: Game?
     /// Where Send Report posts reports; `-ReportRelayURL <url>` tries another server.
     static var reportRelay: URL? { UserDefaults.standard.string(forKey: "ReportRelayURL").flatMap(URL.init(string:)) ?? ProblemReport.relayURL }
 
@@ -1408,8 +1450,10 @@ final class AppModel {
     private static let crashReportsCheckedKey = "CrashReportsChecked"
 
     /// A report after a crash or an error. Nothing is sent without a click.
-    private func offer(_ report: ProblemReport, logFile: URL? = nil, backend: GraphicsBackend? = nil) {
-        pendingReport = PendingReport(report: report, logFile: logFile, backend: backend?.formName ?? "Not related to graphics")
+    private func offer(_ report: ProblemReport, logFile: URL? = nil, backend: GraphicsBackend? = nil, game: Game? = nil,
+                       otherPrograms: [URL] = []) {
+        pendingReport = PendingReport(report: report, logFile: logFile, backend: backend?.formName ?? "Not related to graphics",
+                                      gameID: game?.id, otherPrograms: otherPrograms)
     }
 
     /// After a launch ends by itself: a report when the program crashed (Wine's backtrace in the
@@ -1421,31 +1465,46 @@ final class AppModel {
                               ranOwnSettings: Bool) async {
         // Crash dumps: in the game's folder, or the bottle's user folders (AppData, Documents). Not
         // for Steam games: the launch runs steam.exe, whose own dumps aren't the game's.
-        let since = Date.now.addingTimeInterval(-(played / .seconds(1))), executable = game.executable.lastPathComponent
+        // A launcher's game runs on after the launcher quits with 0: its dump counts whatever the exit code.
+        let since = Date.now.addingTimeInterval(-(played / .seconds(1))), executables = [game.executable.lastPathComponent] + result.followed
         let dumpFolders = game.store == nil ? [game.executable.deletingLastPathComponent(),
                                                BottleLocation(bottleID: game.bottleID, paths: paths).prefix.appending(path: "drive_c/users")] : []
+        // Some games crash when started directly and must start through their launcher: the sheet
+        // offers the other programs in the game's folder that aren't helpers.
+        let program = game.store == nil ? game.executable : nil
+        // A mod's hook into D3DMetal: Wine refused to make the code writable, and the crash is the write.
+        let hooksOff = !game.profile.modHooks
         let found = await Task.detached(priority: .utility) {
             let crash = ProblemReport.crash(inLog: log), dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
-            let dump = result.status != 0 && crash == nil && !result.crashed && dialog == nil
-                ? ProblemReport.crashDump(in: dumpFolders, since: since, executable: executable) : nil
-            return (crash: crash, dialog: dialog, dump: dump, tail: ProblemReport.logTail(of: log))
+            let dump = (result.status != 0 || !result.followed.isEmpty) && crash == nil && !result.crashed && dialog == nil
+                ? ProblemReport.crashDump(in: dumpFolders, since: since, executables: executables) : nil
+            let others = program.map { Array(SetupFinder.otherPrograms(near: $0, helpers: false).prefix(3)) } ?? []
+            let wrote = crash.flatMap { ProblemReport.writeAddress(inCrash: $0.summary) } ?? dump?.wrote
+            let hookCrash = hooksOff && wrote.map { ProblemReport.refusedHook(inLog: log, wrote: $0) } == true
+            return (crash: crash, dialog: dialog, dump: dump, tail: ProblemReport.logTail(of: log), others: others, hookCrash: hookCrash)
         }.value
-        if found.crash != nil || result.crashed {
+        // The hook crash has a fix: turn it on and ask for a restart, not a report. A crash with it
+        // on gets the report.
+        if found.hookCrash, var fixed = games.first(where: { $0.id == game.id }) {
+            fixed.profile.modHooks = true
+            update(fixed)
+            fixedGame = fixed
+        } else if found.crash != nil || result.crashed {
             offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: found.crash?.summary ?? "Wine \(result.outcome).",
                                 details: reportDetails(for: game, backend: backend), backtrace: found.crash?.backtrace, log: found.tail),
-                  logFile: log, backend: backend)
+                  logFile: log, backend: backend, game: game, otherPrograms: found.others)
         } else if let dump = found.dump {
             // Only the dump's name: it holds the program's memory, and the issue is public.
             offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: dump.summary,
                                 details: reportDetails(for: game, backend: backend) + ["Exit code: \(result.status)", "Crash dump: \(dump.file)"],
                                 log: found.tail),
-                  logFile: log, backend: backend)
+                  logFile: log, backend: backend, game: game, otherPrograms: found.others)
         } else if let dialog = found.dialog {
             // A dialog alone can be a warning the player clicked away before playing on; a nonzero
             // exit alone has no text to report. Together: an error, then the program quit.
             offer(ProblemReport(kind: .crash, title: "\(game.name) quit with an error", summary: dialog,
                                 details: reportDetails(for: game, backend: backend) + ["Exit code: \(result.status)"], log: found.tail),
-                  logFile: log, backend: backend)
+                  logFile: log, backend: backend, game: game, otherPrograms: found.others)
         } else if ranOwnSettings, played >= Self.playedBeforeAskingToShare {
             offerToShare(game, played: played)
         }
@@ -1511,6 +1570,7 @@ final class AppModel {
         lines.append("Graphics: \(backend?.displayName ?? "not chosen") (setting: \(profile.backendOverride?.displayName ?? "Automatic"))")
         lines.append("Settings: MetalFX \(profile.metalFX ? "on" : "off"), Retina mode \(profile.retinaMode ? "on" : "off"), "
                      + "AVX \(profile.advertiseAVX ? "on" : "off"), Steam overlay \(profile.steamOverlay ? "on" : "off")"
+                     + (profile.modHooks ? ", mod hooks on" : "")
                      + (profile.arguments.isEmpty ? "" : ", arguments: \(profile.arguments.joined(separator: " "))")
                      + (profile.environment.isEmpty ? "" : ", environment: "
                         + profile.environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")))
