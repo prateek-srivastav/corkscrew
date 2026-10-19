@@ -57,7 +57,10 @@ public enum SandboxProfile {
         case unsupportedPath(String)
     }
 
-    public static func render(_ rules: SandboxRules, policy: IsolationPolicy) throws -> String {
+    /// `privateLoopback` renders the profile for the bottle's own wineserver in an offline bottle
+    /// (`LaunchPlan.serverArguments`): loopback is allowed there, and the patched server connects
+    /// only to the bottle's own listeners.
+    public static func render(_ rules: SandboxRules, policy: IsolationPolicy, privateLoopback: Bool = false) throws -> String {
         guard !rules.hiddenRoots.isEmpty else { throw RenderError.missingRules("hiddenRoots") }
         guard !rules.executableRoots.isEmpty else { throw RenderError.missingRules("executableRoots") }
 
@@ -111,6 +114,11 @@ public enum SandboxProfile {
             lines += [";; No internet, and no loopback connections to services on this Mac.",
                       "(deny network* (remote ip))",
                       "(deny network* (local ip))"]
+            if privateLoopback {
+                lines += [";; wineserver only: loopback, where it lets the bottle reach only its own listeners.",
+                          "(allow network-bind network-inbound (local ip \"localhost:*\"))",
+                          "(allow network-outbound (remote ip \"localhost:*\"))"]
+            }
         }
         lines += [
             "",

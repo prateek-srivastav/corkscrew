@@ -255,6 +255,31 @@ struct LaunchPlannerTests {
         }
     }
 
+    /// An offline bottle's wineserver starts first, with loopback, once the runtime has the patch that
+    /// keeps loopback inside the bottle. The program's own sandbox stays without it.
+    @Test func offlineBottlesStartTheirServerWithPrivateLoopback() throws {
+        try withTempDir { root in
+            let f = try fixture(root)
+            let game = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(), detectedAPIs: [.d3d11])
+            try f.engine.wineserver.write("an older wineserver")
+            #expect(try LaunchPlanner.plan(game, in: f.context(.isolated, host: host)).serverArguments == nil)
+
+            try f.engine.wineserver.write("…getenv(CORKSCREW_PRIVATE_LOOPBACK)…")
+            let plan = try LaunchPlanner.plan(game, in: f.context(.isolated, host: host))
+            let arguments = try #require(plan.serverArguments)
+            #expect(arguments.count == 3 && arguments.first == "-p" && arguments.last == f.engine.wineserver.path)
+            #expect(arguments[1].contains(#"(allow network-outbound (remote ip "localhost:*"))"#))
+            #expect(plan.sandboxProfile?.contains("localhost") == false)
+            #expect(plan.environment["CORKSCREW_PRIVATE_LOOPBACK"] == "1")
+
+            let setup = try LaunchPlanner.plan(wineArguments: ["wineboot", "--init"], in: f.context(.isolated, host: host))
+            #expect(setup.serverArguments != nil, "any command may be the one that starts the bottle's server")
+            let online = f.context(.isolated, isolation: IsolationPolicy(allowNetwork: true), host: host)
+            #expect(try LaunchPlanner.plan(game, in: online).serverArguments == nil)
+            #expect(try LaunchPlanner.plan(game, in: f.context(.standard, host: host)).serverArguments == nil)
+        }
+    }
+
     @Test func isolatedBottleRefusesExecutablesOutsideIt() throws {
         try withTempDir { root in
             let f = try fixture(root)

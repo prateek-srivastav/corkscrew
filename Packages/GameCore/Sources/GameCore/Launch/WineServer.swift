@@ -17,6 +17,16 @@ public enum WineServer {
         return base.appending(path: "server-\(dev)-\(ino)", directoryHint: .isDirectory)
     }
 
+    /// Makes our patched wineserver connect only to its own loopback listeners (scripts/build-runtime.sh).
+    static let privateLoopbackKey = "CORKSCREW_PRIVATE_LOOPBACK"
+
+    /// Whether this wineserver has the private-loopback patch; older runtimes don't, and must not get
+    /// loopback. The binary holds the variable's name, which it reads with `getenv`.
+    static func hasPrivateLoopback(_ wineserver: URL) -> Bool {
+        guard let binary = try? Data(contentsOf: wineserver, options: .alwaysMapped) else { return false }
+        return binary.range(of: Data(privateLoopbackKey.utf8)) != nil
+    }
+
     /// Whether the prefix's wineserver is up. It removes its socket as it starts shutting down, before
     /// saving the registry, so use `ProcessRunner.waitForSession` before trusting files in the prefix.
     /// A server that died leaves its socket behind until `removeStaleDirectories` runs.

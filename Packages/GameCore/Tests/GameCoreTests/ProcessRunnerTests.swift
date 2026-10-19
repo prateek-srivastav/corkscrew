@@ -63,6 +63,38 @@ struct ProcessRunnerTests {
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("pipes\n"))
     }
 
+    /// An offline bottle's wineserver starts before the program, in a sandbox of its own.
+    @Test func startsTheServerFirst() async throws {
+        try await withTempDir { dir in
+            var plan = shell("echo program", in: dir)
+            plan.serverArguments = ["-p", "(version 1)\n(allow default)", "/bin/sh", "-c", "echo server"]
+            let result = try await ProcessRunner.run(plan, log: dir.appending(path: "launch.log"), wineserver: URL(fileURLWithPath: "/usr/bin/true"))
+            let log = try String(contentsOf: result.log, encoding: .utf8)
+            #expect(log.contains("# wineserver: started first"))
+            #expect(log.hasSuffix("server\nprogram\n"))
+        }
+    }
+
+    /// A server no program joins never exits, so a launch that fails stops the server it started.
+    /// Only that one: exit 2 means another launch's server already runs.
+    @Test func stopsItsServerWhenTheProgramCantStart() async throws {
+        try await withTempDir { dir in
+            let stopped = dir.appending(path: "stopped")
+            let wineserver = dir.appending(path: "wineserver")
+            try wineserver.write("#!/bin/sh\ntouch '\(stopped.path)'\n")
+            chmod(wineserver.path, 0o755)
+            for (status, stops) in [(2, false), (0, true)] {
+                var plan = shell("", in: dir)
+                plan.executable = dir.appending(path: "missing")
+                plan.serverArguments = ["-p", "(version 1)\n(allow default)", "/bin/sh", "-c", "exit \(status)"]
+                await #expect(throws: (any Error).self) {
+                    try await ProcessRunner.run(plan, log: dir.appending(path: "launch.log"), wineserver: wineserver)
+                }
+                #expect(FileManager.default.fileExists(atPath: stopped.path) == stops)
+            }
+        }
+    }
+
     /// The background program outlives the launch by many seconds: on a busy CI Mac starting the
     /// shell alone took 1.7 s, and returning from the launch took 4.2 s while other tests held the
     /// threads.
