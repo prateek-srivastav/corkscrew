@@ -79,7 +79,7 @@ struct LaunchPlannerTests {
             #expect(plan.sandboxProfile == nil)
             #expect(plan.environment["WINEPREFIX"] == f.location.prefix.path)
             #expect(plan.environment["WINEMSYNC"] == "1")
-            #expect(plan.environment["WINEDEBUG"] == "-all")
+            #expect(plan.environment["WINEDEBUG"] == "-all,+msgbox")
             #expect(plan.environment["ROSETTA_ADVERTISE_AVX"] == "1")
             // The backend is chosen by DLL search path, with Wine's own Direct3D as the fallback.
             #expect(plan.environment["WINEDLLPATH"] == "\(f.paths.components.appending(path: "dxmt-0.80").path):\(f.engine.wined3dDLLs.path)")

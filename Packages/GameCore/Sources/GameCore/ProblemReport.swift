@@ -5,7 +5,9 @@ import Foundation
 /// the log. Paths in the home folder show as `~/…`, and the user name as `<user>`.
 public struct ProblemReport: Sendable, Equatable, Codable {
     public enum Kind: String, Sendable, Codable {
-        /// A Windows program crashed (Wine's backtrace is in its log), or Wine itself did.
+        /// A Windows program crashed (Wine's backtrace is in its log, or its own handler wrote a crash
+        /// dump), or Wine itself did, or the program showed an error and quit. (The relay accepts only
+        /// these four kinds.)
         case crash
         /// A program didn't start.
         case launchFailed
@@ -17,7 +19,8 @@ public struct ProblemReport: Sendable, Equatable, Codable {
 
     public var kind: Kind
     public var title: String
-    /// One line: Wine's "Unhandled …" line, or the error message.
+    /// One line: Wine's "Unhandled …" line, the exception in a crash dump, the program's error
+    /// dialog, or the error message.
     public var summary: String
     /// "Name: value" lines: Corkscrew and the Mac, then the program and its settings.
     public var details: [String]
@@ -151,6 +154,133 @@ public struct ProblemReport: Sendable, Equatable, Codable {
             end = first
         }
         return nil
+    }
+
+    // MARK: Error dialogs
+
+    /// What Wine's `msgbox` debug channel (WINEDEBUG `+msgbox`) prints for each message box, the
+    /// dialog Windows programs show their errors in: `00d0:trace:msgbox:MSGBOX_OnInit L"text"`.
+    static let dialogMarker = #"trace:msgbox:MSGBOX_OnInit L""#
+
+    /// The text of the last message box in a launch log, on one line. Nil when the program showed
+    /// none, or when the last one asked a question ("Exit Setup?"): quitting was then the answer.
+    public static func errorDialog(inLog url: URL, maxBytes: Int = 4 << 20) -> String? {
+        tail(of: url, maxBytes: maxBytes).flatMap(errorDialog(in:))
+    }
+
+    static func errorDialog(in text: String) -> String? {
+        guard let line = text.split(whereSeparator: \.isNewline).last(where: { $0.contains(dialogMarker) }),
+              let start = line.range(of: dialogMarker)?.upperBound else { return nil }
+        let message = unquoted(line[start...]).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !message.isEmpty, !message.hasSuffix("?"), !message.hasSuffix("？") else { return nil }
+        return message
+    }
+
+    /// Wine's quoted text (`debugstr_w`) up to its closing quote: `\n`, `\r`, `\t`, `\"`, `\\`, and
+    /// `\XXXX` (a UTF-16 unit in hex) for any other character outside ASCII. Wine cuts long texts,
+    /// marked by `...` after the quote.
+    static func unquoted(_ text: Substring) -> String {
+        var units: [UInt16] = []
+        var rest = text
+        while let c = rest.popFirst() {
+            if c == "\"" {
+                if rest.hasPrefix("...") { units += "…".utf16 }
+                break
+            }
+            guard c == "\\", let e = rest.popFirst() else {
+                units += String(c).utf16
+                continue
+            }
+            switch e {
+            case "n", "r", "t": units += " ".utf16
+            case "\"", "\\": units += String(e).utf16
+            default:
+                let hex = String(e) + rest.prefix(3)
+                if hex.count == 4, hex.allSatisfy(\.isHexDigit), let unit = UInt16(hex, radix: 16) {
+                    units.append(unit)
+                    rest = rest.dropFirst(3)
+                } else {
+                    units += "\\\(e)".utf16
+                }
+            }
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
+    // MARK: Crash dumps
+
+    /// The newest crash dump (`*.dmp`, `*.mdmp`) changed since `since` in `folders` and their
+    /// subfolders (not through links) that the program `executable` (a file name) wrote of itself
+    /// with its own crash handler, which Wine's log doesn't show. Helpers (Steam, launchers, crash
+    /// reporters) write dumps too: their first module is another program. `file` is the dump's name,
+    /// with the Mac's name (some handlers put the computer name in it) as `<host>`.
+    public static func crashDump(in folders: [URL], since: Date, executable: String, host: String? = nil)
+        -> (summary: String, file: String)? {
+        var dumps: [(url: URL, date: Date)] = []
+        for folder in folders {
+            guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            for case let url as URL in files where ["dmp", "mdmp"].contains(url.pathExtension.lowercased()) {
+                if let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, date >= since {
+                    dumps.append((url, date))
+                }
+            }
+        }
+        let host = host ?? hostName
+        for dump in dumps.sorted(by: { $0.date > $1.date }) {
+            guard let data = try? Data(contentsOf: dump.url, options: .alwaysMapped),
+                  let summary = crashDump(data, executable: executable) else { continue }
+            let file = dump.url.lastPathComponent
+            return (summary, host.count < 3 ? file : file.replacingOccurrences(of: host, with: "<host>", options: .caseInsensitive))
+        }
+        return nil
+    }
+
+    /// The exception in a minidump and where it happened, "Access violation (c0000005) at
+    /// Game.exe+0x27c2fc9". Nil unless the dump holds an exception and its first module, the
+    /// program, is `executable`.
+    static func crashDump(_ dump: Data, executable: String) -> String? {
+        func read(_ offset: Int, _ size: Int) -> UInt64? {
+            guard offset >= 0, offset <= dump.count - size else { return nil }
+            return dump.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+                (0..<size).reduce(UInt64(0)) { value, i in value | UInt64(bytes[offset + i]) << (8 * i) }
+            }
+        }
+        func u32(_ offset: Int) -> Int? { read(offset, 4).map { Int($0) } }
+        // The header: "MDMP", version, stream count, directory; entries are (type, size, offset).
+        guard dump.starts(with: "MDMP".utf8), let count = u32(8), let directory = u32(12) else { return nil }
+        var streams: [Int: Int] = [:]
+        for entry in stride(from: directory, to: directory + 12 * min(count, 256), by: 12) {
+            guard let type = u32(entry), let offset = u32(entry + 8) else { return nil }
+            streams[type] = streams[type] ?? offset
+        }
+        // Exception stream (6): thread id, alignment, then code, flags, record, address.
+        // Module list (4): count, then 108-byte entries: base, size, …, name at +20 (byte length, UTF-16LE).
+        guard let exception = streams[6], let code = u32(exception + 8), let address = read(exception + 24, 8),
+              let list = streams[4], let modules = u32(list).map({ min($0, 4096) }) else { return nil }
+        func module(_ index: Int) -> (base: UInt64, size: UInt64, name: String)? {
+            let entry = list + 4 + 108 * index
+            guard let base = read(entry, 8), let size = read(entry + 8, 4), let name = u32(entry + 20), let length = u32(name),
+                  name + 4 + length <= dump.count,
+                  let path = String(data: dump.dropFirst(name + 4).prefix(length), encoding: .utf16LittleEndian) else { return nil }
+            return (base, size, path.split(whereSeparator: { $0 == "\\" || $0 == "/" }).last.map(String.init) ?? path)
+        }
+        guard modules > 0, module(0)?.name.lowercased() == executable.lowercased() else { return nil }
+        let place = (0..<modules).lazy.compactMap(module).first { address >= $0.base && address - $0.base < $0.size }
+            .map { "\($0.name)+0x\(String(address - $0.base, radix: 16))" } ?? "0x\(String(address, radix: 16))"
+        return "\(exceptionNames[code] ?? "Exception") (\(String(format: "%08x", UInt32(code)))) at \(place)"
+    }
+
+    /// Windows exception codes crash handlers catch most.
+    static let exceptionNames = [0xc000_0005: "Access violation", 0xc000_001d: "Illegal instruction",
+                                 0xc000_0094: "Integer division by zero", 0xc000_00fd: "Stack overflow",
+                                 0xc000_0374: "Heap corruption", 0xc000_0409: "Stack buffer overrun",
+                                 0x8000_0003: "Breakpoint", 0xe06d_7363: "C++ exception"]
+
+    /// The Mac's name up to its first dot, as Wine's computer name starts.
+    static var hostName: String {
+        var name = [CChar](repeating: 0, count: 256)
+        gethostname(&name, name.count)
+        return name.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }.split(separator: ".").first.map(String.init) ?? ""
     }
 
     // MARK: Corkscrew's own crashes
