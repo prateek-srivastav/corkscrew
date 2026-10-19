@@ -31,6 +31,7 @@ public enum ProcessRunner {
         // was lost. A pipe has no path to check.
         let pipe = Pipe()
         let pump = LogPump(from: pipe.fileHandleForReading, to: output)
+        let startedServer = plan.serverArguments.map { startServer($0, plan: plan, output: pipe) } ?? false
 
         let process = Process()
         process.executableURL = plan.executable
@@ -53,6 +54,8 @@ public enum ProcessRunner {
                     }
                 } catch {
                     process.terminationHandler = nil
+                    // A server no program ever joined never exits by itself.
+                    if startedServer { stopSession(environment: plan.environment, wineserver: wineserver) }
                     continuation.resume(throwing: error)
                 }
                 // Only the programs may hold the writing end, so the pump sees the end of the
@@ -101,6 +104,38 @@ public enum ProcessRunner {
         return true
     }
 
+    /// Starts the bottle's wineserver with `LaunchPlan.serverArguments` and returns whether this call
+    /// started it. Exit 2 means a server already runs (it holds the lock), and the program joins it.
+    /// After any other failure the program starts its own, in its own sandbox: no loopback.
+    private static func startServer(_ arguments: [String], plan: LaunchPlan, output: Pipe) -> Bool {
+        func note(_ text: String) {
+            try? output.fileHandleForWriting.write(contentsOf: Data("# \(text); the program starts its own, without loopback\n".utf8))
+        }
+        let server = Process()
+        server.executableURL = LaunchPlanner.sandboxExec
+        server.arguments = arguments
+        server.environment = plan.environment
+        server.currentDirectoryURL = plan.workingDirectory
+        server.standardInput = FileHandle.nullDevice
+        // The handle, not the Pipe: Process closes a Pipe's writing end once it starts, and the
+        // program still needs it.
+        server.standardOutput = output.fileHandleForWriting
+        server.standardError = output.fileHandleForWriting
+        do {
+            try server.run()
+        } catch {
+            note("wineserver didn't start (\(error))")
+            return false
+        }
+        // Returns once the server listens; the server itself runs on in the background.
+        server.waitUntilExit()
+        switch server.terminationStatus {
+        case 0: return true
+        case 2: return false
+        case let status: note("wineserver didn't start (exit \(status))"); return false
+        }
+    }
+
     private static func header(for plan: LaunchPlan) -> Data {
         var lines = [
             "# \(ISO8601DateFormatter().string(from: .now))",
@@ -112,6 +147,9 @@ public enum ProcessRunner {
         lines += shown.compactMap { key in plan.environment[key].map { "# \(key)=\($0)" } }
         if let profile = plan.sandboxProfile {
             lines += ["# sandbox profile:"] + profile.split(separator: "\n").map { "#   \($0)" }
+        }
+        if plan.serverArguments != nil {
+            lines.append("# wineserver: started first, with loopback to the bottle's own listeners only")
         }
         return Data((lines.joined(separator: "\n") + "\n").utf8)
     }

@@ -57,6 +57,9 @@ public struct LaunchPlan: Sendable, Equatable {
     /// The launch runs DXMT or D3DMetal through the depth-equal shim, which must be put next to the
     /// game first.
     public var depthEqualFix = false
+    /// `sandbox-exec` arguments that start the bottle's wineserver before the program, in a sandbox
+    /// of its own (offline isolated bottles, see `LaunchPlanner.wrap`).
+    public var serverArguments: [String]? = nil
 }
 
 public enum LaunchError: Error, Equatable {
@@ -248,10 +251,20 @@ public enum LaunchPlanner {
         let rules = try sandboxRules(for: context, extraWritable: extraWritable)
         let profile = try SandboxProfile.render(rules, policy: context.bottle.isolation)
         // Inline (-p) rather than a file, so nothing on disk can be edited to weaken the next launch.
-        return LaunchPlan(
+        var plan = LaunchPlan(
             executable: sandboxExec, arguments: ["-p", profile, context.engine.wine.path] + arguments,
             environment: environment, workingDirectory: workingDirectory, backend: backend, sandboxProfile: profile
         )
+        // Many programs talk to themselves over loopback (FIFA 23's EA app emulator on 127.0.0.1:3216),
+        // but Seatbelt can't tell the bottle's own listeners from services on this Mac. Wine binds,
+        // connects and accepts in wineserver, so an offline bottle's server gets loopback and, patched,
+        // connects only to the bottle's own listeners; the programs still have no loopback at all.
+        if !context.bottle.isolation.allowNetwork, WineServer.hasPrivateLoopback(context.engine.wineserver) {
+            let serverProfile = try SandboxProfile.render(rules, policy: context.bottle.isolation, privateLoopback: true)
+            plan.environment[WineServer.privateLoopbackKey] = "1"
+            plan.serverArguments = ["-p", serverProfile, context.engine.wineserver.path]
+        }
+        return plan
     }
 
     /// The backend's DLL folders, then Wine's own Direct3D DLLs as the fallback.

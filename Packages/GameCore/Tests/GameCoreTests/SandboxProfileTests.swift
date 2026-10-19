@@ -43,6 +43,19 @@ struct SandboxProfileTests {
         #expect(!profile.contains("com.apple.pasteboard.1"))
     }
 
+    /// Only an offline bottle's wineserver gets loopback, after the deny so that it wins.
+    @Test func privateLoopbackIsForTheOfflineServerOnly() throws {
+        let bottle = rules(URL(fileURLWithPath: "/private/tmp/cg"))
+        let server = try SandboxProfile.render(bottle, policy: IsolationPolicy(), privateLoopback: true)
+        let deny = try #require(server.range(of: "(deny network* (local ip))"))
+        let allow = try #require(server.range(of: #"(allow network-outbound (remote ip "localhost:*"))"#))
+        #expect(deny.lowerBound < allow.lowerBound)
+        #expect(server.contains(#"(allow network-bind network-inbound (local ip "localhost:*"))"#))
+        #expect(try !SandboxProfile.render(bottle, policy: IsolationPolicy()).contains("localhost"))
+        let online = try SandboxProfile.render(bottle, policy: IsolationPolicy(allowNetwork: true), privateLoopback: true)
+        #expect(!online.contains("localhost"))
+    }
+
     @Test func escapesQuotesAndBackslashes() throws {
         var unusual = rules(URL(fileURLWithPath: "/private/tmp/cg"))
         unusual.readOnly = [URL(fileURLWithPath: "/private/tmp/a \"quoted\" \\dir")]

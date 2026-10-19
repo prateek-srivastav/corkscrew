@@ -116,6 +116,7 @@ Corkscrew.app (SwiftUI) · gamecore-cli
   - nothing outside the bottle is writable, and your home folder and other disks can't be read;
   - programs start only from the runtime, never through LaunchServices or launchd;
   - AppleEvents, the keychain, the clipboard and (by default) the network are blocked;
+  - with the network blocked, programs can still use loopback, but only to listeners in their own bottle;
   - drive links out of the bottle are removed, and "Reset to Clean" restores a snapshot;
   - the Mac's root certificates are copied into the bottle, so HTTPS works without keychain access.
 

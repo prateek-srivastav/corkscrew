@@ -11,6 +11,8 @@
 #  - Full-screen windows stay at the normal window level, so Mission Control can move them to
 #    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
 #    while the program is active instead.
+#  - With CORKSCREW_PRIVATE_LOOPBACK set, wineserver connects only to loopback servers of its own
+#    bottle, so offline bottles can use loopback without reaching services on the Mac.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -380,6 +382,181 @@ patch("cocoa_app.m", '''        [nc addObserver:self
 
         [nc addObserver:self
                selector:@selector(keyboardSelectionDidChange)''')
+PATCH
+
+log "Patching wineserver: private loopback for offline bottles"
+# Programs often talk to themselves over loopback: an EA app emulator serves 127.0.0.1:3216 inside
+# the game, and network libraries make self-connected pairs on random ports. The sandbox of an
+# offline bottle denies all IP traffic, and Seatbelt can only filter by address and port, not by
+# who listens, so allowing loopback would also open every service on the Mac's localhost.
+# Wine makes bind, listen and connect calls in wineserver; programs only send and receive on the
+# sockets it hands them. So the app starts an offline bottle's wineserver first, in a sandbox that
+# allows loopback, with CORKSCREW_PRIVATE_LOOPBACK set, and the programs in the strict sandbox
+# (their own connect calls stay denied). With the variable set, this server connects only to
+# loopback addresses where a socket of the same server (the bottle) listens, or for datagrams is
+# bound, and binds sockets for all addresses to loopback. Limit: a datagram sent to an address
+# (sendto) goes out from the program itself, so the sandbox still denies it on loopback.
+python3 - "$WINE_SRC/server/sock.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+
+def patch(old, new):
+    global s
+    if new not in s:
+        assert s.count(old) == 1, "sock.c changed upstream; update this patch"
+        s = s.replace(old, new)
+
+patch('''static struct list poll_list = LIST_INIT( poll_list );
+''', '''static struct list poll_list = LIST_INIT( poll_list );
+
+/* Corkscrew: every socket of this server, for private loopback. */
+static struct list all_sockets = LIST_INIT( all_sockets );
+''')
+
+patch('''    struct list         accept_list; /* list of pending accept requests */
+''', '''    struct list         accept_list; /* list of pending accept requests */
+    struct list         all_entry;   /* Corkscrew: entry in all_sockets */
+''')
+
+patch('''static void sock_dump( struct object *obj, int verbose );
+''', '''/* Corkscrew: whether this server keeps loopback inside the bottle (see build-runtime.sh). */
+static int private_loopback(void)
+{
+    static int enabled = -1;
+
+    if (enabled == -1) enabled = getenv( "CORKSCREW_PRIVATE_LOOPBACK" ) != NULL;
+    return enabled;
+}
+
+/* Corkscrew: copies the family, address and port of addr to target (IPv4-mapped IPv6 as IPv4), and
+ * returns whether it is a loopback address. */
+static int loopback_target( const union unix_sockaddr *addr, union unix_sockaddr *target )
+{
+    memset( target, 0, sizeof(*target) );
+    if (addr->addr.sa_family == AF_INET6 && IN6_IS_ADDR_V4MAPPED( &addr->in6.sin6_addr ))
+        ipv4addr_from_v6( target, &addr->in6, 0 );
+    else if (addr->addr.sa_family == AF_INET)
+    {
+        target->in.sin_family = AF_INET;
+        target->in.sin_port = addr->in.sin_port;
+        target->in.sin_addr = addr->in.sin_addr;
+    }
+    else if (addr->addr.sa_family == AF_INET6)
+    {
+        target->in6.sin6_family = AF_INET6;
+        target->in6.sin6_port = addr->in6.sin6_port;
+        target->in6.sin6_addr = addr->in6.sin6_addr;
+    }
+    else return 0;
+
+    if (target->addr.sa_family == AF_INET)
+        return (ntohl( target->in.sin_addr.s_addr ) >> 24) == 127;
+    return IN6_IS_ADDR_LOOPBACK( &target->in6.sin6_addr );
+}
+
+/* Corkscrew: whether another socket of this server listens on target (for datagrams: is bound to
+ * it). The kernel's own bound address counts, so a port the system picked matches too. */
+static int is_bottle_listener( const struct sock *self, const union unix_sockaddr *target )
+{
+    unsigned int error = get_error();
+    struct sock *sock;
+    int found = 0;
+
+    LIST_FOR_EACH_ENTRY( sock, &all_sockets, struct sock, all_entry )
+    {
+        union unix_sockaddr addr, own;
+        socklen_t len = sizeof(addr);
+        int fd;
+
+        if (sock == self || !sock->fd || !sock->bound || sock->type != self->type) continue;
+        if (sock->type == WS_SOCK_STREAM && sock->state != SOCK_LISTENING) continue;
+        if ((fd = get_unix_fd( sock->fd )) == -1) continue;
+        if (getsockname( fd, &addr.addr, &len ) || !loopback_target( &addr, &own )) continue;
+        if (own.addr.sa_family != target->addr.sa_family) continue;
+        if (own.addr.sa_family == AF_INET
+            ? own.in.sin_port == target->in.sin_port && own.in.sin_addr.s_addr == target->in.sin_addr.s_addr
+            : own.in6.sin6_port == target->in6.sin6_port && IN6_ARE_ADDR_EQUAL( &own.in6.sin6_addr, &target->in6.sin6_addr ))
+        {
+            found = 1;
+            break;
+        }
+    }
+    set_error( error );  /* get_unix_fd sets an error for a closed socket */
+    return found;
+}
+
+static void sock_dump( struct object *obj, int verbose );
+''')
+
+patch('''    assert( obj->ops == &sock_ops );
+
+    /* FIXME: special socket shutdown stuff? */
+''', '''    assert( obj->ops == &sock_ops );
+
+    list_remove( &sock->all_entry );
+
+    /* FIXME: special socket shutdown stuff? */
+''')
+
+patch('''    list_init( &sock->accept_list );
+    return sock;
+''', '''    list_init( &sock->accept_list );
+    list_add_tail( &all_sockets, &sock->all_entry );
+    return sock;
+''')
+
+# Connect: in the bottle only. Other addresses fail as the sandbox would fail them (access denied);
+# loopback ports with no listener of the bottle fail as if nothing listened there.
+patch('''        memcpy( &peer_addr, &unix_addr, sizeof(unix_addr) );
+        ret = connect( unix_fd, &unix_addr.addr, unix_len );
+''', '''        if (private_loopback())
+        {
+            union unix_sockaddr target;
+
+            if (!loopback_target( &unix_addr, &target ))
+            {
+                set_error( STATUS_ACCESS_DENIED );
+                return;
+            }
+            if (!is_bottle_listener( sock, &target ))
+            {
+                set_error( STATUS_CONNECTION_REFUSED );
+                return;
+            }
+        }
+
+        memcpy( &peer_addr, &unix_addr, sizeof(unix_addr) );
+        ret = connect( unix_fd, &unix_addr.addr, unix_len );
+''')
+
+# Bind: a socket for all addresses listens on loopback only. The bottle has no network, and only
+# loopback listeners count as the bottle's own above. Programs still see the address they asked for
+# (IPv4; see getsockname below).
+patch('''        set_async_pending( async );
+
+#ifdef IPV6_V6ONLY
+''', '''        if (private_loopback())
+        {
+            if (bind_addr.addr.sa_family == AF_INET && bind_addr.in.sin_addr.s_addr == htonl( INADDR_ANY ))
+                bind_addr.in.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+            else if (bind_addr.addr.sa_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED( &bind_addr.in6.sin6_addr ))
+                bind_addr.in6.sin6_addr = in6addr_loopback;
+            else if (bind_addr.addr.sa_family == AF_INET6 && IN6_IS_ADDR_V4MAPPED( &bind_addr.in6.sin6_addr ))
+            {
+                /* ::ffff:0.0.0.0, IPv4's any address on a dual-stack socket */
+                in_addr_t any = htonl( INADDR_ANY ), loopback = htonl( INADDR_LOOPBACK );
+
+                if (!memcmp( &bind_addr.in6.sin6_addr.s6_addr[12], &any, sizeof(any) ))
+                    memcpy( &bind_addr.in6.sin6_addr.s6_addr[12], &loopback, sizeof(loopback) );
+            }
+        }
+
+        set_async_pending( async );
+
+#ifdef IPV6_V6ONLY
+''')
+
+p.write_text(s)
 PATCH
 
 log "Staging MoltenVK $MOLTENVK_VERSION"
