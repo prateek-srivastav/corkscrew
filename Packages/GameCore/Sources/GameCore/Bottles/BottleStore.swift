@@ -61,6 +61,7 @@ public struct BottleStore: Sendable {
             try await runSetup(["wineboot", "--init"], bottle: bottle, engine: engine, name: "create")
             bottle.runtimeModules = RuntimeModules.fingerprint(runtime: engine.root)
             if bottle.kind == .isolated {
+                try WineMono.link(prefix: location.prefix, runtime: engine.root)
                 try PrefixHardening.apply(prefix: location.prefix)
                 try snapshotClean(bottle)
             }
@@ -97,8 +98,11 @@ public struct BottleStore: Sendable {
     /// Brings the bottle up to date with `engine` before a launch: `wineboot --update` when the
     /// runtime's Windows modules changed since the prefix was last booted. A running bottle is left
     /// alone (updating would wait for its programs to quit); the next launch on an idle bottle catches up.
-    /// Isolated bottles then get the Mac's root certificates they're missing (`HostRootCertificates`).
+    /// Isolated bottles first get their link to the runtime's Wine Mono (`WineMono`), then the Mac's
+    /// root certificates they're missing (`HostRootCertificates`).
     public func prepareForLaunch(_ bottle: Bottle, engine: Engine) async throws -> Preparation {
+        // Before the update: without Wine Mono in reach, wineboot asks to download it.
+        if bottle.kind == .isolated { try WineMono.link(prefix: location(of: bottle).prefix, runtime: engine.root) }
         let preparation = try await updateIfNeeded(bottle, engine: engine)
         if bottle.kind == .isolated {
             try ensureWineServerBase()
@@ -218,8 +222,11 @@ public struct BottleStore: Sendable {
         try ensureWineServerBase()
         let location = location(of: bottle)
         let context = WineContext(engine: engine, bottle: bottle, location: location, paths: paths, hostEnvironment: hostEnvironment)
-        // Skip the Mono/Gecko install prompts; the app installs Mono itself when a game needs .NET.
-        let plan = try LaunchPlanner.plan(wineArguments: arguments, in: context, dllOverrides: ["mscoree": "", "mshtml": ""])
+        // The runtime carries no Wine Gecko, so skip its download box. It carries Wine Mono (`WineMono`),
+        // whose support package wineboot installs; a runtime without it would ask to download Mono instead.
+        var overrides = ["mshtml": ""]
+        if WineMono.folder(in: engine.root) == nil { overrides["mscoree"] = "" }
+        let plan = try LaunchPlanner.plan(wineArguments: arguments, in: context, dllOverrides: overrides)
         let log = paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/\(name).log")
         let result = try await ProcessRunner.run(plan, log: log, wineserver: engine.wineserver)
         // Setup only runs on idle bottles, so whatever still runs after a minute is the setup's own

@@ -5,6 +5,7 @@
 # The result differs from a stock build in these ways:
 #  - Wine's own Direct3D DLLs move to lib/wine-backends/wined3d, so the app picks a backend per
 #    launch with WINEDLLPATH (Wine searches lib/wine before WINEDLLPATH).
+#  - Wine Mono comes along as a shared install (share/wine/mono), so .NET programs run with no download.
 #  - The loader declares the games category, and programs run from an app bundle that carries it,
 #    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
@@ -30,6 +31,9 @@ mkdir -p "$WORK" "$LOGS"
 
 CX=$(crossover_sources)
 WINE_SRC="$CX/wine"
+# Wine only looks for a shared Wine Mono of its own version.
+grep -qF "#define WINE_MONO_VERSION \"$WINE_MONO_VERSION\"" "$WINE_SRC/dlls/mscoree/mscoree_private.h" \
+  || { echo "This Wine wants another Wine Mono than $WINE_MONO_VERSION (dlls/mscoree/mscoree_private.h); update the pins." >&2; exit 1; }
 
 log "Patching the loader's Info.plist (Game Mode, own identity)"
 python3 - "$WINE_SRC/loader/wine_info.plist.in" <<'EOF'
@@ -699,6 +703,13 @@ weak=$(find "$RUNTIME" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x 
     | awk -v f="$1" '"'"'/\(undefined\) weak external .* \(from libSystem\)/ {print f": "$4}'"'"'' _ {} \; \
   | grep -vwF "$(printf '%s\n' "${KNOWN_WEAK[@]}")" || true)
 [[ -z $weak ]] || { echo "Functions that may be missing on macOS $MACOSX_DEPLOYMENT_TARGET:" >&2; echo "$weak" >&2; exit 1; }
+
+log "Adding Wine Mono $WINE_MONO_VERSION"
+# mscoree finds it at WINEDATADIR\mono\wine-mono-<version> (dlls/mscoree/metahost.c), and wineboot
+# installs its support package from there, so no bottle shows Wine's Mono download box.
+mono=$(fetch "$WINE_MONO_URL" "$WINE_MONO_SHA256")
+mkdir -p "$RUNTIME/share/wine/mono"
+tar -xJf "$mono" -C "$RUNTIME/share/wine/mono"
 
 cat >"$RUNTIME/manifest.json" <<EOF
 {

@@ -80,6 +80,18 @@ struct RuntimeStoreTests {
             #expect(RuntimeModules.fingerprint(runtime: root) != before)
         }
     }
+
+    /// Bottles update when the runtime gains Wine Mono, so wineboot installs its support package.
+    @Test func fingerprintChangesWithWineMono() throws {
+        try withTempDir { root in
+            try Self.makeRuntime(at: root)
+            let before = RuntimeModules.fingerprint(runtime: root)
+            try root.appending(path: "share/wine/mono").makeDirectory()
+            #expect(RuntimeModules.fingerprint(runtime: root) == before)
+            try root.appending(path: "share/wine/mono/wine-mono-10.4.1").makeDirectory()
+            #expect(RuntimeModules.fingerprint(runtime: root) != before)
+        }
+    }
 }
 
 struct BottleMaintenanceTests {

@@ -74,4 +74,24 @@ struct BottleStoreTests {
             #expect(updated.runtimeModules == RuntimeModules.fingerprint(runtime: engine.root))
         }
     }
+
+    /// wineboot registers mscoree, which asks to download Wine Mono when it finds none. So setup
+    /// turns mscoree off only for a runtime without Wine Mono.
+    @Test func setupKeepsMscoreeOnlyWithTheRuntimesWineMono() async throws {
+        try await withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)
+            let record = root.appending(path: "overrides.txt")
+            let engine = try engine(in: root, wine: "echo \"$WINEDLLOVERRIDES\" >> '\(record.path)'")
+            let store = BottleStore(paths: paths, hostEnvironment: ["HOME": root.path])
+            let bottle = Bottle(name: "Games", kind: .standard, engineID: engine.id)
+            try store.save(bottle)
+            try store.location(of: bottle).prefix.makeDirectory()
+
+            try await store.update(bottle, engine: engine)
+            try engine.root.appending(path: "share/wine/mono/wine-mono-10.4.1").makeDirectory()
+            try await store.update(bottle, engine: engine)
+            #expect(try String(contentsOf: record, encoding: .utf8)
+                == "mscoree=;mshtml=;winemenubuilder.exe=\nmshtml=;winemenubuilder.exe=\n")
+        }
+    }
 }
