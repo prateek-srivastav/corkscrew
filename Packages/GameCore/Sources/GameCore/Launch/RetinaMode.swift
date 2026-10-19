@@ -44,9 +44,9 @@ public enum RetinaMode {
     }
 
     /// Makes the bottle's setting match `enabled` before a launch. On an idle bottle it writes the
-    /// value if needed and waits for that Wine session to end. A running session has already fixed
-    /// its monitor sizes, so a different value waits briefly for it to wind down (a game that just
-    /// quit), then throws.
+    /// value if needed, with the matching `ModeEmulation`, and waits for that Wine session to end. A
+    /// running session has already fixed its monitor sizes, so a different value waits briefly for
+    /// it to wind down (a game that just quit), then throws.
     public static func apply(_ enabled: Bool, in context: WineContext, log: URL) async throws {
         let prefix = context.location.prefix
         if WineServer.isRunning(prefix: prefix, base: context.paths.wineServerDirectory) {
@@ -63,8 +63,17 @@ public enum RetinaMode {
         guard ProcessRunner.waitForSession(environment: try sessionEnvironment(context),
                                            wineserver: context.engine.wineserver, timeout: .seconds(10))
         else { throw Error.bottleRunning(isEnabled: !enabled) }
-        guard isEnabled(prefix: prefix) != enabled else { return }
-        _ = try await run(command(enabled: enabled), in: context, log: log, allowFailure: false)
+        let retinaChanges = isEnabled(prefix: prefix) != enabled
+        var emulation = ModeEmulation.wanted(retinaMode: enabled, engine: context.engine)
+        if emulation == ModeEmulation.isEnabled(prefix: prefix) { emulation = nil }
+        guard retinaChanges || emulation != nil else { return }
+        if retinaChanges {
+            _ = try await run(command(enabled: enabled), in: context, log: log, allowFailure: false)
+        }
+        if let emulation {
+            _ = try? await run(ModeEmulation.command(enabled: emulation), in: context,
+                               log: log.deletingLastPathComponent().appending(path: "mode-emulation.log"), allowFailure: true)
+        }
         ProcessRunner.waitForSession(environment: try sessionEnvironment(context), wineserver: context.engine.wineserver)
     }
 

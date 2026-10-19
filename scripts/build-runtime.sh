@@ -8,6 +8,8 @@
 #  - The loader declares the games category, and programs run from an app bundle that carries it,
 #    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
+#  - With EmulateModeset on, programs may pick display modes up to the panel's pixel size, so an
+#    exclusive full screen larger than the desktop in points fills the screen instead of cropping.
 #  - Full-screen windows stay at the normal window level, so Mission Control can move them to
 #    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
 #    while the program is active instead.
@@ -257,6 +259,49 @@ new = '''    /* Corkscrew: Rockstar's Social Club draws from Chromium's GPU proc
 ''' + anchor
 if new not in s:
     assert s.count(anchor) == 1, "process.c changed upstream; update this patch"
+    p.write_text(s.replace(anchor, new))
+PATCH
+
+log "Patching win32u: emulated display modes up to the panel's pixel size"
+# Direct3D's exclusive full screen with DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH makes D3DMetal ask
+# ChangeDisplaySettings for the back buffer's size. With Retina mode off, winemac offers the Mac's
+# own modes in points, and 1920x1080 is rarely one of them (MacBooks look like 1470 to 1728 points
+# wide). D3DMetal ignores the refusal and sizes the window to 1920x1080 points anyway, so only its
+# top-left part shows (FIFA 23: zoomed in and cropped). With EmulateModeset (which the app turns on
+# for Retina-off bottles), win32u fakes mode changes and scales windows to the real display, but it
+# offers no mode larger than the desktop. Now it offers modes up to the largest host mode (the
+# panel's pixel size). Verified 2026-10-19 with a D3D11 test program on a 1512x982-point screen:
+# 1920x1080@120 succeeds and the whole frame shows, letterboxed (win32u rounds the scale to an integer
+# DPI, so about 0.5% of the right and bottom edges are cut).
+python3 - "$WINE_SRC/dlls/win32u/sysparams.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+anchor = '''        if (!read_source_mode( source->key, ENUM_CURRENT_SETTINGS, &virtual ) || is_detached_mode( &virtual ))
+            virtual = physical;
+
+        if ((virtual_modes = get_virtual_modes( current, &physical, host_modes, host_modes_count, &virtual_count )))
+'''
+new = '''        DEVMODEW maximum = physical;
+        const DEVMODEW *host;
+        UINT i;
+
+        if (!read_source_mode( source->key, ENUM_CURRENT_SETTINGS, &virtual ) || is_detached_mode( &virtual ))
+            virtual = physical;
+
+        /* Corkscrew: on a Retina display the host modes go up to the panel's pixel size, so
+         * emulated modes may be larger than the desktop in points (1920x1080 on 1512x982). */
+        for (i = 0, host = host_modes; emulate_modeset && host && i < host_modes_count; i++, host = NEXT_DEVMODEW(host))
+        {
+            if (host->dmPelsWidth * host->dmPelsHeight <= maximum.dmPelsWidth * maximum.dmPelsHeight) continue;
+            maximum.dmPelsWidth = host->dmPelsWidth;
+            maximum.dmPelsHeight = host->dmPelsHeight;
+        }
+        TRACE( "Corkscrew: emulated modes up to %ux%u\\n", (UINT)maximum.dmPelsWidth, (UINT)maximum.dmPelsHeight );
+
+        if ((virtual_modes = get_virtual_modes( current, &maximum, host_modes, host_modes_count, &virtual_count )))
+'''
+if new not in s:
+    assert s.count(anchor) == 1, "sysparams.c changed upstream; update this patch"
     p.write_text(s.replace(anchor, new))
 PATCH
 
