@@ -1,6 +1,7 @@
 #!/bin/bash
 # Packs the engine that downloaded copies of the app install on first launch: the runtime built by
-# build-runtime.sh, plus DXMT, DXVK and D3DMetal from install-components.sh, with their licenses.
+# build-runtime.sh (with Wine Mono), plus DXMT, DXVK and D3DMetal from install-components.sh, with
+# their licenses.
 # D3DMetal comes from Apple's Game Porting Toolkit $GPTK_VERSION (pinned image), whose license allows
 # non-commercial redistribution of its redist/ components with Apple's notices.
 #
@@ -34,6 +35,8 @@ done
 # The runtime has to match today's patches (build-runtime.sh); a stale one would ship old behavior.
 grep -qa CORKSCREW_NO_LOADER_LINK "$RUNTIME/lib/wine/x86_64-unix/ntdll.so" \
   || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
+[[ -f $RUNTIME/share/wine/mono/wine-mono-$WINE_MONO_VERSION/bin/libmono-2.0-x86_64.dll ]] \
+  || { echo "$RUNTIME lacks Wine Mono $WINE_MONO_VERSION: rebuild it" >&2; exit 1; }
 # DXMT needs its winemetal inside the runtime (install-components.sh puts it there; a runtime rebuild
 # removes it). Without it new bottles get no placeholder for it, and DXMT games exit at once.
 for f in x86_64-windows/winemetal.dll i386-windows/winemetal.dll x86_64-unix/winemetal.so; do
@@ -59,6 +62,7 @@ log "Collecting licenses"
 dxmt_src=$(fetch "$DXMT_SOURCE_URL" "$DXMT_SOURCE_SHA256")
 dxvk_src=$(fetch "$DXVK_SOURCE_URL" "$DXVK_SOURCE_SHA256")
 moltenvk=$(fetch "$MOLTENVK_URL" "$MOLTENVK_SHA256")
+wine_mono_src=$(fetch "$WINE_MONO_SOURCE_URL" "$WINE_MONO_SOURCE_SHA256")
 license() { mkdir -p "$STAGE/LICENSES/$1" && cp "${@:2}" "$STAGE/LICENSES/$1/"; }
 license wine "$CX/wine/COPYING.LIB" "$CX/wine/LICENSE" "$CX/wine/AUTHORS"
 license gnutls "$SRC/gnutls-3.8.13/COPYING.LESSERv2" "$SRC/gnutls-3.8.13/COPYING"
@@ -71,6 +75,8 @@ top() { tar -tzf "$1" | head -1 | cut -d/ -f1; }
 tar -xzf "$dxmt_src" -C "$STAGE/LICENSES/dxmt" --strip-components 1 "$(top "$dxmt_src")/LICENSE"
 tar -xzf "$dxvk_src" -C "$STAGE/LICENSES/dxvk" --strip-components 1 "$(top "$dxvk_src")/LICENSE"
 tar -xf "$moltenvk" -C "$STAGE/LICENSES/moltenvk" --strip-components 1 MoltenVK/LICENSE
+mkdir -p "$STAGE/LICENSES/wine-mono"
+tar -xJf "$wine_mono_src" -C "$STAGE/LICENSES/wine-mono" --strip-components 1 "wine-mono-$WINE_MONO_VERSION/COPYING"
 mkdir -p "$STAGE/LICENSES/apple-game-porting-toolkit"
 cp "$D3DMETAL/Apple-License.rtf" "$STAGE/LICENSES/apple-game-porting-toolkit/License.rtf"
 cp "$D3DMETAL/Apple-Acknowledgements.rtf" "$STAGE/LICENSES/apple-game-porting-toolkit/Acknowledgements.rtf"
@@ -85,6 +91,7 @@ cp "$DOWNLOADS/$(basename "$FREETYPE_URL")" "$OUT/freetype-source.tar.xz"
 cp "$DOWNLOADS/$(basename "$SDL2_URL")" "$OUT/sdl2-source.tar.gz"
 cp "$dxmt_src" "$OUT/dxmt-$DXMT_VERSION-source.tar.gz"
 cp "$dxvk_src" "$OUT/dxvk-macos-$DXVK_VERSION-source.tar.gz"
+cp "$wine_mono_src" "$OUT/wine-mono-$WINE_MONO_VERSION-source.tar.xz"
 git -C "$REPO" archive --format=tar.gz --prefix="corkscrew-build-scripts/" -o "$OUT/corkscrew-build-scripts-source.tar.gz" HEAD scripts tools
 
 cat >"$STAGE/SOURCES.md" <<EOF
@@ -99,6 +106,7 @@ https://github.com/Prateek-Srivastav/corkscrew/tree/$COMMIT/scripts
 | Component | Version | License | Source |
 |---|---|---|---|
 | Wine (CodeWeavers' winecx), with Corkscrew's patches in scripts/build-runtime.sh | $CROSSOVER_VERSION | LGPL 2.1 or later | wine-crossover-$CROSSOVER_VERSION-source.tar.gz |
+| Wine Mono (runtime/winecx-$CROSSOVER_VERSION/share/wine/mono) | $WINE_MONO_VERSION | MIT, LGPL and others (LICENSES/wine-mono/COPYING) | wine-mono-$WINE_MONO_VERSION-source.tar.xz |
 | GnuTLS | 3.8.13 | LGPL 2.1 or later | gnutls-source.tar.xz |
 | Nettle | 3.10 | LGPL 3 or GPL 2 | nettle-source.tar.gz |
 | GMP (in the Wine source tarball) | | LGPL 3 or GPL 2 | wine-crossover-$CROSSOVER_VERSION-source.tar.gz |

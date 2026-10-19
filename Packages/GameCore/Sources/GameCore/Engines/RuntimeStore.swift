@@ -211,9 +211,11 @@ public struct RuntimeStore: Sendable {
 /// Wine only loads a builtin module that has a placeholder in the bottle's `system32`, and
 /// `wineboot -u` creates them. Bottles remember the fingerprint they were last booted with, so a
 /// runtime that gains modules (a rebuild, DXMT's `winemetal`) updates them before the next launch.
+/// The same goes for a new Wine Mono, whose support package `wineboot -u` installs.
 public enum RuntimeModules {
-    /// Hash of the module names in `lib/wine/{x86_64,i386}-windows`. Names, not contents: a changed
-    /// module still has its placeholder, and Wine loads builtins from the runtime anyway.
+    /// Hash of the module names in `lib/wine/{x86_64,i386}-windows` and the Wine Mono folder's name.
+    /// Names, not contents: a changed module still has its placeholder, and Wine loads builtins from
+    /// the runtime anyway.
     public static func fingerprint(runtime root: URL) -> String {
         let fm = FileManager.default
         var names: [String] = []
@@ -222,6 +224,7 @@ public enum RuntimeModules {
             let files = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
             names += files.map { "\(arch)/\($0.lowercased())" }
         }
+        if let mono = WineMono.folder(in: root) { names.append("mono/\(mono.lastPathComponent)") }
         let digest = SHA256.hash(data: Data(names.sorted().joined(separator: "\n").utf8))
         return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
