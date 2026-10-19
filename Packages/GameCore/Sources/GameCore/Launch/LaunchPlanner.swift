@@ -216,7 +216,9 @@ public enum LaunchPlanner {
         env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
         env["WINEPREFIX"] = context.location.prefix.path
         env["WINEMSYNC"] = "1"
-        env["WINEDEBUG"] = verboseLogging ? "err+all,fixme-all,+loaddll" : "-all"
+        // +msgbox prints the text of each message box (a program's error dialog) into the log, for
+        // `ProblemReport.errorDialog(inLog:)`. Nothing else: no cost when no box shows.
+        env["WINEDEBUG"] = verboseLogging ? "err+all,fixme-all,+loaddll,+msgbox" : "-all,+msgbox"
         if context.bottle.kind == .isolated {
             // Keeps Unix-side libraries (fontconfig, MoltenVK, …) out of your real home folder, and
             // temporary files in the bottle: nothing else is writable.

@@ -1413,16 +1413,38 @@ final class AppModel {
     }
 
     /// After a launch ends by itself: a report when the program crashed (Wine's backtrace in the
-    /// log, or Wine ended by a signal). Or, for a Steam game played a while with settings the
-    /// tested list doesn't have, an offer to share them.
+    /// log, Wine ended by a signal, or the program's own handler wrote a crash dump and it quit with
+    /// an exit code other than 0), or when it showed an error dialog and quit with an exit code
+    /// other than 0. Or, for a Steam game played a while with settings the tested list doesn't
+    /// have, an offer to share them.
     private func sessionEnded(_ game: Game, result: RunResult, backend: GraphicsBackend?, log: URL, played: Duration,
                               ranOwnSettings: Bool) async {
+        // Crash dumps: in the game's folder, or the bottle's user folders (AppData, Documents). Not
+        // for Steam games: the launch runs steam.exe, whose own dumps aren't the game's.
+        let since = Date.now.addingTimeInterval(-(played / .seconds(1))), executable = game.executable.lastPathComponent
+        let dumpFolders = game.store == nil ? [game.executable.deletingLastPathComponent(),
+                                               BottleLocation(bottleID: game.bottleID, paths: paths).prefix.appending(path: "drive_c/users")] : []
         let found = await Task.detached(priority: .utility) {
-            (crash: ProblemReport.crash(inLog: log), tail: ProblemReport.logTail(of: log))
+            let crash = ProblemReport.crash(inLog: log), dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
+            let dump = result.status != 0 && crash == nil && !result.crashed && dialog == nil
+                ? ProblemReport.crashDump(in: dumpFolders, since: since, executable: executable) : nil
+            return (crash: crash, dialog: dialog, dump: dump, tail: ProblemReport.logTail(of: log))
         }.value
         if found.crash != nil || result.crashed {
             offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: found.crash?.summary ?? "Wine \(result.outcome).",
                                 details: reportDetails(for: game, backend: backend), backtrace: found.crash?.backtrace, log: found.tail),
+                  logFile: log, backend: backend)
+        } else if let dump = found.dump {
+            // Only the dump's name: it holds the program's memory, and the issue is public.
+            offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: dump.summary,
+                                details: reportDetails(for: game, backend: backend) + ["Exit code: \(result.status)", "Crash dump: \(dump.file)"],
+                                log: found.tail),
+                  logFile: log, backend: backend)
+        } else if let dialog = found.dialog {
+            // A dialog alone can be a warning the player clicked away before playing on; a nonzero
+            // exit alone has no text to report. Together: an error, then the program quit.
+            offer(ProblemReport(kind: .crash, title: "\(game.name) quit with an error", summary: dialog,
+                                details: reportDetails(for: game, backend: backend) + ["Exit code: \(result.status)"], log: found.tail),
                   logFile: log, backend: backend)
         } else if ranOwnSettings, played >= Self.playedBeforeAskingToShare {
             offerToShare(game, played: played)

@@ -72,6 +72,122 @@ struct ProblemReportTests {
         }
     }
 
+    /// The end of a real log (2026-10-19, WINEDEBUG=-all,+msgbox): a game couldn't bind 127.0.0.1 in
+    /// a bottle without network, showed this message box, and quit with exit code 255.
+    static let dialog = """
+        Parsing C:\\Program Files (x86)\\Game\\game.cfg.
+        00d0:trace:msgbox:MSGBOX_OnInit L"bind: Access denied.: Access denied."
+        Exception: bind: Access denied.: Access denied.
+        """
+
+    @Test func findsTheLastErrorDialog() throws {
+        #expect(ProblemReport.errorDialog(in: Self.dialog) == "bind: Access denied.: Access denied.")
+        // With Wine's +pid and +timestamp, and Windows line ends.
+        let later = "1234.567:0020:0024:trace:msgbox:MSGBOX_OnInit L\"Failed to create the Direct3D device.\"\r\n0024:fixme:d3d:x\r\n"
+        #expect(ProblemReport.errorDialog(in: Self.dialog + "\n" + later) == "Failed to create the Direct3D device.")
+        try withTempDir { dir in
+            let log = dir.appending(path: "launch.log")
+            try (String(repeating: "padding line\n", count: 20_000) + Self.dialog).write(to: log, atomically: true, encoding: .utf8)
+            #expect(ProblemReport.errorDialog(inLog: log, maxBytes: 64 << 10) == "bind: Access denied.: Access denied.")
+        }
+    }
+
+    /// Wine's quoting: escapes, characters outside ASCII as UTF-16 hex, and `...` for a cut text.
+    @Test func readsWinesQuotedText() {
+        let line = #"00d0:trace:msgbox:MSGBOX_OnInit L"Can't load\nC:\\Games\\x.dll: \"missing\"\r\n\t\00e9t\00e9 \d83d\de00"..."#
+        #expect(ProblemReport.errorDialog(in: line) == "Can't load C:\\Games\\x.dll: \"missing\" été 😀…")
+    }
+
+    @Test func noDialogOrAQuestionNoReport() {
+        #expect(ProblemReport.errorDialog(in: "Exception: bind: Access denied.\n") == nil)
+        // The player answered a question (a setup's "Exit Setup?"): quitting was their choice.
+        let question = "0024:trace:msgbox:MSGBOX_OnInit L\"Setup is not complete.\\n\\nExit Setup?\""
+        #expect(ProblemReport.errorDialog(in: Self.dialog + "\n" + question) == nil)
+        #expect(ProblemReport.errorDialog(in: question + "\n" + Self.dialog) == "bind: Access denied.: Access denied.")
+    }
+
+    /// A minidump with only what the reader uses: a module list, and an exception unless nil.
+    static func minidump(_ modules: [(path: String, base: UInt64, size: UInt32)],
+                         exception: (code: UInt32, address: UInt64)? = (0xc000_0005, 0x1_427c_2fc9)) -> Data {
+        var bytes: [UInt8] = []
+        func put<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { bytes += $0 } }
+        let streams = exception == nil ? 1 : 2
+        let list = 32 + 12 * streams, names = list + 4 + 108 * modules.count
+        let exceptionStream = names + modules.reduce(0) { $0 + 4 + 2 * $1.path.utf16.count }
+        bytes += "MDMP".utf8
+        put(UInt32(0xa793)); put(UInt32(streams)); put(UInt32(32)); put(UInt32(0)); put(UInt32(0)); put(UInt64(0))
+        put(UInt32(4)); put(UInt32(names - list)); put(UInt32(list))
+        if exception != nil { put(UInt32(6)); put(UInt32(168)); put(UInt32(exceptionStream)) }
+        put(UInt32(modules.count))
+        var name = names
+        for module in modules {
+            put(module.base); put(module.size); put(UInt32(0)); put(UInt32(0)); put(UInt32(name))
+            bytes += [UInt8](repeating: 0, count: 108 - 24)
+            name += 4 + 2 * module.path.utf16.count
+        }
+        for module in modules {
+            put(UInt32(2 * module.path.utf16.count))
+            module.path.utf16.forEach { put($0) }
+        }
+        if let exception {
+            put(UInt32(0x1a0)); put(UInt32(0)); put(exception.code); put(UInt32(0)); put(UInt64(0)); put(exception.address)
+            put(UInt32(2)); put(UInt32(0)); put(UInt64(1)); put(UInt64(0))
+            bytes += [UInt8](repeating: 0, count: 168 - 56)
+        }
+        return Data(bytes)
+    }
+
+    static let gameModules: [(path: String, base: UInt64, size: UInt32)] = [
+        (#"C:\Games\Game\Game.exe"#, 0x1_4000_0000, 0x2000_0000), (#"C:\windows\system32\ntdll.dll"#, 0x6fff_ff00_0000, 0x20_0000)]
+
+    @Test func readsCrashDumps() {
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules), executable: "Game.exe")
+                == "Access violation (c0000005) at Game.exe+0x27c2fc9")
+        // Windows file names: any case.
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules), executable: "game.EXE") != nil)
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xc000_00fd, 0x6fff_ff00_1234)), executable: "Game.exe")
+                == "Stack overflow (c00000fd) at ntdll.dll+0x1234")
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xe043_4352, 0x5000)), executable: "Game.exe")
+                == "Exception (e0434352) at 0x5000")
+    }
+
+    @Test func skipsOtherProgramsDumpsAndDumpsWithoutACrash() {
+        // A helper's dump: its own program comes first.
+        let steam = [(path: #"C:\Program Files (x86)\Steam\steam.exe"#, base: UInt64(0x40_0000), size: UInt32(0x10_0000))] + Self.gameModules
+        #expect(ProblemReport.crashDump(Self.minidump(steam), executable: "Game.exe") == nil)
+        // No exception: a snapshot, not a crash.
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: nil), executable: "Game.exe") == nil)
+        // Not a minidump, or cut short.
+        let dump = Self.minidump(Self.gameModules)
+        #expect(ProblemReport.crashDump(Data("MDMP".utf8), executable: "Game.exe") == nil)
+        #expect(ProblemReport.crashDump(dump.prefix(200), executable: "Game.exe") == nil)
+        #expect(ProblemReport.crashDump(Data(repeating: 0xff, count: 1_000), executable: "Game.exe") == nil)
+    }
+
+    @Test func findsTheNewestCrashDumpSinceTheLaunch() throws {
+        try withTempDir { dir in
+            let launched = Date(timeIntervalSinceNow: -60)
+            func write(_ data: Data, _ path: String, at date: Date) throws {
+                let file = dir.appending(path: path)
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: file)
+                try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
+            }
+            let steam = [(path: #"C:\Steam\steam.exe"#, base: UInt64(0x40_0000), size: UInt32(0x10_0000))]
+            try write(Self.minidump(Self.gameModules), "game/old.dmp", at: launched - 3_600)
+            try write(Self.minidump(Self.gameModules), "users/me/AppData/Local/Game/crash 1.mdmp", at: launched + 10)
+            try write(Self.minidump(Self.gameModules), "game/xcpt MACNAME 26-10-19.MDMP", at: launched + 20)
+            try write(Self.minidump(steam), "users/me/Steam/dumps/crash_steam.exe.dmp", at: launched + 30)
+            try write(Data("not a dump".utf8), "game/notes.dmp", at: launched + 40)
+            let folders = [dir.appending(path: "game"), dir.appending(path: "users")]
+            let found = try #require(ProblemReport.crashDump(in: folders, since: launched, executable: "Game.exe", host: "macname"))
+            #expect(found.summary == "Access violation (c0000005) at Game.exe+0x27c2fc9")
+            #expect(found.file == "xcpt <host> 26-10-19.MDMP")
+            #expect(ProblemReport.crashDump(in: folders, since: launched + 25, executable: "Game.exe") == nil)
+            #expect(ProblemReport.crashDump(in: [dir.appending(path: "missing")], since: launched, executable: "Game.exe") == nil)
+        }
+    }
+
     @Test func hidesTheHomeFolderAndUserName() {
         let text = "/Users/pat/Library/Logs/Corkscrew/x.log C:\\users\\pat\\AppData /Users/pat/Downloads"
         #expect(ProblemReport.redacted(text, home: "/Users/pat", user: "pat")
