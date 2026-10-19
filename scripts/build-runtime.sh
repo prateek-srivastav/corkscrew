@@ -5,13 +5,13 @@
 # The result differs from a stock build in these ways:
 #  - Wine's own Direct3D DLLs move to lib/wine-backends/wined3d, so the app picks a backend per
 #    launch with WINEDLLPATH (Wine searches lib/wine before WINEDLLPATH).
+#  - Wine Mono comes along as a shared install (share/wine/mono), so .NET programs run with no download.
 #  - The loader declares the games category, and programs run from an app bundle that carries it,
 #    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
 #  - Full-screen windows stay at the normal window level, so Mission Control can move them to
 #    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
 #    while the program is active instead.
-#  - Wine Mono comes along as a shared install (share/wine/mono), so .NET programs run with no download.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
