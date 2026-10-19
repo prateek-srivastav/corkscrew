@@ -232,9 +232,17 @@ public struct ProblemReport: Sendable, Equatable, Codable {
         var dumps: [(url: URL, date: Date)] = []
         for folder in folders {
             guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
-            for case let url as URL in files where ["dmp", "mdmp"].contains(url.pathExtension.lowercased()) {
-                if let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, date >= since {
-                    dumps.append((url, date))
+            // A pool per file: the enumerator's objects are autoreleased, and a game's folder with
+            // 100,000 files would keep them all until the search ends.
+            var more = true
+            while more {
+                more = autoreleasepool {
+                    guard let url = files.nextObject() as? URL else { return false }
+                    if ["dmp", "mdmp"].contains(url.pathExtension.lowercased()),
+                       let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, date >= since {
+                        dumps.append((url, date))
+                    }
+                    return true
                 }
             }
         }
