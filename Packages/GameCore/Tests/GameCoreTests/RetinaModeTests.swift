@@ -79,4 +79,34 @@ struct RetinaModeTests {
                 == ["reg", "add", #"HKCU\Software\Wine\Mac Driver"#, "/v", "RetinaMode", "/t", "REG_SZ", "/d", "y", "/f"])
         #expect(RetinaMode.command(enabled: false).suffix(3) == ["/d", "n", "/f"])
     }
+
+    @Test func emulatesModesWithRetinaOffOnOurRuntimeOnly() throws {
+        try withTempDir { root in
+            let engine = Engine(id: "test", root: root, architecture: .x86_64)
+            let win32u = root.appending(path: "lib/wine/x86_64-unix/win32u.so")
+            #expect(ModeEmulation.wanted(retinaMode: true, engine: engine) == false)
+            #expect(ModeEmulation.wanted(retinaMode: false, engine: engine) == nil)  // no runtime
+            try win32u.write("\u{7F}ELF stock win32u")
+            #expect(ModeEmulation.wanted(retinaMode: false, engine: engine) == nil)
+            try win32u.write("...Corkscrew: emulated modes up to %ux%u\n...")
+            #expect(ModeEmulation.wanted(retinaMode: false, engine: engine) == true)
+            #expect(ModeEmulation.wanted(retinaMode: true, engine: engine) == false)
+        }
+    }
+
+    @Test func readsAndStoresModeEmulation() throws {
+        try withTempDir { prefix in
+            #expect(!ModeEmulation.isEnabled(prefix: prefix))
+            try prefix.appending(path: "user.reg").write(Self.userReg + #"""
+
+            [Software\\Wine\\X11 Driver] 1791375610
+            "EmulateModeset"="Y"
+
+            """#)
+            #expect(ModeEmulation.isEnabled(prefix: prefix))
+        }
+        #expect(ModeEmulation.command(enabled: true)
+                == ["reg", "add", #"HKCU\Software\Wine\X11 Driver"#, "/v", "EmulateModeset", "/t", "REG_SZ", "/d", "y", "/f"])
+        #expect(ModeEmulation.command(enabled: false).suffix(3) == ["/d", "n", "/f"])
+    }
 }
