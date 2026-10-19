@@ -347,6 +347,7 @@ private struct GamesPage: View {
         } else {
             busyItem("Play", "Starting…", model.isPending(.launch(game.id))) { model.play(game) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.iconSource ?? game.executable]) }
+            if game.store == nil { Button("Change Program (.exe)…") { model.programChange = game } }
         }
         // Steam's games come from the account's library.
         if model.bottle(for: game)?.role != .steam, model.games.contains(where: { $0.id == game.id }) {
@@ -553,6 +554,10 @@ struct GameHero: View {
         Menu {
             Button("Show Program in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.iconSource ?? game.executable]) }
                 .disabled(state != .installed)
+            if game.store == nil {
+                Button("Change Program (.exe)…") { model.programChange = game }
+                    .disabled(isActive)
+            }
             if uninstall != nil || remove != nil { Divider() }
             if let uninstall {
                 Button("Uninstall…", role: .destructive, action: uninstall)
@@ -638,9 +643,10 @@ struct GameCard: View {
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if isHovering, !model.isRunning(game), busyTitle == nil {
-                        Button { model.play(game) } label: {
-                            Image(systemName: state == .installed ? "play.fill" : "arrow.down")
+                    if isHovering, busyTitle == nil {
+                        let isRunning = model.isRunning(game)
+                        Button { isRunning ? model.stop(game) : model.play(game) } label: {
+                            Image(systemName: isRunning ? "stop.fill" : state == .installed ? "play.fill" : "arrow.down")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(.black)
                                 .frame(width: Theme.controlHeight, height: Theme.controlHeight)
@@ -649,7 +655,7 @@ struct GameCard: View {
                         }
                         .buttonStyle(.plain)
                         .padding(10)
-                        .help(state == .installed ? "Play" : "Open its page in Steam to download it")
+                        .help(isRunning ? "Stop" : state == .installed ? "Play" : "Open its page in Steam to download it")
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                 }

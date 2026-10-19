@@ -22,7 +22,7 @@ struct GameDetailView: View {
                             .font(.title3.weight(.semibold)).textFieldStyle(.plain)
                         Text(game.store?.appID != nil ? "Starts through Steam" : game.executable.lastPathComponent)
                             .font(.subheadline).foregroundStyle(.secondary)
-                            .help((game.iconSource ?? game.executable).path)
+                            .help((game.store == nil ? game.executable : game.iconSource ?? game.executable).path)
                     }
                 }
                 if isActive {
@@ -56,6 +56,8 @@ struct GameDetailView: View {
                 Toggle("Advertise AVX", isOn: binding(\.profile.advertiseAVX))
                 Toggle("Steam overlay (Shift-Tab)", isOn: binding(\.profile.steamOverlay))
                     .help("Steam's overlay sits between the game and the graphics layer and draws every frame. Off is faster. Games started from Steam's window follow the setting Steam was started with.")
+                Toggle("Mod hooks", isOn: binding(\.profile.modHooks))
+                    .help("For mods and overlays that hook the game's graphics, such as editors. Turns on by itself when a mod's hook crashes the game.")
                 Toggle("Wine error output in the log", isOn: binding(\.profile.verboseLogging))
                 TextField("Arguments", text: $arguments, prompt: Text("-dx11 -windowed"))
                     .onSubmit(saveArguments)
@@ -83,6 +85,10 @@ struct GameDetailView: View {
             Section {
                 Button("Show Program in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.iconSource ?? game.executable]) }
                     .disabled(state != .installed)
+                if game.store == nil {
+                    Button("Change Program (.exe)…") { model.programChange = game }
+                        .disabled(isActive)
+                }
                 Button("Remove from Library", role: .destructive) { model.remove(game) }
                     .disabled(isActive)
             }

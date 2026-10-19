@@ -45,11 +45,19 @@ public struct AppPaths: Sendable, Equatable {
         )
     }
 
-    public var runtimes: URL { supportRoot.appending(path: "Runtimes", directoryHint: .isDirectory) }
-    public var components: URL { supportRoot.appending(path: "Components", directoryHint: .isDirectory) }
-    public var bottles: URL { supportRoot.appending(path: "Bottles", directoryHint: .isDirectory) }
+    public var runtimes: URL { unindexed("Runtimes") }
+    public var components: URL { unindexed("Components") }
+    public var bottles: URL { unindexed("Bottles") }
     /// The app bundles isolated bottles' games run from, for Game Mode (see `LoaderBundles`).
-    public var gameModeBundles: URL { supportRoot.appending(path: "GameModeBundles", directoryHint: .isDirectory) }
+    public var gameModeBundles: URL { unindexed("GameModeBundles") }
+
+    /// `<name>.noindex`, which Spotlight skips (`SpotlightExclusion`). Data from before keeps the
+    /// plain name until `SpotlightExclusion.moveFolders` renames it.
+    private func unindexed(_ name: String) -> URL {
+        let old = supportRoot.appending(path: name, directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: old.path) { return old }
+        return supportRoot.appending(path: "\(name).noindex", directoryHint: .isDirectory)
+    }
 
     public func shaderCache(for gameID: UUID) -> URL {
         cachesRoot.appending(path: "ShaderCache/\(gameID.uuidString)", directoryHint: .isDirectory)

@@ -59,6 +59,18 @@ struct SteamGameLaunchTests {
         }
     }
 
+    /// A launcher can start the game and quit; the launch follows the programs from its folder,
+    /// which Wine shows as `c:\…` or, for the first program, the Mac path.
+    @Test func knowsAGamesFolderUnderDriveC() {
+        let prefix = URL(fileURLWithPath: "/tmp/bottle/prefix")
+        let folder = Launcher.gameFolder(of: prefix.appending(path: "drive_c/Program Files (x86)/EA Games/FIFA 23/Launcher.exe"), prefix: prefix)
+        #expect(folder == #"\program files (x86)\ea games\fifa 23\"#)
+        #expect(#"c:\program files (x86)\ea games\fifa 23\fifa23.exe"#.contains(folder!))
+        #expect(!#"c:\program files (x86)\ea games\fifa 23 demo\fifa23.exe"#.contains(folder!))
+        #expect(Launcher.gameFolder(of: prefix.appending(path: "drive_c/setup.exe"), prefix: prefix) == nil, "drive_c itself")
+        #expect(Launcher.gameFolder(of: URL(fileURLWithPath: "/Users/me/Downloads/setup.exe"), prefix: prefix) == nil)
+    }
+
     /// Steam's close button hides its window and keeps Steam in the tray; that counts as closed
     /// once it lasts. Before its first window, and while minimized (`.open`), it doesn't.
     @Test func steamIsClosedOnceItsWindowStaysGone() async throws {

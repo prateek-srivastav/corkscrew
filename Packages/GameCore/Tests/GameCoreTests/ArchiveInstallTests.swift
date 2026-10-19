@@ -264,6 +264,22 @@ struct SetupFinderTests {
         }
     }
 
+    @Test func offersTheOtherProgramsInAGamesFolder() throws {
+        try withTempDir { root in
+            let game = root.appending(path: "FIFA 23")
+            for name in ["FIFA23.exe", "Launcher.exe", "EAAntiCheat.GameServiceLauncher.exe", "FakeEAACLauncher/EAAntiCheat.GameServiceLauncher.exe",
+                         "Uninstall/unins000.exe", "Data/Win32/tool.exe", "Data/readme.txt"] {
+                try game.appending(path: name).write("MZ")
+            }
+            let executable = game.appending(path: "FIFA23.exe")
+            let others = SetupFinder.otherPrograms(near: executable)
+            #expect(others.map { SetupFinder.relativeComponents(of: $0, in: game).joined(separator: "/") }
+                == ["Launcher.exe", "EAAntiCheat.GameServiceLauncher.exe", "FakeEAACLauncher/EAAntiCheat.GameServiceLauncher.exe"])
+            #expect(SetupFinder.otherPrograms(near: executable, helpers: false).map(\.lastPathComponent) == ["Launcher.exe"])
+            #expect(SetupFinder.otherPrograms(near: game.appending(path: "Launcher.exe"), helpers: false).map(\.lastPathComponent) == ["FIFA23.exe"])
+        }
+    }
+
     @Test func setupFoldersLiveOnTheBottlesDrive() {
         let prefix = URL(fileURLWithPath: "/b/prefix")
         let id = UUID(uuidString: "ABCDEF12-0000-0000-0000-000000000000")!

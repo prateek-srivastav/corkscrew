@@ -19,5 +19,11 @@
     "listed": true,
     "profile": {"backendOverride": "dxvk"},
     "notes": "32-bit, DX11 through DXVK."
+  },
+  {
+    "program": "FIFA23.exe",
+    "name": "FIFA 23",
+    "profile": {"modHooks": true},
+    "notes": "Not from Steam. DX12 through D3DMetal. The FIFA Live Editor mod hooks D3D12 inside D3DMetal, which needs mod hooks on."
   }
 ]

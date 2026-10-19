@@ -19,6 +19,10 @@ public struct GameProfile: Codable, Sendable, Equatable {
     /// Steam's in-game overlay (Shift-Tab, screenshots, notifications). Off, Steam's renderer DLL
     /// isn't loaded into the game, so it doesn't wrap the game's swap chain and draw every frame.
     public var steamOverlay: Bool
+    /// Mods and overlays hook a game's graphics by patching D3DMetal's functions, which lie outside
+    /// Wine's memory. On, Wine lets the game make them writable, in its own process only; off, it
+    /// refuses, as it always did.
+    public var modHooks: Bool
     public var arguments: [String]
     /// Extra environment variables; these win over everything the app sets.
     public var environment: [String: String]
@@ -32,6 +36,7 @@ public struct GameProfile: Codable, Sendable, Equatable {
         advertiseAVX: Bool = true,
         verboseLogging: Bool = false,
         steamOverlay: Bool = false,
+        modHooks: Bool = false,
         arguments: [String] = [],
         environment: [String: String] = [:]
     ) {
@@ -43,6 +48,7 @@ public struct GameProfile: Codable, Sendable, Equatable {
         self.advertiseAVX = advertiseAVX
         self.verboseLogging = verboseLogging
         self.steamOverlay = steamOverlay
+        self.modHooks = modHooks
         self.arguments = arguments
         self.environment = environment
     }
@@ -59,7 +65,16 @@ public struct GameProfile: Codable, Sendable, Equatable {
         advertiseAVX = try c.decodeIfPresent(Bool.self, forKey: .advertiseAVX) ?? defaults.advertiseAVX
         verboseLogging = try c.decodeIfPresent(Bool.self, forKey: .verboseLogging) ?? defaults.verboseLogging
         steamOverlay = try c.decodeIfPresent(Bool.self, forKey: .steamOverlay) ?? defaults.steamOverlay
+        modHooks = try c.decodeIfPresent(Bool.self, forKey: .modHooks) ?? defaults.modHooks
         arguments = try c.decodeIfPresent([String].self, forKey: .arguments) ?? defaults.arguments
         environment = try c.decodeIfPresent([String: String].self, forKey: .environment) ?? defaults.environment
+    }
+
+    /// The settings a program added by hand starts with: Auto graphics, and MetalFX when Auto picks
+    /// D3DMetal, as for Steam games (`Steam.detectedProfile`). MetalFX only acts when the game offers
+    /// DLSS and the player picks it.
+    public static func detected(for program: URL) -> GameProfile {
+        let backend = try? GameDetector.inspect(executable: program).recommendedBackend
+        return GameProfile(metalFX: backend == .d3dmetal)
     }
 }

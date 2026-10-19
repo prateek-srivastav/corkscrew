@@ -22,6 +22,10 @@ public enum Launcher {
         /// Set when this launch starts `steam.exe` with the web helper wrapper: `run` keeps it in
         /// front of Steam's helper while Steam runs (Steam installs updates at startup).
         public var steamWebHelperWrapper: URL? = nil
+        /// For a program that isn't Steam: its folder under `drive_c`, lowercased, with backslashes
+        /// (`\program files\game\`). A launcher can start the game and quit: `run` then follows
+        /// the programs from this folder.
+        public var gameFolder: String? = nil
     }
 
     /// A game started with `steam.exe -applaunch <id>`. Steam, and launchers like Rockstar's, keep
@@ -164,7 +168,17 @@ public enum Launcher {
         await CrashDialog.turnOff(in: context, log: logs.appending(path: "crash-dialog.log"))
         return Prepared(plan: plan, context: context, log: logs.appending(path: LaunchLogs.fileName(startedAt: startedAt)),
                         inspection: inspection, notes: notes, steamGame: steamGame, steamWindowCounter: steamWindowCounter,
-                        steamWebHelperWrapper: Steam.isClient(executable) ? steamWebHelperWrapper : nil)
+                        steamWebHelperWrapper: Steam.isClient(executable) ? steamWebHelperWrapper : nil,
+                        gameFolder: Steam.isClient(executable) || steamGame != nil ? nil : gameFolder(of: executable, prefix: prefix))
+    }
+
+    /// `executable`'s game folder as `gameFolder` has it; nil outside the bottle's `drive_c`, or
+    /// for `drive_c` itself.
+    static func gameFolder(of executable: URL, prefix: URL) -> String? {
+        let driveC = prefix.appending(path: "drive_c").standardizedFileURL.path + "/"
+        let root = GameDetector.gameRoot(for: executable).standardizedFileURL.path
+        guard root.hasPrefix(driveC), root.count > driveC.count else { return nil }
+        return "\\" + root.dropFirst(driveC.count).lowercased().replacingOccurrences(of: "/", with: "\\") + "\\"
     }
 
     /// Copies the helper onto the bottle's own drive, where isolated bottles can run it too, and
@@ -206,7 +220,9 @@ public enum Launcher {
         }
         guard let game = prepared.steamGame else {
             guard let counter = prepared.steamWindowCounter else {
-                return try await ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
+                var result = try await ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
+                if let folder = prepared.gameFolder { result.followed = try await followGame(in: folder, prepared) }
+                return result
             }
             async let steam = ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
             if try await waitForSteamToBeClosed(look: { try await lookAtSteam(prepared, counter: counter) }) {
@@ -227,6 +243,23 @@ public enum Launcher {
             }
         }
         return try await steam
+    }
+
+    /// The launch lasts while programs from the game's folder run, which a launcher may have
+    /// started before it quit. Returns their names, lowercased. Stop ends them with the bottle.
+    static func followGame(in folder: String, _ prepared: Prepared) async throws -> [String] {
+        let prefix = prepared.context.location.prefix
+        return try await withTaskCancellationHandler {
+            var names: Set<String> = []
+            while true {
+                let running = BottleProcesses.list(prefix: prefix, maxAge: .zero).map(\.program).filter { $0.contains(folder) }
+                if running.isEmpty { return names.sorted() }
+                names.formUnion(running.compactMap { $0.split(separator: "\\").last.map(String.init) })
+                try await Task.sleep(for: pollInterval)
+            }
+        } onCancel: {
+            ProcessRunner.stopSession(environment: prepared.plan.environment, wineserver: prepared.context.engine.wineserver)
+        }
     }
 
     /// Waits for the game's programs to appear and then be gone for `grace`. False when they never

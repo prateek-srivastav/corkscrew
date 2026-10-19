@@ -132,6 +132,8 @@ public enum LaunchPlanner {
         var env = baseEnvironment(context, verboseLogging: game.profile.verboseLogging)
         if context.engine.architecture == .x86_64, game.profile.advertiseAVX { env["ROSETTA_ADVERTISE_AVX"] = "1" }
         if game.profile.metalHUD { env["MTL_HUD_ENABLED"] = "1" }
+        // Our Wine's ntdll: VirtualProtect outside Wine's memory (a hook into D3DMetal's functions).
+        if game.profile.modHooks { env["CORKSCREW_HOST_MEMORY_PROTECT"] = "1" }
         env.merge(performanceEnvironment) { _, tuned in tuned }
         let shaderCache = context.paths.shaderCache(for: game.gameID).path
         switch backend {
@@ -257,7 +259,7 @@ public enum LaunchPlanner {
             executable: sandboxExec, arguments: ["-p", profile, context.engine.wine.path] + arguments,
             environment: environment, workingDirectory: workingDirectory, backend: backend, sandboxProfile: profile
         )
-        // Many programs talk to themselves over loopback (FIFA 23's EA app emulator on 127.0.0.1:3216),
+        // Many programs talk to themselves over loopback (FIFA 23 on 127.0.0.1:3216),
         // but Seatbelt can't tell the bottle's own listeners from services on this Mac. Wine binds,
         // connects and accepts in wineserver, so an offline bottle's server gets loopback and, patched,
         // connects only to the bottle's own listeners; the programs still have no loopback at all.
