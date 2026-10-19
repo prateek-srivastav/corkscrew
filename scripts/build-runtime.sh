@@ -16,6 +16,10 @@
 #    while the program is active instead.
 #  - With CORKSCREW_PRIVATE_LOOPBACK set, wineserver connects only to loopback servers of its own
 #    bottle, so offline bottles can use loopback without reaching services on the Mac.
+#  - A program that destroys a D3DMetal window on another thread no longer hangs the window's
+#    input (winemac).
+#  - With CORKSCREW_HOST_MEMORY_PROTECT=1, VirtualProtect also works on memory outside Wine's own,
+#    such as D3DMetal's functions, so mods can hook a game's graphics (ntdll).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -227,6 +231,65 @@ if "corkscrew_use_prebuilt_bundle" not in s:
     p.write_text(s)
 PATCH
 
+log "Patching ntdll: VirtualProtect on host memory (per-game switch)"
+# Mods and overlays hook a game's graphics by patching code: VirtualProtect, write a jump,
+# VirtualProtect back. Under D3DMetal the D3D12 methods are in D3DMetal's library, which macOS
+# loaded outside every Wine view, and Wine refuses to change its protection. A hook that ignores
+# the refusal then writes to read-only code and the game crashes (FIFA 23's Live Editor). The app
+# sets CORKSCREW_HOST_MEMORY_PROTECT=1 for games with mod hooks on; then the change is made with
+# mprotect (under Rosetta a dylib's maximum protection is rwx; tested: Rosetta runs the patched
+# code). Without it the refusal stays, and its first lines go to the log, which the app matches
+# against a crash's write address to turn mod hooks on. Never Wine's reserved areas: free memory.
+python3 - "$WINE_SRC/dlls/ntdll/unix/virtual.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+anchor = "/***********************************************************************\n *             NtProtectVirtualMemory   (NTDLL.@)\n"
+helper = r'''/* Corkscrew: protection changes outside Wine's views, in memory the host mapped (D3DMetal's code
+ * and data). Allowed with CORKSCREW_HOST_MEMORY_PROTECT=1; otherwise refused as before, and logged.
+ * virtual_mutex must be held by caller. */
+static unsigned int protect_host_memory( char *base, SIZE_T size, ULONG new_prot, DWORD *old_prot )
+{
+#ifdef __APPLE__
+    static int allowed = -1, refusals;
+    mach_vm_address_t address = (mach_vm_address_t)base;
+    mach_vm_size_t region_size;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    unsigned int vprot;
+    const char *env;
+
+    if (mmap_is_in_reserved_area( base, size )) return STATUS_INVALID_PARAMETER;
+    if (mach_vm_region( mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
+                        (vm_region_info_t)&info, &count, &object ) || address > (mach_vm_address_t)base)
+        return STATUS_INVALID_PARAMETER;
+    if (allowed == -1) allowed = (env = getenv( "CORKSCREW_HOST_MEMORY_PROTECT" )) && !strcmp( env, "1" );
+    if (!allowed)
+    {
+        if (refusals++ < 16) fprintf( stderr, "wine: refused VirtualProtect on host memory %p-%p\n", base, base + size );
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (get_vprot_flags( new_prot, &vprot, FALSE ) || (vprot & VPROT_GUARD)) return STATUS_INVALID_PAGE_PROTECTION;
+    if (mprotect( base, size, get_unix_prot( vprot | VPROT_COMMITTED ) )) return STATUS_INVALID_PARAMETER;
+    *old_prot = get_win32_prot( info.protection & (VPROT_READ | VPROT_WRITE | VPROT_EXEC), 0 );
+    return STATUS_SUCCESS;
+#else
+    return STATUS_INVALID_PARAMETER;
+#endif
+}
+
+
+'''
+if "protect_host_memory" not in s:
+    assert s.count(anchor) == 1, "virtual.c changed upstream; update this patch"
+    s = s.replace(anchor, helper + anchor)
+    old = "        else status = STATUS_NOT_COMMITTED;\n    }\n    else status = STATUS_INVALID_PARAMETER;\n\n    if (!status) VIRTUAL_DEBUG_DUMP_VIEW( view );\n"
+    new = "        else status = STATUS_NOT_COMMITTED;\n    }\n    else status = protect_host_memory( base, size, new_prot, &old );\n\n    if (!status && view) VIRTUAL_DEBUG_DUMP_VIEW( view );\n"
+    assert s.count(old) == 1, "virtual.c changed upstream; update this patch"
+    s = s.replace(old, new)
+    p.write_text(s)
+PATCH
+
 log "Patching kernelbase: Social Club's Chromium draws in its own process"
 # Chromium draws a window's contents from its GPU process, but the window belongs to the browser
 # process, and winemac only shows what a window's own process draws (GDI, OpenGL and Vulkan alike).
@@ -431,6 +494,50 @@ patch("cocoa_app.m", '''        [nc addObserver:self
 
         [nc addObserver:self
                selector:@selector(keyboardSelectionDidChange)''')
+PATCH
+
+log "Patching winemac: no deadlock when a D3DMetal window is destroyed"
+# macdrv_DestroyWindow released the window's D3DMetal client surfaces while it held win_data_mutex.
+# Releasing a surface takes win32u's surfaces_lock, and client_surface_present (the message thread,
+# from macdrv_handle_event) holds surfaces_lock while it waits for win_data_mutex. A program that
+# destroys a D3DMetal window on another thread then hangs both threads; the game gets no more input.
+# Seen 2026-10-19 with a mod that makes a hidden D3D12 window to read the swap chain's functions.
+# Now the surfaces are released after release_win_data, in the order d3dmetal.c already uses.
+python3 - "$WINE_SRC/dlls/winemac.drv/window.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+decl_old = '''void macdrv_DestroyWindow(HWND hwnd)
+{
+    struct macdrv_win_data *data;
+'''
+decl_new = '''void macdrv_DestroyWindow(HWND hwnd)
+{
+    struct macdrv_win_data *data;
+    CFMutableArrayRef d3dmetal_client_surfaces;
+'''
+old = '''    /* CW HACK 22435 */
+    if (data->d3dmetal_client_surfaces) CFRelease(data->d3dmetal_client_surfaces);
+
+    CFDictionaryRemoveValue(win_datas, hwnd);
+    release_win_data(data);
+    free(data);
+}
+'''
+new = '''    /* CW HACK 22435 */
+    /* Corkscrew: released below, without win_data_mutex. Releasing a surface takes surfaces_lock,
+       which client_surface_present holds while it waits for win_data_mutex. */
+    d3dmetal_client_surfaces = data->d3dmetal_client_surfaces;
+
+    CFDictionaryRemoveValue(win_datas, hwnd);
+    release_win_data(data);
+    free(data);
+    if (d3dmetal_client_surfaces) CFRelease(d3dmetal_client_surfaces);
+}
+'''
+if new not in s:
+    assert s.count(decl_old) == 1 and s.count(old) == 1, "window.c changed upstream; update this patch"
+    p.write_text(s.replace(decl_old, decl_new).replace(old, new))
 PATCH
 
 log "Patching wineserver: private loopback for offline bottles"
