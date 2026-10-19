@@ -22,6 +22,18 @@ struct SteamGameLaunchTests {
             #"c:\program files (x86)\steam\steamapps\common\red dead redemption 2 extra\x.exe"#, installDir: rdr2))
     }
 
+    /// What a Steam game's launch saw run, for its crash dumps: the game's programs, not Steam's.
+    @Test func namesASteamGamesPrograms() {
+        let processes = [
+            BottleProcesses.Entry(pid: 1, arguments: [#"C:\Program Files (x86)\Steam\steam.exe"#, "-applaunch", "1174180"]),
+            BottleProcesses.Entry(pid: 2, arguments: [#"C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\PlayRDR2.exe"#]),
+            BottleProcesses.Entry(pid: 3, arguments: [#"C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\RDR2.exe"#, "-x"]),
+            BottleProcesses.Entry(pid: 4, arguments: [#"C:\Program Files\Rockstar Games\Launcher\Launcher.exe"#]),
+        ]
+        #expect(Launcher.steamGamePrograms(processes, installDir: "Red Dead Redemption 2") == ["playrdr2.exe", "rdr2.exe"])
+        #expect(Launcher.steamGamePrograms(processes, installDir: "Other Game").isEmpty)
+    }
+
     @Test func findsSteamsWebHelperRunningWithoutTheWrapper() {
         let cef = #"C:\Program Files (x86)\Steam\bin\cef\cef.win64\"#
         let steam = BottleProcesses.Entry(pid: 1, arguments: [#"C:\Program Files (x86)\Steam\steam.exe"#])

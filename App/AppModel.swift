@@ -1467,12 +1467,13 @@ final class AppModel {
     /// have, an offer to share them.
     private func sessionEnded(_ game: Game, result: RunResult, backend: GraphicsBackend?, log: URL, played: Duration,
                               ranOwnSettings: Bool) async {
-        // Crash dumps: in the game's folder, or the bottle's user folders (AppData, Documents). Not
-        // for Steam games: the launch runs steam.exe, whose own dumps aren't the game's.
-        // A launcher's game runs on after the launcher quits with 0: its dump counts whatever the exit code.
-        let since = Date.now.addingTimeInterval(-(played / .seconds(1))), executables = [game.executable.lastPathComponent] + result.followed
-        let dumpFolders = game.store == nil ? [game.executable.deletingLastPathComponent(),
-                                               BottleLocation(bottleID: game.bottleID, paths: paths).prefix.appending(path: "drive_c/users")] : []
+        // Crash dumps (`ProblemReport.dumpFolders`). A Steam game's launch runs steam.exe, so its
+        // dumps are matched against the game's programs the launch saw.
+        // A launcher's game runs on after the launcher quits with 0, and a Steam game's exit code is
+        // Steam's: their dumps count whatever the exit code.
+        let since = Date.now.addingTimeInterval(-(played / .seconds(1)))
+        let executables = (game.store == nil ? [game.executable.lastPathComponent] : []) + result.followed
+        let prefix = BottleLocation(bottleID: game.bottleID, paths: paths).prefix
         // Some games crash when started directly and must start through their launcher: the sheet
         // offers the other programs in the game's folder that aren't helpers.
         let program = game.store == nil ? game.executable : nil
@@ -1481,7 +1482,7 @@ final class AppModel {
         let found = await Task.detached(priority: .utility) {
             let crash = ProblemReport.crash(inLog: log), dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
             let dump = (result.status != 0 || !result.followed.isEmpty) && crash == nil && !result.crashed && dialog == nil
-                ? ProblemReport.crashDump(in: dumpFolders, since: since, executables: executables) : nil
+                ? ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: since, executables: executables) : nil
             let others = program.map { Array(SetupFinder.otherPrograms(near: $0, helpers: false).prefix(3)) } ?? []
             let wrote = crash.flatMap { ProblemReport.writeAddress(inCrash: $0.summary) } ?? dump?.wrote
             let hookCrash = hooksOff && wrote.map { ProblemReport.refusedHook(inLog: log, wrote: $0) } == true

@@ -213,6 +213,37 @@ struct ProblemReportTests {
         }
     }
 
+    /// A Steam game's launch runs steam.exe: its dumps are looked for in its install folder and in
+    /// Steam's dumps folder, where Steam's crash handler writes them, and matched against the
+    /// game's programs the launch saw.
+    @Test func findsASteamGamesCrashDumps() throws {
+        try withTempDir { prefix in
+            let steam = prefix.appending(path: "drive_c/Program Files (x86)/Steam"), client = steam.appending(path: "steam.exe")
+            try steam.appending(path: "steamapps/appmanifest_1174180.acf").write(
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"1174180\"\n\t\"name\"\t\t\"Red Dead Redemption 2\"\n\t\"installdir\"\t\t\"Red Dead Redemption 2\"\n}")
+            let users = prefix.appending(path: "drive_c/users")
+            let game = Game(name: "Red Dead Redemption 2", executable: client, bottleID: UUID(), store: StoreItem(store: "steam", appID: "1174180"))
+            #expect(ProblemReport.dumpFolders(for: game, prefix: prefix).map(\.path)
+                    == [steam.appending(path: "steamapps/common/Red Dead Redemption 2"), steam.appending(path: "dumps"), users].map(\.path))
+            let steamItself = Game(name: "Steam", executable: client, bottleID: UUID(), store: StoreItem(store: "steam"))
+            #expect(ProblemReport.dumpFolders(for: steamItself, prefix: prefix).isEmpty)
+            let exe = prefix.appending(path: "drive_c/Games/Demo/Demo.exe")
+            #expect(ProblemReport.dumpFolders(for: Game(name: "Demo", executable: exe, bottleID: UUID()), prefix: prefix).map(\.path)
+                    == [exe.deletingLastPathComponent(), users].map(\.path))
+
+            // The game's dump from Steam's crash handler, next to Steam's own.
+            let rdr2 = [(path: #"C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\RDR2.exe"#,
+                         base: UInt64(0x1_4000_0000), size: UInt32(0x2000_0000))]
+            let steamModules = [(path: #"C:\Program Files (x86)\Steam\steam.exe"#, base: UInt64(0x1_4000_0000), size: UInt32(0x2000_0000))]
+            try steam.appending(path: "dumps/crash_RDR2.exe_20261020101500_1.dmp").write(Self.minidump(rdr2))
+            try steam.appending(path: "dumps/crash_steam.exe_20261020101501_1.dmp").write(Self.minidump(steamModules))
+            let found = ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: .now - 60,
+                                                executables: ["playrdr2.exe", "rdr2.exe"])
+            #expect(found?.summary == "Access violation (c0000005) at RDR2.exe+0x27c2fc9")
+            #expect(found?.file == "crash_RDR2.exe_20261020101500_1.dmp")
+        }
+    }
+
     @Test func hidesTheHomeFolderAndUserName() {
         let text = "/Users/pat/Library/Logs/Corkscrew/x.log C:\\users\\pat\\AppData /Users/pat/Downloads"
         #expect(ProblemReport.redacted(text, home: "/Users/pat", user: "pat")

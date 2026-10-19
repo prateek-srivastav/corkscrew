@@ -209,6 +209,18 @@ public struct ProblemReport: Sendable, Equatable, Codable {
 
     // MARK: Crash dumps
 
+    /// Where a game's crash handler may write dumps: the game's folder and the bottle's user folders
+    /// (AppData, Documents). A Steam game's folder is its install folder, and Steam's crash handler,
+    /// which games can use too, writes to Steam's `dumps` folder. None for Steam itself.
+    public static func dumpFolders(for game: Game, prefix: URL) -> [URL] {
+        let folder = game.executable.deletingLastPathComponent()
+        let users = prefix.appending(path: "drive_c/users", directoryHint: .isDirectory)
+        guard let store = game.store else { return [folder, users] }
+        guard let appID = store.appID else { return [] }
+        let installed = Steam.installedApps(steamRoot: folder, prefix: prefix).first { $0.appID == appID }
+        return (installed.map { [$0.installFolder] } ?? []) + [folder.appending(path: "dumps", directoryHint: .isDirectory), users]
+    }
+
     /// The newest crash dump (`*.dmp`, `*.mdmp`) changed since `since` in `folders` and their
     /// subfolders (not through links) that one of `executables` (file names) wrote of itself
     /// with its own crash handler, which Wine's log doesn't show. Helpers (Steam, launchers, crash

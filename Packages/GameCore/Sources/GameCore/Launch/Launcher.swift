@@ -232,8 +232,11 @@ public enum Launcher {
         }
         async let steam = ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
         let prefix = prepared.context.location.prefix
+        var programs: Set<String> = []
         let started = try await waitForQuit {
-            BottleProcesses.list(prefix: prefix).contains { BottleProcesses.isFromSteamGame($0.program, installDir: game.installDir) }
+            let running = steamGamePrograms(BottleProcesses.list(prefix: prefix), installDir: game.installDir)
+            programs.formUnion(running)
+            return !running.isEmpty
         }
         if started {
             if !game.steamWasRunning {
@@ -242,7 +245,15 @@ public enum Launcher {
                 try await closeRockstarLauncher(prepared)
             }
         }
-        return try await steam
+        var result = try await steam
+        result.followed = programs.sorted()
+        return result
+    }
+
+    /// The names of a Steam game's programs among `processes`, lowercased: `rdr2.exe`.
+    static func steamGamePrograms(_ processes: [BottleProcesses.Entry], installDir: String) -> Set<String> {
+        Set(processes.map(\.program).filter { BottleProcesses.isFromSteamGame($0, installDir: installDir) }
+            .compactMap { $0.split(separator: "\\").last.map(String.init) })
     }
 
     /// The launch lasts while programs from the game's folder run, which a launcher may have
