@@ -24,14 +24,14 @@ LIST_FILE = Path(__file__).resolve().parent.parent / "Packages/GameCore/Sources/
 
 SETTINGS_HEADING = "Corkscrew settings"
 BACKENDS = {"d3dmetal", "dxmt", "dxvk", "wined3d"}
-SWITCHES = ["metalFX", "retinaMode", "advertiseAVX", "steamOverlay"]
+SWITCHES = ["metalFX", "retinaMode", "advertiseAVX", "steamOverlay", "modHooks"]
 RESULTS = {"Plays well", "Plays, with issues"}
 
 ARGUMENT = re.compile(r"[A-Za-z0-9_.,:=+\-]{1,64}")
 ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 ENV_VALUE = re.compile(r"[A-Za-z0-9_.,:;=+\- ]{0,128}")
 # Variables that pick what runs or where files are: never from a report.
-ENV_DENIED_PREFIXES = ("DYLD_", "LD_", "WINE", "CX_")
+ENV_DENIED_PREFIXES = ("DYLD_", "LD_", "WINE", "CX_", "CORKSCREW_")
 ENV_DENIED = {"PATH", "HOME", "TMPDIR", "USER", "SHELL", "PYTHONPATH", "SSL_CERT_FILE", "CURL_CA_BUNDLE"}
 # Allowed after all, since games need them: which DLLs Wine loads from the game's folder.
 ENV_ALLOWED = {"WINEDLLOVERRIDES", "WINEESYNC", "WINEMSYNC", "WINE_LARGE_ADDRESS_AWARE"}
@@ -94,7 +94,7 @@ def checked_profile(profile):
     # Defaults are left out, like the entries written by hand.
     if checked.get("advertiseAVX") is True:
         del checked["advertiseAVX"]
-    for name in ("metalFX", "retinaMode", "steamOverlay"):
+    for name in ("metalFX", "retinaMode", "steamOverlay", "modHooks"):
         if checked.get(name) is False:
             del checked[name]
 
@@ -173,6 +173,8 @@ def describe(profile):
     names = {"d3dmetal": "D3DMetal", "dxmt": "DXMT", "dxvk": "DXVK", "wined3d": "WineD3D"}
     lines = [f"- Graphics: {names.get(profile.get('backendOverride'), 'Automatic')}"]
     lines += [f"- {name}: on" for name in ("metalFX", "retinaMode", "steamOverlay") if profile.get(name)]
+    if profile.get("modHooks"):
+        lines.append("- **modHooks: on (a mod hooks the game's graphics: check which)**")
     if profile.get("advertiseAVX") is False:
         lines.append("- advertiseAVX: off")
     if profile.get("arguments"):

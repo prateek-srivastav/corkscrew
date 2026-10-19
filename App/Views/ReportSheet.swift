@@ -5,6 +5,7 @@ import SwiftUI
 /// Offered after a crash or an error: the whole report to read, and a way to send it. Nothing
 /// leaves the Mac until the user clicks Send Report or Report on GitHub.
 struct ReportSheet: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State var pending: AppModel.PendingReport
     @State private var isSending = false
@@ -24,6 +25,10 @@ struct ReportSheet: View {
                     Text(report.summary).font(.body).foregroundStyle(.secondary).lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+
+            if let gameID = pending.gameID, !pending.otherPrograms.isEmpty {
+                otherPrograms(for: gameID)
             }
 
             Text(destinationText)
@@ -70,6 +75,29 @@ struct ReportSheet: View {
         }
         .padding(20)
         .frame(width: 600)
+    }
+
+    /// Some games crash when started directly and must start through another program in their
+    /// folder, such as a launcher.
+    private func otherPrograms(for gameID: Game.ID) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Try another program (.exe)").font(.headline)
+            Text("Some games must start through another program in their folder, such as a launcher. Use and Play starts the game with it from now on; Change Program (.exe) in the game's menu switches back.")
+                .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ForEach(pending.otherPrograms, id: \.self) { program in
+                HStack {
+                    Label(program.lastPathComponent, systemImage: "app").help(program.path)
+                    Spacer()
+                    Button("Use and Play") {
+                        dismiss()
+                        model.play(gameID, with: program)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: .rect(cornerRadius: 8))
     }
 
     private func copy() {

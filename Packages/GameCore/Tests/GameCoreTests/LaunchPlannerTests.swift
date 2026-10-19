@@ -91,6 +91,15 @@ struct LaunchPlannerTests {
             #expect(plan.environment["GITHUB_TOKEN"] == nil)
             #expect(plan.environment["MTL_HUD_ENABLED"] == nil)
             #expect(plan.environment["CORKSCREW_NO_LOADER_LINK"] == nil, "standard bottles keep per-game Dock names")
+            #expect(plan.environment["CORKSCREW_HOST_MEMORY_PROTECT"] == nil, "Wine refuses mod hooks into D3DMetal")
+        }
+    }
+
+    @Test func modHooksAreTheGamesOwnChoice() throws {
+        try withTempDir { root in
+            let f = try fixture(root)
+            let game = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(modHooks: true), detectedAPIs: [.d3d12])
+            #expect(try LaunchPlanner.plan(game, in: f.context(.standard, host: host)).environment["CORKSCREW_HOST_MEMORY_PROTECT"] == "1")
         }
     }
 

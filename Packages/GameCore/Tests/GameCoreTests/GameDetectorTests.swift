@@ -124,6 +124,18 @@ struct GameDetectorTests {
         #expect(GraphicsBackend.recommended(for: [.d3d11], available: [.dxvk, .wined3d]) == .dxvk)
     }
 
+    /// Programs added by hand get MetalFX when Auto picks D3DMetal, like Steam games, and keep Auto.
+    @Test func programsAddedByHandGetMetalFXWithD3DMetal() throws {
+        try withTempDir { root in
+            let dx11 = root.appending(path: "dx11.exe"), dx9 = root.appending(path: "dx9.exe")
+            try dx11.write(PEBuilder(imports: ["d3d11.dll"]).build())
+            try dx9.write(PEBuilder(machine: 0x014C, pe32Plus: false, imports: ["d3d9.dll"]).build())
+            #expect(GameProfile.detected(for: dx11) == GameProfile(metalFX: true))
+            #expect(GameProfile.detected(for: dx9) == GameProfile())
+            #expect(GameProfile.detected(for: root.appending(path: "missing.exe")) == GameProfile())
+        }
+    }
+
     @Test func mapsDLLNamesToAPIs() {
         #expect(GraphicsAPI(dllName: "d3d12.dll") == .d3d12)
         #expect(GraphicsAPI(dllName: "d3dx9_43.dll") == .d3d9)

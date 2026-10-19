@@ -10,10 +10,33 @@ struct TestedGamesTests {
         #expect(try JSONDecoder().decode([TestedGame].self, from: Data(contentsOf: file)) == Steam.builtInTested)
         #expect(Steam.tested == Steam.builtInTested)
         #expect(Steam.tested.count >= 3)
-        #expect(Steam.tested.allSatisfy { !$0.appID.isEmpty && $0.appID.allSatisfy(\.isNumber) })
-        #expect(Set(Steam.tested.map(\.appID)).count == Steam.tested.count, "one entry per game")
+        // Steam games by app id; others by a program in their folder, never listed.
+        let steam = Steam.tested.filter { $0.program == nil }, others = Steam.tested.filter { $0.program != nil }
+        #expect(steam.allSatisfy { !$0.appID.isEmpty && $0.appID.allSatisfy(\.isNumber) })
+        #expect(others.allSatisfy { $0.appID.isEmpty && !$0.listed && $0.program!.hasSuffix(".exe") && !$0.program!.contains("/") })
+        #expect(Set(steam.map(\.appID)).count == steam.count, "one entry per game")
+        #expect(Set(others.compactMap { $0.program?.lowercased() }).count == others.count, "one entry per program")
         #expect(Steam.testedGames.map(\.appID) == ["1174180", "3132990", "417860"])
         #expect(Steam.testedProfiles["1174180"] == GameProfile(backendOverride: .d3dmetal, metalFX: true))
+    }
+
+    /// A program that isn't from Steam gets the settings of the entry whose program is in its folder:
+    /// FIFA 23 through FIFA23.exe or the launcher next to it.
+    @Test func programsGetTheSettingsOfTheirFolder() throws {
+        try withTempDir { root in
+            let folder = try root.appending(path: "Program Files/FIFA 23").makeDirectory()
+            try folder.appending(path: "FIFA23.exe").write(PEBuilder().build())
+            try folder.appending(path: "Launcher.exe").write(PEBuilder().build())
+            let fifa = try #require(Steam.testedProfile(forProgram: folder.appending(path: "FIFA23.exe")))
+            #expect(fifa.modHooks)
+            #expect(Steam.testedProfile(forProgram: folder.appending(path: "Launcher.exe")) == fifa)
+            #expect(Steam.testedProfile(forProgram: root.appending(path: "Other/Game.exe")) == nil)
+            #expect(Steam.testedProfiles.keys.allSatisfy { !$0.isEmpty })
+        }
+        // An entry needs an app id or a program.
+        let entry = try JSONDecoder().decode(TestedGame.self, from: Data(#"{"program": "Game.exe", "name": "Game", "profile": {}}"#.utf8))
+        #expect(entry == TestedGame(appID: "", program: "Game.exe", name: "Game", profile: GameProfile()))
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(TestedGame.self, from: Data(#"{"name": "Game", "profile": {}}"#.utf8)) }
     }
 
     /// The app downloads the list from this path on main, so the file must stay there.
@@ -80,7 +103,8 @@ struct TestedGamesTests {
         game.profile.performanceOverlay = true
         game.profile.arguments += ["-novid", "-dx11"]
         game.profile.environment = ["DXMT_LOG_LEVEL": "none"]
-        #expect(Steam.sharedProfile(of: game) == GameProfile(backendOverride: .dxmt, arguments: ["-novid", "-dx11"],
+        game.profile.modHooks = true
+        #expect(Steam.sharedProfile(of: game) == GameProfile(backendOverride: .dxmt, modHooks: true, arguments: ["-novid", "-dx11"],
                                                              environment: ["DXMT_LOG_LEVEL": "none"]))
     }
 
@@ -110,6 +134,12 @@ struct TestedGamesTests {
         #expect(Set(profile.keys) == ["backendOverride", "metalFX", "retinaMode", "advertiseAVX", "steamOverlay"])
         let entry = try JSONDecoder().decode(TestedGame.self, from: Data(report.utf8))
         #expect(entry == TestedGame(appID: "999999", name: "Untested Game", listed: false, profile: GameProfile(backendOverride: .wined3d)))
+
+        // Mod hooks only when on.
+        game.profile.modHooks = true
+        let changes = try #require(Steam.settingsReport(of: game))
+        #expect(try JSONDecoder().decode(TestedGame.self, from: Data(changes.utf8)).profile.modHooks)
+        #expect(changes.contains(#""modHooks":true"#))
     }
 
     /// The Game report form, filled in, with the settings where the workflow reads them.

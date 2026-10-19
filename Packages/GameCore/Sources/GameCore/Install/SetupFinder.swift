@@ -104,6 +104,26 @@ public enum SetupFinder {
         (try? file.resourceValues(forKeys: [.attributeModificationDateKey]))?.attributeModificationDate
     }
 
+    /// The other programs in a game's folder and the folders right below it, to start the game
+    /// another way (some must start through their launcher): launchers first, then as
+    /// `programRank` orders them. Uninstallers, runtime installers and `executable` itself are left
+    /// out, and helpers (crash reporters, anti-cheat services) too unless `helpers` is set.
+    public static func otherPrograms(near executable: URL, helpers: Bool = true) -> [URL] {
+        let root = GameDetector.gameRoot(for: executable)
+        let current = executable.standardizedFileURL.path.lowercased()
+        // Deeper folders hold the game's data (thousands of files), not programs that start it.
+        let shallow = files(in: root) { $0.split(separator: "/").count > 1 }
+        var ranked: [(url: URL, rank: [Int])] = []
+        for file in shallow where file.pathExtension.lowercased() == "exe" && file.standardizedFileURL.path.lowercased() != current {
+            let relative = relativeComponents(of: file, in: root)
+            guard !isRuntimeInstaller(relative), helpers || !isHelper(relative) else { continue }
+            let isLauncher = file.deletingPathExtension().lastPathComponent.lowercased().contains("launcher")
+            let rank = programRank(file, relative: relative)
+            ranked.append((file, [rank[0], isLauncher ? 0 : 1] + rank.dropFirst()))
+        }
+        return ranked.sorted { $0.rank.lexicographicallyPrecedes($1.rank) }.map(\.url)
+    }
+
     /// Ranks a program as the game: names like a helper last, then shallow before deep, big before small.
     static func programRank(_ file: URL, relative: [String]) -> [Int] {
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
@@ -129,7 +149,7 @@ public enum SetupFinder {
     /// Programs a game ships next to itself that aren't the game.
     static let helperWords = [
         "unins", "uninst", "setup", "install", "redist", "crash", "report", "helper", "update", "patch", "config",
-        "easyanticheat", "battleye", "be_service", "cefprocess", "subprocess", "webhelper", "dxsetup", "vcredist",
+        "anticheat", "battleye", "be_service", "cefprocess", "subprocess", "webhelper", "dxsetup", "vcredist",
         "vc_redist", "dotnet", "touchup", "cleanup", "dxwebsetup", "quicksfv", "server", "editor", "benchmark", "register",
     ]
     static let helperFolders: Set<String> = ["engine", "thirdparty", "tools", "_commonredist", "redist", "support", "__installer"]

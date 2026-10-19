@@ -106,9 +106,10 @@ struct ProblemReportTests {
         #expect(ProblemReport.errorDialog(in: question + "\n" + Self.dialog) == "bind: Access denied.: Access denied.")
     }
 
-    /// A minidump with only what the reader uses: a module list, and an exception unless nil.
+    /// A minidump with only what the reader uses: a module list, and an exception unless nil, with
+    /// an access violation's parameters (a write to `wrote`).
     static func minidump(_ modules: [(path: String, base: UInt64, size: UInt32)],
-                         exception: (code: UInt32, address: UInt64)? = (0xc000_0005, 0x1_427c_2fc9)) -> Data {
+                         exception: (code: UInt32, address: UInt64)? = (0xc000_0005, 0x1_427c_2fc9), wrote: UInt64 = 0) -> Data {
         var bytes: [UInt8] = []
         func put<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { bytes += $0 } }
         let streams = exception == nil ? 1 : 2
@@ -131,7 +132,7 @@ struct ProblemReportTests {
         }
         if let exception {
             put(UInt32(0x1a0)); put(UInt32(0)); put(exception.code); put(UInt32(0)); put(UInt64(0)); put(exception.address)
-            put(UInt32(2)); put(UInt32(0)); put(UInt64(1)); put(UInt64(0))
+            put(UInt32(2)); put(UInt32(0)); put(UInt64(1)); put(wrote)
             bytes += [UInt8](repeating: 0, count: 168 - 56)
         }
         return Data(bytes)
@@ -141,14 +142,37 @@ struct ProblemReportTests {
         (#"C:\Games\Game\Game.exe"#, 0x1_4000_0000, 0x2000_0000), (#"C:\windows\system32\ntdll.dll"#, 0x6fff_ff00_0000, 0x20_0000)]
 
     @Test func readsCrashDumps() {
-        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules), executable: "Game.exe")
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules), executable: "Game.exe")?.summary
                 == "Access violation (c0000005) at Game.exe+0x27c2fc9")
         // Windows file names: any case.
         #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules), executable: "game.EXE") != nil)
-        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xc000_00fd, 0x6fff_ff00_1234)), executable: "Game.exe")
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xc000_00fd, 0x6fff_ff00_1234)), executable: "Game.exe")?.summary
                 == "Stack overflow (c00000fd) at ntdll.dll+0x1234")
-        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xe043_4352, 0x5000)), executable: "Game.exe")
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xe043_4352, 0x5000)), executable: "Game.exe")?.summary
                 == "Exception (e0434352) at 0x5000")
+        // Where an access violation wrote; other exceptions' parameters mean something else.
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, wrote: 0x2_1235_e14e), executable: "Game.exe")?.wrote == 0x2_1235_e14e)
+        #expect(ProblemReport.crashDump(Self.minidump(Self.gameModules, exception: (0xc000_00fd, 0x5000), wrote: 0x2_1235_e14e),
+                                        executable: "Game.exe")?.wrote == nil)
+    }
+
+    /// FIFA 23's Live Editor: Wine refused to make D3DMetal's code writable, the mod wrote its hook
+    /// there anyway, and the game crashed. The setting that allows the change is offered then only.
+    @Test func matchesACrashToARefusedHook() {
+        let log = """
+            [+] Info: Prologue to overwrite:
+            wine: refused VirtualProtect on host memory 0x21235e000-0x21235f000
+            0170:err:module:x
+            """
+        #expect(ProblemReport.refusedHook(in: log, wrote: 0x2_1235_e14e))
+        #expect(!ProblemReport.refusedHook(in: log, wrote: 0x2_1235_f000), "the end is outside")
+        #expect(!ProblemReport.refusedHook(in: log, wrote: 0))
+        #expect(!ProblemReport.refusedHook(in: "0170:err:module:x", wrote: 0x2_1235_e14e))
+
+        #expect(ProblemReport.writeAddress(inCrash: "wine: Unhandled page fault on write access to 000000021235E14E at address 000000018026"
+                                           + "0AE7 (thread 0170), starting debugger...") == 0x2_1235_e14e)
+        #expect(ProblemReport.writeAddress(inCrash: "Unhandled exception: page fault on write access to 0x21235e14e in 64-bit code") == 0x2_1235_e14e)
+        #expect(ProblemReport.writeAddress(inCrash: "wine: Unhandled page fault on read access to 0000000000000090 at address 0") == nil)
     }
 
     @Test func skipsOtherProgramsDumpsAndDumpsWithoutACrash() {
@@ -180,11 +204,43 @@ struct ProblemReportTests {
             try write(Self.minidump(steam), "users/me/Steam/dumps/crash_steam.exe.dmp", at: launched + 30)
             try write(Data("not a dump".utf8), "game/notes.dmp", at: launched + 40)
             let folders = [dir.appending(path: "game"), dir.appending(path: "users")]
-            let found = try #require(ProblemReport.crashDump(in: folders, since: launched, executable: "Game.exe", host: "macname"))
+            let found = try #require(ProblemReport.crashDump(in: folders, since: launched, executables: ["Launcher.exe", "Game.exe"], host: "macname"))
             #expect(found.summary == "Access violation (c0000005) at Game.exe+0x27c2fc9")
             #expect(found.file == "xcpt <host> 26-10-19.MDMP")
-            #expect(ProblemReport.crashDump(in: folders, since: launched + 25, executable: "Game.exe") == nil)
-            #expect(ProblemReport.crashDump(in: [dir.appending(path: "missing")], since: launched, executable: "Game.exe") == nil)
+            #expect(found.wrote == 0)
+            #expect(ProblemReport.crashDump(in: folders, since: launched + 25, executables: ["Game.exe"]) == nil)
+            #expect(ProblemReport.crashDump(in: [dir.appending(path: "missing")], since: launched, executables: ["Game.exe"]) == nil)
+        }
+    }
+
+    /// A Steam game's launch runs steam.exe: its dumps are looked for in its install folder and in
+    /// Steam's dumps folder, where Steam's crash handler writes them, and matched against the
+    /// game's programs the launch saw.
+    @Test func findsASteamGamesCrashDumps() throws {
+        try withTempDir { prefix in
+            let steam = prefix.appending(path: "drive_c/Program Files (x86)/Steam"), client = steam.appending(path: "steam.exe")
+            try steam.appending(path: "steamapps/appmanifest_1174180.acf").write(
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"1174180\"\n\t\"name\"\t\t\"Red Dead Redemption 2\"\n\t\"installdir\"\t\t\"Red Dead Redemption 2\"\n}")
+            let users = prefix.appending(path: "drive_c/users")
+            let game = Game(name: "Red Dead Redemption 2", executable: client, bottleID: UUID(), store: StoreItem(store: "steam", appID: "1174180"))
+            #expect(ProblemReport.dumpFolders(for: game, prefix: prefix).map(\.path)
+                    == [steam.appending(path: "steamapps/common/Red Dead Redemption 2"), steam.appending(path: "dumps"), users].map(\.path))
+            let steamItself = Game(name: "Steam", executable: client, bottleID: UUID(), store: StoreItem(store: "steam"))
+            #expect(ProblemReport.dumpFolders(for: steamItself, prefix: prefix).isEmpty)
+            let exe = prefix.appending(path: "drive_c/Games/Demo/Demo.exe")
+            #expect(ProblemReport.dumpFolders(for: Game(name: "Demo", executable: exe, bottleID: UUID()), prefix: prefix).map(\.path)
+                    == [exe.deletingLastPathComponent(), users].map(\.path))
+
+            // The game's dump from Steam's crash handler, next to Steam's own.
+            let rdr2 = [(path: #"C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\RDR2.exe"#,
+                         base: UInt64(0x1_4000_0000), size: UInt32(0x2000_0000))]
+            let steamModules = [(path: #"C:\Program Files (x86)\Steam\steam.exe"#, base: UInt64(0x1_4000_0000), size: UInt32(0x2000_0000))]
+            try steam.appending(path: "dumps/crash_RDR2.exe_20261020101500_1.dmp").write(Self.minidump(rdr2))
+            try steam.appending(path: "dumps/crash_steam.exe_20261020101501_1.dmp").write(Self.minidump(steamModules))
+            let found = ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: .now - 60,
+                                                executables: ["playrdr2.exe", "rdr2.exe"])
+            #expect(found?.summary == "Access violation (c0000005) at RDR2.exe+0x27c2fc9")
+            #expect(found?.file == "crash_RDR2.exe_20261020101500_1.dmp")
         }
     }
 
