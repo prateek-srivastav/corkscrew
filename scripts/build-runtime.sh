@@ -9,6 +9,7 @@
 #  - The loader declares the games category, and programs run from an app bundle that carries it,
 #    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
+#  - The Windows files carry no debug info, which more than halves the runtime's size.
 #  - With EmulateModeset on, programs may pick display modes up to the panel's pixel size, so an
 #    exclusive full screen larger than the desktop in points fills the screen instead of cropping.
 #  - Full-screen windows stay at the normal window level, so Mission Control can move them to
@@ -793,6 +794,15 @@ for arch in x86_64-windows i386-windows x86_64-unix; do
       [[ -e $f ]] && mv "$f" "$RUNTIME/lib/wine-backends/wined3d/$arch/"
     done
   done
+done
+
+log "Stripping debug info from the Windows files"
+# Wine builds its Windows (PE) files with -g, and the debug info was more than half of the runtime
+# (1.6 GB → 0.87 GB without it, 2026-10-19). --strip-debug keeps the code, exports, relocations,
+# unwind data and the "Wine builtin DLL" mark. The unstripped files stay in build/work-wine.
+for arch in x86_64 i386; do
+  strip=x86_64-w64-mingw32-strip; [[ $arch == i386 ]] && strip=i686-w64-mingw32-strip
+  find "$RUNTIME/lib/wine/$arch-windows" "$RUNTIME/lib/wine-backends/wined3d/$arch-windows" -type f -exec "$strip" --strip-debug {} +
 done
 
 log "Checking that nothing points back into the build folder"
