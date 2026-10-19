@@ -220,7 +220,7 @@ private struct FileField: View {
                         .font(.subheadline).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 8)
-                Text(file == nil ? "Choose…" : "Change…")
+                Text(file == nil ? "Choose" : "Change")
                     .foregroundStyle(isHovering ? .primary : .secondary)
             }
             .padding(12)
