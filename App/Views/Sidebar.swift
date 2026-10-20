@@ -300,6 +300,8 @@ struct SidebarRow: View {
         }
         .buttonStyle(.plain)
         .focusLine(in: .rect(cornerRadius: Self.radius(isCollapsed: isCollapsed)))
+        // With keyboard navigation, Return opens the focused row too, not only Space as macOS has it.
+        .onKeyPress(.return) { action(); return .handled }
         .opacity(isEnabled ? 1 : 0.4)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
