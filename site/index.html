@@ -21,7 +21,7 @@
 <script>document.documentElement.className = "js";</script>
 <style>
   /* Wine-black ink with a lot of empty space. The only dither on the page is the wine glow at the
-     bottom of the first screen and the screenshot, which develops from a dither when it scrolls in. */
+     bottom of the first screen. */
   :root {
     --ink: #0d0609;
     --ink-raised: #170a10;
@@ -111,13 +111,12 @@
   ol.flow h3 { font: 400 30px/1.15 var(--serif); margin: 18px 0 10px; }
   ol.flow p { margin: 0; color: var(--dust); }
 
-  /* Screenshot: the dithered picture dissolves into the real one (see the script) */
-  .shot { position: relative; margin: 0; filter: drop-shadow(0 40px 80px rgba(140, 24, 56, .28)); }
-  .shot img, .shot canvas { display: block; width: 100%; height: auto; }
-  .shot canvas { position: absolute; inset: 0; height: 100%; image-rendering: pixelated; }
-  .js .shot:not(.ready) img { opacity: 0; animation: unhide 0s 6s forwards; }
-  .js .shot:not(.ready) { background: var(--ink-raised); border-radius: 1.8% / 3%; }
-  @keyframes unhide { to { opacity: 1; } }
+  /* The intro video: plays muted while it is in view (see the script); its controls turn the sound on */
+  .film { margin: 0; }
+  .film video {
+    display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--ink-raised); box-shadow: 0 40px 80px rgba(140, 24, 56, .28);
+  }
   .caption { margin: 36px auto 0; max-width: 34em; text-align: center; color: var(--dust); font-size: 16px; }
 
   ol.install { list-style: none; margin: 72px 0 0; padding: 0; max-width: 880px; }
@@ -217,12 +216,13 @@
     </div>
   </section>
 
-  <section class="block" aria-label="Screenshot">
+  <section class="block" aria-label="Video">
     <div class="wrap">
-      <figure class="shot reveal">
-        <img src="img/library.webp" width="1600" height="979" alt="The Corkscrew Library: Steam games and installed programs, with the last-played ones in a carousel">
+      <figure class="film reveal">
+        <video src="video/intro.mp4" poster="img/intro-poster.jpg" width="1920" height="1080" muted loop playsinline controls preload="none"
+               aria-label="Corkscrew in use: the Library, Steam, a game page, Add Program, Offline Programs, then FIFA 23 playing"></video>
       </figure>
-      <p class="caption reveal">Steam games and everything you install, in one Library.</p>
+      <p class="caption reveal">From the Library to FIFA 23 on an M4 MacBook Pro, in 35 seconds.</p>
     </div>
   </section>
 
@@ -273,10 +273,8 @@
       var hex = style.getPropertyValue(name).trim().slice(1);
       return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
     }
-    var ink = rgb("--ink"), wine = rgb("--wine"), paper = rgb("--paper");
+    var wine = rgb("--wine");
     var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    var shots = document.querySelectorAll(".shot");
-    function showAll() { shots.forEach(function (shot) { shot.classList.add("ready"); }); }
 
     // Fade-ups: each block shows once it scrolls into view.
     var reveals = document.querySelectorAll(".reveal");
@@ -291,6 +289,18 @@
         });
       }, { threshold: 0.15, rootMargin: "0px 0px -8% 0px" });
       reveals.forEach(function (el) { seen.observe(el); });
+    }
+
+    // The intro video plays, muted, while half of it is in view. With reduced motion it waits for a click.
+    var film = document.querySelector(".film video");
+    if (film && !reduce && "IntersectionObserver" in window) {
+      new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) { film.pause(); return; }
+          var playing = film.play();
+          if (playing) playing.catch(function () {}); // autoplay refused: the controls still work
+        });
+      }, { threshold: 0.5 }).observe(film);
     }
 
     try {
@@ -318,74 +328,8 @@
       paintGlow();
       var resizing;
       window.addEventListener("resize", function () { clearTimeout(resizing); resizing = setTimeout(paintGlow, 150); });
-
-      // The screenshot: drawn first as a three-ink dither (ink, wine, paper; the window's clear
-      // corners stay clear), which then dissolves, cell by cell in Bayer order and top first, into
-      // the real picture underneath.
-      var dither = function (img) {
-        var w = Math.round(img.clientWidth / CELL), h = Math.round(img.clientHeight / CELL);
-        if (!w || !h) return null;
-        var canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
-        canvas.setAttribute("aria-hidden", "true");
-        var ctx = canvas.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, w, h);
-        var image = ctx.getImageData(0, 0, w, h), px = image.data, order = new Float32Array(w * h);
-        var inks = [ink, wine, paper];
-        for (var y = 0; y < h; y++) {
-          for (var x = 0; x < w; x++) {
-            var i = y * w + x, j = i * 4, t = threshold(x, y), clear = px[j + 3] < 255;
-            var luma = (0.2126 * px[j] + 0.7152 * px[j + 1] + 0.0722 * px[j + 2]) / 255;
-            var level = Math.pow(luma, 0.6) * 2, base = Math.floor(level);
-            var c = inks[Math.min(2, base + (level - base > t ? 1 : 0))];
-            px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = clear ? 0 : 255;
-            order[i] = t * 0.55 + (y / h) * 0.45;
-          }
-        }
-        ctx.putImageData(image, 0, 0);
-        return { canvas: canvas, ctx: ctx, image: image, order: order };
-      };
-      var develop = function (d) {
-        var start = null, duration = 1300, px = d.image.data, order = d.order;
-        var frame = function (now) {
-          if (start === null) start = now;
-          var p = Math.min(1, (now - start) / duration);
-          var e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-          for (var i = 0; i < order.length; i++) if (order[i] < e) px[i * 4 + 3] = 0;
-          d.ctx.putImageData(d.image, 0, 0);
-          if (p < 1) requestAnimationFrame(frame); else d.canvas.remove();
-        };
-        requestAnimationFrame(frame);
-      };
-
-      if (reduce || !("IntersectionObserver" in window)) {
-        showAll();
-      } else {
-        var observer = new IntersectionObserver(function (entries) {
-          entries.forEach(function (entry) {
-            if (!entry.isIntersecting) return;
-            observer.unobserve(entry.target);
-            var d = entry.target._dither;
-            setTimeout(function () { develop(d); }, 500);
-          });
-        }, { threshold: 0.3 });
-        shots.forEach(function (shot) {
-          var img = shot.querySelector("img");
-          var start = function () {
-            var d = null;
-            try { d = dither(img); } catch (e) { d = null; } // file:// pages can't read pixels
-            if (d) { shot.appendChild(d.canvas); shot._dither = d; observer.observe(shot); }
-            shot.classList.add("ready");
-          };
-          if (img.complete && img.naturalWidth) start();
-          else {
-            img.addEventListener("load", start);
-            img.addEventListener("error", function () { shot.classList.add("ready"); });
-          }
-        });
-      }
     } catch (e) {
-      showAll();
+      // The glow is decoration; the CSS gradient stays.
     }
 
     document.querySelectorAll("button.copy").forEach(function (button) {

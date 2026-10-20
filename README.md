@@ -11,6 +11,8 @@ A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on A
 
 It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27). It runs games through their stores and launchers, and any Windows program you add. Corkscrew itself doesn't bypass DRM or copy protection. Contributions are welcome (see [Contributing](#contributing)).
 
+[![Corkscrew in use, a 35-second video: the Library, Steam, a game page, Add Program, Offline Programs, then FIFA 23 playing](docs/intro-poster.jpg)](https://prateek-srivastav.github.io/corkscrew/video/intro.mp4)
+
 | Library | Steam |
 |---|---|
 | <img src="docs/screenshots/library.png" alt="The Library: every program from every bottle, with the last-played ones in a carousel"> | <img src="docs/screenshots/steam.png" alt="The Steam page: the signed-in account's Steam library"> |
