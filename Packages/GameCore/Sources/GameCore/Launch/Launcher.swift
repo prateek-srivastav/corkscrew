@@ -81,6 +81,10 @@ public enum Launcher {
            try Steam.installWebHelperWrapper(steamRoot: executable.deletingLastPathComponent(), wrapper: wrapper) {
             notes.append("Put the web helper wrapper back in front of Steam's (a Steam update had replaced it).")
         }
+        if Steam.isClient(executable), steamWebHelperWrapper != nil {
+            // So the Dock shows "Steam"; Steam still starts without it.
+            _ = try? LoaderBundles.prepareSteamWebHelper(engine: engine, isolated: bottle.kind == .isolated, paths: paths)
+        }
         switch try await store.prepareForLaunch(bottle, engine: engine) {
         case .upToDate: break
         case .updated: notes.append("The runtime's modules changed; updated the bottle (wineboot --update).")

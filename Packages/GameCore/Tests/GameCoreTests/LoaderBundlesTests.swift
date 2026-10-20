@@ -78,6 +78,46 @@ struct LoaderBundlesTests {
         }
     }
 
+    /// Steam's real web helper shows as "Steam": in Wine's folder, where the runtime finds the bundle,
+    /// or in the prebuilt folder for isolated bottles. A bundle Wine made is rewritten in place.
+    @Test func namesSteamsWebHelperSteam() throws {
+        try withTempDir { root in
+            let engine = Engine(id: "test", root: root.appending(path: "runtime"), architecture: .x86_64)
+            let loader = LoaderBundles.loader(of: engine)
+            try FileManager.default.createDirectory(at: loader.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("loader".utf8).write(to: loader)
+            let paths = AppPaths(supportRoot: root.appending(path: "support"), logsRoot: root.appending(path: "logs"),
+                                 cachesRoot: root.appending(path: "caches"), userHome: root, wineServerDirectory: root.appending(path: "wine-uid"))
+            let temporary = root.appending(path: "T")
+            let name = "steamwebhelper_real.exe"
+            func inode(_ url: URL) throws -> Int? { try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int }
+
+            // As Wine would have made it.
+            let folder = try #require(LoaderBundles.wineFolder(for: engine, in: temporary))
+            let attributes = try FileManager.default.attributesOfItem(atPath: loader.path)
+            let modified = try #require(attributes[.modificationDate] as? Date).timeIntervalSince1970
+            #expect(folder.lastPathComponent.hasPrefix("winetemp-\(try #require(try inode(loader)))-\(Data("loader".utf8).count)-\(Int(modified))-"))
+            let wines = try LoaderBundles.prepare(name: name, identifier: LoaderBundles.identifier, engine: engine, in: folder)
+            let executable = wines.appending(path: "Contents/MacOS/\(name)")
+            let linked = try inode(executable)
+
+            let bundle = try #require(try LoaderBundles.prepareSteamWebHelper(engine: engine, isolated: false, paths: paths, temporary: temporary))
+            #expect(bundle == wines)
+            #expect(try inode(executable) == linked)
+            let plist = try #require(LoaderBundles.infoPlist(of: bundle))
+            #expect(plist["CFBundleName"] as? String == "Steam" && plist["CFBundleDisplayName"] as? String == name)
+            #expect(plist["CFBundleIdentifier"] as? String == LoaderBundles.identifier)
+            #expect(try String(contentsOf: bundle.appending(path: "Contents/Resources/en.lproj/InfoPlist.strings"), encoding: .utf8)
+                == "CFBundleDisplayName = \"Steam\";\n")
+            #expect(FileManager.default.displayName(atPath: bundle.path) == "Steam")
+
+            let isolated = try #require(try LoaderBundles.prepareSteamWebHelper(engine: engine, isolated: true, paths: paths, temporary: temporary))
+            #expect(isolated.deletingLastPathComponent() == LoaderBundles.prebuiltFolder(for: engine, paths: paths))
+            #expect(LoaderBundles.bundleIdentifier(of: isolated) == LoaderBundles.identifier(for: name))
+            #expect(FileManager.default.displayName(atPath: isolated.path) == "Steam")
+        }
+    }
+
     /// Wine's per-user temporary folder (`/var/folders/…/T`), not `TMPDIR`.
     @Test func temporaryDirectoryIsTheUsersTempFolder() {
         let folder = LoaderBundles.temporaryDirectory
