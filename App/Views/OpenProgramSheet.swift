@@ -61,8 +61,10 @@ struct OpenProgramSheet: View {
                                size: download.size, freeSpace: model.installer.freeSpace)
             }
             if model.programBottles.isEmpty {
+                // 8 pt under the section above, like the warnings in a section.
                 Label("Set up Corkscrew in Settings first.", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+                    .padding(.top, -10)
             }
 
             buttons(bottle)
@@ -89,9 +91,9 @@ struct OpenProgramSheet: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 ForEach(inspection.antiCheat, id: \.evidence) { finding in
                     Label("\(finding.kind.rawValue): "
-                          + (finding.severity == .blocksLaunch ? "this game won't run under Wine." : "online play may not work."),
+                          + (finding.severity == .blocksLaunch ? "this game might have issues running." : "online play may not work."),
                           systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(finding.severity == .blocksLaunch ? .red : .orange)
+                        .foregroundStyle(.orange)
                 }
             } else if let inspectionError {
                 Label(inspectionError, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)

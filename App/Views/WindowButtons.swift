@@ -14,6 +14,29 @@ enum TopBar {
     static let bottom = centerY + Theme.controlHeight / 2
 }
 
+/// With keyboard navigation on (System Settings ▸ Keyboard), macOS gives the window's first button
+/// focus when the window opens, so its focus line shows before a key is pressed. This takes that
+/// focus away once; the first Tab focuses the first button as usual.
+struct NoFocusAtOpen: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ClearingView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class ClearingView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            NotificationCenter.default.removeObserver(self)
+            guard let window, NSApp.isFullKeyboardAccessEnabled else { return }
+            NotificationCenter.default.addObserver(self, selector: #selector(clear), name: NSWindow.didBecomeKeyNotification, object: window)
+        }
+
+        @objc private func clear() {
+            NotificationCenter.default.removeObserver(self)
+            // After SwiftUI has put the focus on its first button.
+            DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(nil) }
+        }
+    }
+}
+
 /// Moves the window's close, minimize and zoom buttons onto `TopBar`'s line. AppKit puts them
 /// back after a resize, full screen or a focus change, so they move again after each.
 struct WindowButtonsPlacement: NSViewRepresentable {

@@ -299,6 +299,7 @@ struct SidebarRow: View {
             .contentShape(.rect(cornerRadius: Self.radius(isCollapsed: isCollapsed)))
         }
         .buttonStyle(.plain)
+        .focusLine(in: .rect(cornerRadius: Self.radius(isCollapsed: isCollapsed)))
         .opacity(isEnabled ? 1 : 0.4)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)

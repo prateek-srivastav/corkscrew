@@ -542,8 +542,11 @@ struct GameHero: View {
                       systemImage: "arrow.down.circle")
                     .font(.body).foregroundStyle(.secondary)
             }
-            ForEach(session?.notes ?? [], id: \.self) { note in
-                Label(note, systemImage: "info.circle").font(.body).foregroundStyle(.secondary)
+            // Launch details (Retina mode, anti-cheat found, …): Advanced mode only.
+            if advancedMode {
+                ForEach(session?.notes ?? [], id: \.self) { note in
+                    Label(note, systemImage: "info.circle").font(.body).foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth: 640, alignment: .leading)

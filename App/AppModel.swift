@@ -951,7 +951,7 @@ final class AppModel {
                 self?.sessions[game.id]?.notes = prepared.notes
                     + (steamWasRunning ? ["Steam was already running in this bottle, so the game starts with Steam's settings, not its own."] : [])
                     + (prepared.inspection?.antiCheat.map { "\($0.kind.rawValue) found (\($0.evidence)): "
-                        + ($0.severity == .blocksLaunch ? "this game won't run under Wine." : "online play may not work.") } ?? [])
+                        + ($0.severity == .blocksLaunch ? "this game might have issues running." : "online play may not work.") } ?? [])
                 self?.sessions[game.id]?.status = .running
                 let started = ContinuousClock.now
                 if game.profile.performanceOverlay { Self.startOverlay(prefix: prepared.context.location.prefix) }
