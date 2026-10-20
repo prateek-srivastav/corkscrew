@@ -6,8 +6,17 @@ import Foundation
 /// files stay: deleting them could pull one from under a program that is starting, and the next
 /// start registers it again.
 public enum LoaderBundles {
-    /// The bundles' `CFBundleIdentifier`; bundles from other Wine builds are left alone.
+    /// The bundles' `CFBundleIdentifier`; bundles from other Wine builds are left alone. Isolated
+    /// games' bundles add their name to it (`identifier(for:)`).
     static let identifier = "io.github.prateek-srivastav.Corkscrew.wineloader"
+
+    /// An isolated game's bundle identifier, so Metal keeps its compiled shaders in a folder of the
+    /// game's own, which the launch links into the game's cache (`ShaderCacheLinks`).
+    static func identifier(for name: String) -> String {
+        identifier + "." + String(name.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+    }
+
+    static func isOurs(identifier id: String) -> Bool { id == identifier || id.hasPrefix(identifier + ".") }
     static let lsregister = URL(fileURLWithPath:
         "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister")
 
@@ -29,12 +38,15 @@ public enum LoaderBundles {
     /// Our bundles in a folder of them.
     static func bundles(in folder: URL) -> [URL] {
         subfolders(of: folder).filter { bundle in
-            guard bundle.pathExtension == "app",
-                  let data = try? Data(contentsOf: bundle.appending(path: "Contents/Info.plist")),
-                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-            else { return false }
-            return plist["CFBundleIdentifier"] as? String == identifier
+            bundle.pathExtension == "app" && bundleIdentifier(of: bundle).map { isOurs(identifier: $0) } == true
         }
+    }
+
+    static func bundleIdentifier(of bundle: URL) -> String? {
+        guard let data = try? Data(contentsOf: bundle.appending(path: "Contents/Info.plist")),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return nil }
+        return plist["CFBundleIdentifier"] as? String
     }
 
     private static func subfolders(of folder: URL) -> [URL] {
@@ -88,9 +100,9 @@ public enum LoaderBundles {
         return String(name[..<dot])
     }
 
-    /// Makes (or refreshes, after a runtime update) the game's bundle in `folder`: Info.plist with
-    /// the games category, the loader hard-linked as its executable, and ntdll.so next to it.
-    /// Returns the bundle, or nil when the name can't be one.
+    /// Makes (or refreshes, after a runtime update or with an older identifier) the game's bundle in
+    /// `folder`: Info.plist with the games category, the loader hard-linked as its executable, and
+    /// ntdll.so next to it. Returns the bundle, or nil when the name can't be one.
     @discardableResult
     public static func prepare(for executable: URL, engine: Engine, in folder: URL) throws -> URL? {
         guard let name = bundleName(for: executable.lastPathComponent) else { return nil }
@@ -100,7 +112,8 @@ public enum LoaderBundles {
         let macOS = bundle.appending(path: "Contents/MacOS", directoryHint: .isDirectory)
         let linked = macOS.appending(path: name)
         if let existing = try? fm.attributesOfItem(atPath: linked.path)[.systemFileNumber] as? Int,
-           let current = try? fm.attributesOfItem(atPath: loader.path)[.systemFileNumber] as? Int, existing == current {
+           let current = try? fm.attributesOfItem(atPath: loader.path)[.systemFileNumber] as? Int, existing == current,
+           bundleIdentifier(of: bundle) == identifier(for: name) {
             return bundle
         }
         try? fm.removeItem(at: bundle)
@@ -111,7 +124,7 @@ public enum LoaderBundles {
             "CFBundleAllowMixedLocalizations": true,
             "CFBundleDevelopmentRegion": "English",
             "CFBundleExecutable": name,
-            "CFBundleIdentifier": identifier,
+            "CFBundleIdentifier": identifier(for: name),
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleName": displayName(of: name),
             "CFBundlePackageType": "APPL",

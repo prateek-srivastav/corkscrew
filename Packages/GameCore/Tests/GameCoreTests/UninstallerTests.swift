@@ -26,6 +26,25 @@ struct UninstallerTests {
         }
     }
 
+    /// Our links in the user cache folder go; Metal's and D3DMetal's own folders and other links stay.
+    @Test func removesOurShaderCacheLinks() throws {
+        try withTempDir { root in
+            let fm = FileManager.default
+            let paths = RuntimeStoreTests.paths(root.appending(path: "data"))
+            let folder = root.appending(path: "C")
+            try ShaderCacheLinks.prepare(for: URL(fileURLWithPath: "/bottle/FIFA23.exe"), gameID: UUID(), isolated: true, paths: paths, in: folder)
+            try folder.appending(path: "d3dm/RDR2.exe/shaders.cache/x").write("x")
+            try folder.appending(path: "\(LoaderBundles.identifier)/com.apple.metal/x").write("x")
+            try fm.createSymbolicLink(at: folder.appending(path: "d3dm/Other.exe"), withDestinationURL: root.appending(path: "elsewhere"))
+            var uninstaller = Uninstaller(paths: paths, bundleIdentifier: "test", library: root.appending(path: "Library"))
+            uninstaller.userCache = folder
+
+            uninstaller.removeFiles()
+            #expect(try fm.contentsOfDirectory(atPath: folder.path).sorted() == ["d3dm", LoaderBundles.identifier])
+            #expect(try fm.contentsOfDirectory(atPath: folder.appending(path: "d3dm").path).sorted() == ["Other.exe", "RDR2.exe"])
+        }
+    }
+
     @Test func removesOurLoaderBundlesAndTheirEmptyFolder() throws {
         try withTempDir { temporary in
             func bundle(_ name: String, in folder: String, identifier: String) throws {

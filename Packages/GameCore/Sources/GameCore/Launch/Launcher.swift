@@ -124,6 +124,10 @@ public enum Launcher {
                        depthEqualFixAvailable: depthEqualShim != nil),
             in: context
         )
+        if let folder = ShaderCacheLinks.userCacheFolder {
+            // For speed; the game still starts without them.
+            try? ShaderCacheLinks.prepare(for: executable, gameID: gameID, isolated: bottle.kind == .isolated, paths: paths, in: folder)
+        }
         if GodOfWarSettings.isGame(executable),
            try GodOfWarSettings.apply(installFolder: executable.deletingLastPathComponent()) {
             notes.append(GodOfWarSettings.note)

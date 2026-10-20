@@ -123,6 +123,12 @@ struct SandboxProfileTests {
             // planted in /Applications or /opt/homebrew for you to run later.
             #expect(try run(touch, root.appending(path: "outside.txt").path).status == 0)
             #expect(try sandboxed(profile, touch, root.appending(path: "planted.txt").path).status != 0)
+            // A write through a link from outside lands in the bottle, which is allowed: how isolated
+            // games keep their shader caches (`ShaderCacheLinks`).
+            let link = root.appending(path: "d3dm/Game.exe")
+            try link.deletingLastPathComponent().makeDirectory()
+            try fm.createSymbolicLink(at: link, withDestinationURL: save.deletingLastPathComponent())
+            #expect(try sandboxed(profile, touch, link.appending(path: "cache").path).status == 0)
             // The runtime stays read-only, so its "may start programs" rule can't be abused.
             #expect(try sandboxed(profile, touch, bin.appending(path: "planted").path).status != 0)
             // The hidden folders stay hidden under their other spelling (APFS firmlinks).

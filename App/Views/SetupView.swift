@@ -218,10 +218,7 @@ struct SetupView: View {
                        systemImage: model.setupFailure == nil ? "sparkles" : "arrow.clockwise") { model.setUp() }
                     .buttonStyle(.prominentPill)
                     .disabled(model.activity != nil)
-                Text((AppModel.bundledEnginePack != nil
-                      ? "Wine comes with the app. Steam is downloaded, and updates itself the first time it opens. "
-                      : "Downloads \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file)) for Wine; Steam updates itself the first time it opens. ")
-                     + "If Rosetta isn't installed yet, macOS asks for your password once.")
+                Text(setupNote)
                     .font(.subheadline).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -231,6 +228,17 @@ struct SetupView: View {
                 Text("Installing Steam…")
             }
         }
+    }
+
+    /// The note beside the setup button. Wine only while it isn't installed: setup skips it then.
+    private var setupNote: String {
+        let rosetta = "If Rosetta isn't installed yet, macOS asks for your password once."
+        if !model.runtimes.isEmpty { return "Steam is downloaded, and updates itself the first time it opens. " + rosetta }
+        if AppModel.bundledEnginePack != nil {
+            return "Wine comes with the app. Steam is downloaded, and updates itself the first time it opens. " + rosetta
+        }
+        return "Downloads \(ByteCountFormatter.string(fromByteCount: AppModel.enginePack.size, countStyle: .file)) for Wine; "
+            + "Steam updates itself the first time it opens. " + rosetta
     }
 
     private var setupTitle: String {

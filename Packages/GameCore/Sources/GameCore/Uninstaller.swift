@@ -13,6 +13,9 @@ public struct Uninstaller: Sendable {
     public var hostEnvironment: [String: String]
     /// Where Wine makes our loader bundles (see `LoaderBundles`); nil leaves them.
     public var loaderBundles: URL? = LoaderBundles.temporaryDirectory
+    /// The user cache folder, with our links to games' shader caches (see `ShaderCacheLinks`); nil
+    /// leaves them.
+    public var userCache: URL? = ShaderCacheLinks.userCacheFolder
 
     public init(paths: AppPaths, bundleIdentifier: String,
                 library: URL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0],
@@ -72,11 +75,12 @@ public struct Uninstaller: Sendable {
         return !fm.fileExists(atPath: app.path)
     }
 
-    /// Deletes `items` for good, not to the Trash (bottles take tens of GB). Returns the ones that
-    /// are still there.
+    /// Deletes `items` for good, not to the Trash (bottles take tens of GB), and our links in the
+    /// user cache folder. Returns the items that are still there.
     @discardableResult
     public func removeFiles() -> [URL] {
         let fm = FileManager.default
+        if let userCache { ShaderCacheLinks.removeLinks(in: userCache, paths: paths) }
         return items.filter { item in
             guard fm.fileExists(atPath: item.path) else { return false }
             try? fm.removeItem(at: item)
