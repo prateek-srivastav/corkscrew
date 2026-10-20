@@ -36,6 +36,21 @@ struct CorkscrewApp: App {
                         Text("Start the game again to use it.")
                     }
                 }
+                .background {
+                    Color.clear.alert(model.fixedReport?.isSent == false ? "A reported problem is fixed" : "Your report is fixed",
+                                      isPresented: Binding(get: { model.fixedReport != nil }, set: { if !$0 { model.closeFixedReport() } }),
+                                      presenting: model.fixedReport) { fixed in
+                        if fixed.needsUpdate {
+                            Button("Update") { model.installUpdate() }
+                            Button("Later", role: .cancel) {}
+                        } else {
+                            Button("OK") {}
+                        }
+                    } message: { fixed in
+                        Text(fixed.needsUpdate ? "“\(fixed.title)”: fixed in \(fixed.version). Update to get it."
+                                               : "“\(fixed.title)”: fixed in this version.")
+                    }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)

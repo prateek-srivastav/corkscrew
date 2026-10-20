@@ -111,18 +111,19 @@ struct ReportSheet: View {
     private func openIssue() {
         copy()
         NSWorkspace.shared.open(report.issueURL(repository: AboutPanel.source, backend: pending.backend,
-                                                fromSource: AppModel.isDebugBuild))
+                                                fromSource: AppModel.isBuiltFromSource))
         dismiss()
     }
 
-    /// Says the report is sent and stays open; the issue the relay opens isn't shown.
+    /// Says the report is sent and stays open; the issue the relay opens isn't shown, only kept to
+    /// say when it's fixed.
     private func send(to relay: URL) {
         isSending = true
         sendError = nil
         Task {
             defer { isSending = false }
             do {
-                _ = try await report.send(to: relay)
+                if let issue = try await report.send(to: relay) { model.remember(report, issue: issue) }
                 sent = true
             } catch {
                 sendError = "Couldn't send the report: \(AppModel.describe(error)). You can report it on GitHub instead."

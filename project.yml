@@ -103,6 +103,8 @@ targets:
         LSApplicationCategoryType: public.app-category.games
         LSMinimumSystemVersion: "26.0"
         NSPrincipalClass: NSApplication
+        # "release" in the DMG and the update zip (scripts/make-dmg.sh); empty in builds from source.
+        CorkscrewDistribution: $(CORKSCREW_DISTRIBUTION)
         CFBundleDocumentTypes:
           - CFBundleTypeName: Windows Program
             CFBundleTypeRole: Viewer
