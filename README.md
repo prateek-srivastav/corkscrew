@@ -169,7 +169,7 @@ Open it from there the first time: it finds the runtime and components in `build
 
 - **Steam games** appear in the Library once installed. Tested games are listed under **Not Downloaded** from the start; their button opens them in Steam.
 - **Downloaded programs** (`.zip`, `.rar`, `.7z`, `.iso`): see [Install a program from a download](#install-a-program-from-a-download).
-- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for programs you open again.
+- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for programs you open again. A protected bottle gets a copy of the program's folder in `C:\Games`: on the same disk it's a clone that takes no extra room; from another disk, Add Program shows its size first. A program right in Downloads (or another shared folder) goes alone.
 - **Per-game settings:** graphics backend, MetalFX, Retina mode, Metal HUD, performance overlay, Steam overlay, launch arguments and logs.
 - **Untrusted programs:** create an **Isolated** bottle under Bottles → New Bottle. Turn on **Install Steam** if a program needs Steam; use a second Steam account there, because programs in the bottle can read its sign-in.
 - **Data** lives in `~/Library/{Application Support,Logs,Caches}/Corkscrew`; pass `-DataRoot <folder>` to keep it in one folder. Bottles, runtimes and components are in `.noindex` folders, which Spotlight doesn't index.

@@ -203,6 +203,63 @@ public struct BottleStore: Sendable {
         return downloads.appending(path: program.lastPathComponent)
     }
 
+    /// The folder `program` needs with it in an isolated bottle: its game folder (`GameDetector.gameRoot`;
+    /// for an Unreal launcher stub, the stub's own folder, which holds `<Project>/Binaries/Win64`). Nil
+    /// when that folder holds other things too (Downloads, a disk's top level, a bottle's shared
+    /// folders): then only the program and files named like it go, with `importProgram(_:into:)`.
+    public func programFolder(of program: URL) -> URL? {
+        let folder = GameDetector.gameRoot(for: program)
+        let path = SandboxProfile.canonicalPath(folder)
+        let bottles = SandboxProfile.canonicalPath(paths.bottles)
+        if path.hasPrefix(bottles + "/") {
+            // In another bottle: `<id>/prefix/drive_c/…`, in a folder Windows doesn't share.
+            let parts = path.dropFirst(bottles.count + 1).split(separator: "/").map { $0.lowercased() }
+            guard parts.count > 3, parts[1] == "prefix", parts[2] == "drive_c" else { return nil }
+            return ProgramUninstaller.isShared(Array(parts.dropFirst(3))) ? nil : folder
+        }
+        // The disk's top level or a folder right in it (/Users, /Applications), another disk's top
+        // level, the home folder or a folder right in it (Downloads, Desktop).
+        let parent = (path as NSString).deletingLastPathComponent
+        let home = SandboxProfile.canonicalPath(paths.userHome)
+        return [path, parent].contains("/") || parent == "/Volumes" || [path, parent].contains(home) ? nil : folder
+    }
+
+    /// Clones `folder` (from `programFolder(of:)`) into the bottle's `C:\Games`, where installed programs
+    /// go, as "<name> 2" when the name is taken. Your folder stays. Returns the program's new location.
+    public func importProgram(_ program: URL, folder: URL, into bottle: Bottle) throws -> URL {
+        let fm = FileManager.default
+        let games = location(of: bottle).prefix.appending(path: "drive_c/Games", directoryHint: .isDirectory)
+        try fm.createDirectory(at: games, withIntermediateDirectories: true)
+        var target = games.appending(path: folder.lastPathComponent, directoryHint: .isDirectory)
+        var number = 2
+        while fm.fileExists(atPath: target.path) {
+            target = games.appending(path: "\(folder.lastPathComponent) \(number)", directoryHint: .isDirectory)
+            number += 1
+        }
+        do {
+            try fm.copyItem(at: folder, to: target)  // clonefile on APFS
+        } catch {
+            // A copy from another disk can stop part way (the disk is full): leave none of it.
+            try? fm.removeItem(at: target)
+            throw error
+        }
+        return program.pathComponents.dropFirst(folder.pathComponents.count).reduce(target) { $0.appending(path: $1) }
+    }
+
+    /// Bytes a copy of `folder` takes where the bottles are: 0 on their own disk, where the copy is a
+    /// clone that shares the files' space; otherwise what its files take.
+    public func spaceNeeded(toImport folder: URL) -> Int64 {
+        let fm = FileManager.default
+        func disk(_ url: URL) -> Int? { (try? fm.attributesOfItem(atPath: url.path))?[.systemNumber] as? Int }
+        if let source = disk(folder), source == disk(paths.bottles) { return 0 }
+        guard let walker = fm.enumerator(at: folder, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in walker {
+            total += Int64((try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
     /// `drive_c/users/<name>`: the Windows user's own folder (Wine names it after the Mac user,
     /// winecx always `crossover`).
     public func windowsUserFolder(of bottle: Bottle) -> URL {

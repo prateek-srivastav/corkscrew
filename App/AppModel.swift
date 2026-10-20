@@ -830,11 +830,15 @@ final class AppModel {
         }
     }
 
+    /// The program's own folder goes with it (a clone on the bottles' disk); one in a shared folder
+    /// such as Downloads goes alone.
     private func prepareProgram(_ program: URL, for bottle: Bottle) async -> URL? {
         guard needsImport(program, into: bottle) else { return program }
-        let paths = self.paths
-        return await perform("Copying \(program.lastPathComponent) into \(bottle.name)…") {
-            try BottleStore(paths: paths).importProgram(program, into: bottle)
+        let store = BottleStore(paths: paths)
+        let folder = store.programFolder(of: program)
+        return await perform("Copying \((folder ?? program).lastPathComponent) into \(bottle.name)…") {
+            if let folder { try store.importProgram(program, folder: folder, into: bottle) }
+            else { try store.importProgram(program, into: bottle) }
         }
     }
 

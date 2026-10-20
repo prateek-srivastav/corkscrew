@@ -33,6 +33,101 @@ struct BottleImportTests {
         }
     }
 
+    /// Issue #52: Unreal's launcher stub copied alone couldn't find `<Project>\Binaries\Win64`, and the
+    /// launch, which inspects the copy, picked WineD3D for a DX12 game.
+    @Test func importsAnUnrealGameWithItsWholeFolder() throws {
+        try withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)  // `root` is the home folder
+            let store = BottleStore(paths: paths)
+            let target = try bottle(in: paths)
+            let folder = root.appending(path: "Downloads/SparkingZERO")
+            let stub = folder.appending(path: "SparkingZERO.exe")
+            try stub.write(PEBuilder(imports: ["kernel32.dll"]).build())
+            let shipping = folder.appending(path: "SparkingZERO/Binaries/Win64/SparkingZERO-Win64-Shipping.exe")
+            try shipping.write(PEBuilder(imports: ["kernel32.dll", "dxgi.dll"], payload: utf16LE("D3D12.dll")).build())
+            try folder.appending(path: "SparkingZERO/Content/Paks/pakchunk0.pak").write("pak")
+            try folder.appending(path: "Engine/Binaries/ThirdParty/x.dll").write("dll")
+
+            #expect(store.programFolder(of: stub)?.path == folder.path)
+            #expect(store.programFolder(of: shipping)?.path == folder.path)
+            #expect(store.spaceNeeded(toImport: folder) == 0)
+
+            let imported = try store.importProgram(stub, folder: folder, into: target)
+            let games = store.location(of: target).prefix.appending(path: "drive_c/Games")
+            #expect(imported.path == games.appending(path: "SparkingZERO/SparkingZERO.exe").path)
+            #expect(FileManager.default.fileExists(atPath: games.appending(path: "SparkingZERO/SparkingZERO/Content/Paks/pakchunk0.pak").path))
+            let inspection = try GameDetector.inspect(executable: imported)
+            #expect(inspection.inspectedBinary.lastPathComponent == "SparkingZERO-Win64-Shipping.exe")
+            #expect(inspection.recommendedBackend == .d3dmetal)
+            #expect(FileManager.default.fileExists(atPath: shipping.path))
+
+            // Picked again, or by its Shipping exe: a second copy, never over the first.
+            #expect(try store.importProgram(shipping, folder: folder, into: target).path
+                    == games.appending(path: "SparkingZERO 2/SparkingZERO/Binaries/Win64/SparkingZERO-Win64-Shipping.exe").path)
+        }
+    }
+
+    @Test func leavesFoldersOthersShareBehind() throws {
+        try withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)  // `root` is the home folder
+            let store = BottleStore(paths: paths)
+            let other = store.location(of: try bottle(in: paths)).prefix.appending(path: "drive_c")
+            let home = root
+            func folder(_ program: URL) -> String? { store.programFolder(of: program)?.path }
+
+            #expect(folder(home.appending(path: "Downloads/setup.exe")) == nil)
+            #expect(folder(home.appending(path: "setup.exe")) == nil)
+            #expect(folder(URL(fileURLWithPath: "/Volumes/Disk/setup.exe")) == nil)
+            #expect(folder(URL(fileURLWithPath: "/Applications/setup.exe")) == nil)
+            #expect(folder(other.appending(path: "users/crossover/Downloads/setup.exe")) == nil)
+            #expect(folder(other.appending(path: "Games/tool.exe")) == nil)
+            #expect(folder(home.appending(path: "Downloads/Tool/tool.exe")) == home.appending(path: "Downloads/Tool").path)
+            #expect(folder(other.appending(path: "Games/Tool/tool.exe")) == other.appending(path: "Games/Tool").path)
+            #expect(folder(other.appending(path: "Program Files/Tool/bin/tool.exe")) == other.appending(path: "Program Files/Tool/bin").path)
+        }
+    }
+
+    @Test func leavesNoHalfCopiedFolder() throws {
+        try withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root.appending(path: "data"))
+            let store = BottleStore(paths: paths)
+            let target = try bottle(in: paths)
+            let folder = root.appending(path: "Tool")
+            try folder.appending(path: "tool.exe").write("MZ")
+            let unreadable = folder.appending(path: "data/locked.bin")
+            try unreadable.write("locked")
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: unreadable.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+
+            #expect(throws: (any Error).self) { try store.importProgram(folder.appending(path: "tool.exe"), folder: folder, into: target) }
+            let games = store.location(of: target).prefix.appending(path: "drive_c/Games")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: games.path).isEmpty)
+        }
+    }
+
+    @Test func countsTheSpaceACopyFromAnotherDiskTakes() async throws {
+        try await withTempDir { root in
+            let store = BottleStore(paths: RuntimeStoreTests.paths(root.appending(path: "data")))
+            try store.paths.bottles.makeDirectory()
+            let source = root.appending(path: "disc")
+            try source.appending(path: "Tool/tool.exe").write(Data(count: 100_000))
+            let image = root.appending(path: "Tool.iso")
+            let make = Process()
+            make.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            make.arguments = ["makehybrid", "-iso", "-joliet", "-quiet", "-o", image.path, source.path]
+            try make.run()
+            await exited(make)
+            let prefix = root.appending(path: "prefix")
+            try prefix.appending(path: "dosdevices").makeDirectory()
+            let mounted = try await offThePool { try DiscImage.attach([image], prefix: prefix) }
+            let onDisc = prefix.appending(path: "dosdevices/d:/Tool")
+
+            #expect(store.spaceNeeded(toImport: onDisc) >= 100_000)
+            #expect(store.spaceNeeded(toImport: source.appending(path: "Tool")) == 0)
+            try await offThePool { DiscImage.detach(mounted, prefix: prefix) }
+        }
+    }
+
     @Test func importsABottleFolderOnce() throws {
         try withTempDir { root in
             let elsewhere = RuntimeStoreTests.paths(root.appending(path: "dev-data"))
