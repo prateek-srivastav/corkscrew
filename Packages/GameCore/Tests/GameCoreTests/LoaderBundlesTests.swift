@@ -16,11 +16,13 @@ struct LoaderBundlesTests {
             let ours = temporary.appending(path: "winetemp-1-2-3-4", directoryHint: .isDirectory)
             try makeBundle("RDR2.exe", in: ours, identifier: LoaderBundles.identifier)
             try makeBundle("wine", in: ours, identifier: LoaderBundles.identifier)
+            try makeBundle("GoW.exe", in: ours, identifier: LoaderBundles.identifier(for: "GoW.exe"))
+            try makeBundle("Lookalike.exe", in: ours, identifier: LoaderBundles.identifier + "s")
             try makeBundle("Other.exe", in: ours, identifier: "com.codeweavers.CrossOver.wineloader")
             try makeBundle("Elsewhere", in: temporary.appending(path: "not-wine"), identifier: LoaderBundles.identifier)
             FileManager.default.createFile(atPath: ours.appending(path: "steam.exe").path, contents: Data())
 
-            #expect(LoaderBundles.find(in: temporary).map(\.lastPathComponent) == ["RDR2.exe.app", "wine.app"])
+            #expect(LoaderBundles.find(in: temporary).map(\.lastPathComponent) == ["GoW.exe.app", "RDR2.exe.app", "wine.app"])
             #expect(LoaderBundles.find(in: temporary.appending(path: "missing")).isEmpty)
         }
     }
@@ -34,6 +36,7 @@ struct LoaderBundlesTests {
         #expect(LoaderBundles.bundleName(for: "Tom & Jerry.exe") == nil)
         #expect(LoaderBundles.displayName(of: "Game.Setup.exe") == "Game.Setup")
         #expect(LoaderBundles.displayName(of: ".hidden") == ".hidden")
+        #expect(LoaderBundles.identifier(for: "b1-Win64 Shipping.exe") == "io.github.prateek-srivastav.Corkscrew.wineloader.b1-Win64-Shipping-exe")
     }
 
     /// Isolated bottles: the app's bundle holds the loader itself (a hard link), and is made again
@@ -58,6 +61,7 @@ struct LoaderBundlesTests {
                 from: Data(contentsOf: bundle.appending(path: "Contents/Info.plist")), format: nil) as? [String: Any])
             #expect(plist["CFBundleExecutable"] as? String == "GoW.exe" && plist["CFBundleName"] as? String == "GoW")
             #expect(plist["LSSupportsGameMode"] as? Bool == true)
+            #expect(plist["CFBundleIdentifier"] as? String == "io.github.prateek-srivastav.Corkscrew.wineloader.GoW-exe")
             #expect(LoaderBundles.bundles(in: folder).map(\.lastPathComponent) == ["GoW.exe.app"])
 
             // A runtime update replaces the loader file.
@@ -66,6 +70,11 @@ struct LoaderBundlesTests {
             #expect(try LoaderBundles.prepare(for: game, engine: engine, in: folder) == bundle)
             #expect(try inode(executable) == inode(loader))
             #expect(try String(contentsOf: executable, encoding: .utf8) == "loader 2")
+
+            // Bundles from before games had their own identifier.
+            try makeBundle("GoW.exe", in: folder, identifier: LoaderBundles.identifier)
+            #expect(try LoaderBundles.prepare(for: game, engine: engine, in: folder) == bundle)
+            #expect(LoaderBundles.bundleIdentifier(of: bundle) == LoaderBundles.identifier(for: "GoW.exe"))
         }
     }
 
