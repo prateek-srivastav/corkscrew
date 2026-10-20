@@ -43,10 +43,12 @@ public enum LoaderBundles {
     }
 
     static func bundleIdentifier(of bundle: URL) -> String? {
-        guard let data = try? Data(contentsOf: bundle.appending(path: "Contents/Info.plist")),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-        else { return nil }
-        return plist["CFBundleIdentifier"] as? String
+        infoPlist(of: bundle)?["CFBundleIdentifier"] as? String
+    }
+
+    static func infoPlist(of bundle: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: bundle.appending(path: "Contents/Info.plist")) else { return nil }
+        return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
     }
 
     private static func subfolders(of folder: URL) -> [URL] {
@@ -101,32 +103,29 @@ public enum LoaderBundles {
     }
 
     /// Makes (or refreshes, after a runtime update or with an older identifier) the game's bundle in
-    /// `folder`: Info.plist with the games category, the loader hard-linked as its executable, and
-    /// ntdll.so next to it. Returns the bundle, or nil when the name can't be one.
+    /// `folder`. Returns the bundle, or nil when the name can't be one.
     @discardableResult
     public static func prepare(for executable: URL, engine: Engine, in folder: URL) throws -> URL? {
         guard let name = bundleName(for: executable.lastPathComponent) else { return nil }
+        return try prepare(name: name, identifier: identifier(for: name), engine: engine, in: folder)
+    }
+
+    /// Makes (or refreshes, after a runtime update or with another Info.plist) the bundle `name`.app
+    /// in `folder`: Info.plist with the games category, the loader hard-linked as its executable, and
+    /// ntdll.so next to it. `dockName`: the name the Dock and the menu bar show, in place of `name`.
+    static func prepare(name: String, identifier id: String, dockName: String? = nil, engine: Engine, in folder: URL) throws -> URL {
         let fm = FileManager.default
         let loader = loader(of: engine)
         let bundle = folder.appending(path: "\(name).app", directoryHint: .isDirectory)
         let macOS = bundle.appending(path: "Contents/MacOS", directoryHint: .isDirectory)
         let linked = macOS.appending(path: name)
-        if let existing = try? fm.attributesOfItem(atPath: linked.path)[.systemFileNumber] as? Int,
-           let current = try? fm.attributesOfItem(atPath: loader.path)[.systemFileNumber] as? Int, existing == current,
-           bundleIdentifier(of: bundle) == identifier(for: name) {
-            return bundle
-        }
-        try? fm.removeItem(at: bundle)
-        try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
-        try fm.createSymbolicLink(at: macOS.appending(path: "ntdll.so"),
-                                  withDestinationURL: loader.deletingLastPathComponent().appending(path: "ntdll.so"))
-        let plist: [String: Any] = [
+        var plist: [String: Any] = [
             "CFBundleAllowMixedLocalizations": true,
             "CFBundleDevelopmentRegion": "English",
             "CFBundleExecutable": name,
-            "CFBundleIdentifier": identifier(for: name),
+            "CFBundleIdentifier": id,
             "CFBundleInfoDictionaryVersion": "6.0",
-            "CFBundleName": displayName(of: name),
+            "CFBundleName": dockName ?? displayName(of: name),
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1.0",
@@ -135,12 +134,65 @@ public enum LoaderBundles {
             "LSSupportsGameMode": true,
             "LSUIElement": "1",
         ]
+        if dockName != nil {
+            // The Dock shows the bundle's file name. LaunchServices shows the localized display name
+            // (InfoPlist.strings) instead only while the plain one is that file name.
+            plist["CFBundleDisplayName"] = name
+            plist["LSHasLocalizedDisplayName"] = true
+        }
+        let existing = try? fm.attributesOfItem(atPath: linked.path)[.systemFileNumber] as? Int
+        let isLinked = existing != nil && existing == (try? fm.attributesOfItem(atPath: loader.path)[.systemFileNumber] as? Int)
+        if isLinked, let current = infoPlist(of: bundle), NSDictionary(dictionary: current).isEqual(to: plist) {
+            return bundle
+        }
+        // With the loader still linked, in place: a running program may have started from the bundle.
+        if !isLinked {
+            try? fm.removeItem(at: bundle)
+            try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: macOS.appending(path: "ntdll.so"),
+                                      withDestinationURL: loader.deletingLastPathComponent().appending(path: "ntdll.so"))
+        }
         try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-            .write(to: bundle.appending(path: "Contents/Info.plist"))
+            .write(to: bundle.appending(path: "Contents/Info.plist"), options: .atomic)
+        if let dockName {
+            let english = bundle.appending(path: "Contents/Resources/en.lproj", directoryHint: .isDirectory)
+            try fm.createDirectory(at: english, withIntermediateDirectories: true)
+            try Data("CFBundleDisplayName = \"\(dockName)\";\n".utf8).write(to: english.appending(path: "InfoPlist.strings"), options: .atomic)
+        }
         // Last, so a bundle that has it is complete. The runtime uses the bundle only while it is
         // the loader's own file; a runtime on another volume can't be linked (no Game Mode then).
-        try fm.linkItem(at: loader, to: linked)
+        if !isLinked { try fm.linkItem(at: loader, to: linked) }
         return bundle
+    }
+
+    // MARK: Steam
+
+    /// Steam's window belongs to `steamwebhelper_real.exe`, Steam's own helper behind our wrapper
+    /// (`Steam.installWebHelperWrapper`). Its bundle is made before Steam starts, so the Dock and the
+    /// menu bar show "Steam": in the prebuilt folder for isolated bottles, else in Wine's folder,
+    /// where the runtime uses a bundle it finds (with the identifier its own bundles have).
+    @discardableResult
+    public static func prepareSteamWebHelper(engine: Engine, isolated: Bool, paths: AppPaths,
+                                             temporary: URL? = temporaryDirectory) throws -> URL? {
+        let name = "steamwebhelper_real.exe"
+        if isolated {
+            return try prepare(name: name, identifier: identifier(for: name), dockName: "Steam", engine: engine,
+                               in: prebuiltFolder(for: engine, paths: paths))
+        }
+        guard let folder = temporary.flatMap({ wineFolder(for: engine, in: $0) }) else { return nil }
+        // As Wine makes it.
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return try prepare(name: name, identifier: identifier, dockName: "Steam", engine: engine, in: folder)
+    }
+
+    /// Wine's folder of bundles for `engine` in `temporary`, named as `create_tempdir` in ntdll's
+    /// loader.c names it: after the loader's inode, size and modification time.
+    static func wineFolder(for engine: Engine, in temporary: URL) -> URL? {
+        var info = stat()
+        guard stat(loader(of: engine).path, &info) == 0 else { return nil }
+        let time = info.st_mtimespec
+        return temporary.appending(path: "winetemp-\(info.st_ino)-\(info.st_size)-\(time.tv_sec)-\(time.tv_nsec)",
+                                   directoryHint: .isDirectory)
     }
 
     /// Unregisters our bundles and deletes them, with their `winetemp-*` folder once it's empty.

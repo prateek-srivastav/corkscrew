@@ -37,8 +37,11 @@ fi
 [[ $(shasum -a 256 "$PACK" | cut -d' ' -f1) == "$PACK_SHA256" ]] \
   || { echo "$PACK doesn't match the SHA-256 in $PIN" >&2; exit 1; }
 
-scripts/build-app.sh Release
+# Marks the app as a release build: reports from builds from source say so.
+scripts/build-app.sh Release CORKSCREW_DISTRIBUTION=release
 APP=build/DerivedData/Build/Products/Release/Corkscrew.app
+[[ $(/usr/libexec/PlistBuddy -c 'Print :CorkscrewDistribution' "$APP/Contents/Info.plist") == release ]] \
+  || { echo "$APP isn't marked as a release build" >&2; exit 1; }
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
 
 mkdir -p dist

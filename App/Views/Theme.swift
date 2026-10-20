@@ -10,6 +10,9 @@ enum Theme {
     static let surface = Color.white.opacity(0.07)
     static let surfaceHover = Color.white.opacity(0.11)
     static let stroke = Color.white.opacity(0.1)
+    /// Keyboard focus: a quiet grey line, not macOS's ring in the accent colour. Grey shows on the
+    /// dark page, on glass and on the white Play pill.
+    static let focusLine = Color(white: 0.45)
     static let isolated = Color.orange
     static let running = Color.green
     static let online = Color.green
@@ -90,13 +93,23 @@ struct Chip: View {
 
 /// Capsule buttons: white for the main action (Play), Liquid Glass for the rest (tinted red when
 /// they stop something).
-struct PillButtonStyle: ButtonStyle {
+struct PillButtonStyle: PrimitiveButtonStyle {
     var prominent = false
     var destructive = false
 
     func makeBody(configuration: Configuration) -> some View {
-        PillButton(configuration: configuration, prominent: prominent, destructive: destructive)
+        Button(configuration)
+            .buttonStyle(Look { PillButton(configuration: $0, prominent: prominent, destructive: destructive) })
+            .focusLine(in: .capsule)
     }
+}
+
+/// An app button's look. The app's styles are primitive styles that make the button with it, so
+/// they can put `focusLine` on the button itself.
+private struct Look<Body: View>: ButtonStyle {
+    let body: (Configuration) -> Body
+
+    func makeBody(configuration: Configuration) -> some View { body(configuration) }
 }
 
 /// The pill's look. A view of its own: SwiftUI keeps `@State` (the hover) only in a view, not in
@@ -147,7 +160,7 @@ private struct PillLabelStyle: LabelStyle {
     }
 }
 
-extension ButtonStyle where Self == PillButtonStyle {
+extension PrimitiveButtonStyle where Self == PillButtonStyle {
     static var pill: PillButtonStyle { PillButtonStyle() }
     static var prominentPill: PillButtonStyle { PillButtonStyle(prominent: true) }
     static var destructivePill: PillButtonStyle { PillButtonStyle(destructive: true) }
@@ -201,11 +214,13 @@ func busyItem(_ title: String, _ busyTitle: String, _ isBusy: Bool, action: @esc
 }
 
 /// A round icon-only button, for "…" menus and the panel's close button.
-struct CircleButtonStyle: ButtonStyle {
+struct CircleButtonStyle: PrimitiveButtonStyle {
     var size = Theme.controlHeight
 
     func makeBody(configuration: Configuration) -> some View {
-        CircleButton(configuration: configuration, size: size)
+        Button(configuration)
+            .buttonStyle(Look { CircleButton(configuration: $0, size: size) })
+            .focusLine(in: .circle)
     }
 }
 
@@ -233,6 +248,28 @@ private struct CircleButton: View {
             .onHover { isHovering = $0 }
             .animation(.snappy(duration: 0.15), value: configuration.isPressed)
             .animation(.easeOut(duration: 0.12), value: isHovering)
+    }
+}
+
+extension View {
+    /// Shows a button's keyboard focus as `Theme.focusLine` in its shape, in place of macOS's ring
+    /// in the accent colour. Buttons take focus with Tab when keyboard navigation is on (System
+    /// Settings ▸ Keyboard). Goes on the button itself: only there can the ring be turned off, and
+    /// a button style's `isFocused` stayed false on a scrolling page.
+    func focusLine(in shape: some InsettableShape) -> some View {
+        modifier(FocusLine(shape: shape))
+    }
+}
+
+private struct FocusLine<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focusEffectDisabled()
+            .focused($isFocused)
+            .overlay { if isFocused { shape.strokeBorder(Theme.focusLine, lineWidth: 1.5) } }
     }
 }
 

@@ -69,6 +69,8 @@ When a program crashes, quits after an error message, or doesn't start, or Corks
 
 Nothing is sent until you click. **Send Report** sends the report to Corkscrew's relay ([`relay/`](relay)), a small Cloudflare Worker. It keeps the whole report privately and opens a public [GitHub issue](https://github.com/Prateek-Srivastav/corkscrew/issues?q=label%3Acrash-report) with the title, the summary line, the details and the start of the backtrace; your note and the end of the log stay private. The relay doesn't keep your IP address. If sending fails, **Report on GitHub…** copies the whole report and opens a new [bug report](https://github.com/Prateek-Srivastav/corkscrew/issues/new?template=bug_report.yml) with as much of it as fits in the link; paste the rest. GitHub issues are public, so read the report first.
 
+When the relay opens an issue, Corkscrew keeps its number and the report's title on your Mac. Each time it opens, it reads [the fix list](docs/fixes.json) from GitHub, and tells you once when this version or the next update fixes your report. A fix that many may have hit is told once to everyone whose version has it.
+
 Corkscrew turns off Wine's crash dialog in each bottle, so Wine writes the backtrace into the launch log (**Show Log**) instead of a `backtrace.txt` you would have to save from the dialog.
 
 ### Share settings that work
@@ -152,16 +154,18 @@ scripts/install-components.sh ~/Downloads/Game_Porting_Toolkit_3.0.dmg
 ```
 
 ```bash
-scripts/build-app.sh Debug
+scripts/build-app.sh Release
 ```
 
 ```bash
-open build/DerivedData/Build/Products/Debug/Corkscrew.app
+open build/DerivedData/Build/Products/Release/Corkscrew.app
 ```
 
-Open it from there the first time: it finds the runtime and components in `build/` and sets itself up. Every download is checked against the SHA-256 in `scripts/runtime-pins.env`.
+Open it from there the first time: it finds the runtime and components in `build/` and sets itself up. Every download is checked against the SHA-256 in `scripts/runtime-pins.env`. When a newer release is out, it shows the Update bar like an installed copy; **Update** replaces it with the released app. Until then, its crash reports say it's built from source.
 
-**After `git pull`**, run `scripts/build-app.sh Debug` again. If `scripts/build-runtime.sh` or `scripts/runtime-pins.env` changed, delete `build/src/crossover-*`, rebuild the runtime, and run `scripts/install-components.sh` again.
+**To work on Corkscrew** or contribute, build with `scripts/build-app.sh Debug` and open `build/DerivedData/Build/Products/Debug/Corkscrew.app` instead. A Debug build doesn't look for updates, uses its own tested list so your edits show, and marks its reports and usage counts as from a debug build.
+
+**After `git pull`**, run `scripts/build-app.sh Release` (or `Debug`) again. If `scripts/build-runtime.sh` or `scripts/runtime-pins.env` changed, delete `build/src/crossover-*`, rebuild the runtime, and run `scripts/install-components.sh` again.
 
 **Tests:** `scripts/test.sh` (no runtime needed). For the graphics smoke test, run `scripts/make-fixtures.sh` then `scripts/smoke.sh`; `scripts/bench.sh` times Win32 calls and D3D11 draws per backend.
 
@@ -169,7 +173,7 @@ Open it from there the first time: it finds the runtime and components in `build
 
 - **Steam games** appear in the Library once installed. Tested games are listed under **Not Downloaded** from the start; their button opens them in Steam.
 - **Downloaded programs** (`.zip`, `.rar`, `.7z`, `.iso`): see [Install a program from a download](#install-a-program-from-a-download).
-- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for programs you open again.
+- **Other programs:** drag in an `.exe` or `.msi`, use Finder's "Open With", or **Run Program…** in a bottle. Choose **Run Once** for installers and **Add to Library** for programs you open again. A protected bottle gets a copy of the program's folder in `C:\Games`: on the same disk it's a clone that takes no extra room; from another disk, Add Program shows its size first. A program right in Downloads (or another shared folder) goes alone.
 - **Per-game settings:** graphics backend, MetalFX, Retina mode, Metal HUD, performance overlay, Steam overlay, launch arguments and logs.
 - **Untrusted programs:** create an **Isolated** bottle under Bottles → New Bottle. Turn on **Install Steam** if a program needs Steam; use a second Steam account there, because programs in the bottle can read its sign-in.
 - **Data** lives in `~/Library/{Application Support,Logs,Caches}/Corkscrew`; pass `-DataRoot <folder>` to keep it in one folder. Bottles, runtimes and components are in `.noindex` folders, which Spotlight doesn't index.

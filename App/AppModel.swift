@@ -232,13 +232,14 @@ final class AppModel {
             MainActor.assumeIsolated {
                 self?.syncStores()
                 self?.updateBackupExclusions()
+                self?.showFixedReport()
             }
         }
         updateBackupExclusions()
         trimCaches()
         countFirstLaunch()
         offerAppCrashReport()
-        checkForUpdate()
+        checkForFixedReports(after: checkForUpdate())
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -830,11 +831,15 @@ final class AppModel {
         }
     }
 
+    /// The program's own folder goes with it (a clone on the bottles' disk); one in a shared folder
+    /// such as Downloads goes alone.
     private func prepareProgram(_ program: URL, for bottle: Bottle) async -> URL? {
         guard needsImport(program, into: bottle) else { return program }
-        let paths = self.paths
-        return await perform("Copying \(program.lastPathComponent) into \(bottle.name)…") {
-            try BottleStore(paths: paths).importProgram(program, into: bottle)
+        let store = BottleStore(paths: paths)
+        let folder = store.programFolder(of: program)
+        return await perform("Copying \((folder ?? program).lastPathComponent) into \(bottle.name)…") {
+            if let folder { try store.importProgram(program, folder: folder, into: bottle) }
+            else { try store.importProgram(program, into: bottle) }
         }
     }
 
@@ -947,7 +952,7 @@ final class AppModel {
                 self?.sessions[game.id]?.notes = prepared.notes
                     + (steamWasRunning ? ["Steam was already running in this bottle, so the game starts with Steam's settings, not its own."] : [])
                     + (prepared.inspection?.antiCheat.map { "\($0.kind.rawValue) found (\($0.evidence)): "
-                        + ($0.severity == .blocksLaunch ? "this game won't run under Wine." : "online play may not work.") } ?? [])
+                        + ($0.severity == .blocksLaunch ? "this game might have issues running." : "online play may not work.") } ?? [])
                 self?.sessions[game.id]?.status = .running
                 let started = ContinuousClock.now
                 if game.profile.performanceOverlay { Self.startOverlay(prefix: prepared.context.location.prefix) }
@@ -1311,14 +1316,15 @@ final class AppModel {
     }
 
     /// Looks for a newer release once per launch. Offline, or with no update.json, nothing shows.
-    private func checkForUpdate() {
+    /// Returns the check, while it runs.
+    private func checkForUpdate() -> Task<Void, Never>? {
         let app = Bundle.main.bundleURL
         // Left by an update that didn't finish.
         try? FileManager.default.removeItem(at: AppUpdate.stagingFolder(nextTo: app))
-        guard let url = Self.updateURL else { return }
+        guard let url = Self.updateURL else { return nil }
         let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         let paths = self.paths
-        Task {
+        return Task {
             guard let update = try? await AppUpdate.check(url), update.isNewer(than: installed) else { return }
             updateSize = update.downloadSize(paths: paths)
             availableUpdate = update
@@ -1422,6 +1428,10 @@ final class AppModel {
         false
         #endif
     }
+
+    /// Not the DMG's or the update's app (`scripts/make-dmg.sh` marks those): a Debug or Release
+    /// build from source. Reports say so.
+    static let isBuiltFromSource = Bundle.main.object(forInfoDictionaryKey: "CorkscrewDistribution") as? String != "release"
 
     /// Sends one anonymous count unless Settings turned them off, and returns whether it went.
     @discardableResult
@@ -1557,10 +1567,90 @@ final class AppModel {
         }
     }
 
+    /// A report this Mac sent, now fixed in this version or in the update, or a fix for everyone in
+    /// this version: the app says so once.
+    struct FixedReport {
+        var issue: Int
+        var title: String
+        var version: String
+        var needsUpdate: Bool
+        /// This Mac sent the report.
+        var isSent: Bool
+    }
+
+    var fixedReport: FixedReport?
+    /// The fixed report found at launch, until the app is in front and no sheet is open: an alert
+    /// asked for in the background doesn't show.
+    @ObservationIgnored private var fixedReportToShow: FixedReport?
+
+    /// The issues sent reports opened, by number: the reports' titles, until the app says they're fixed.
+    private static let sentReportsKey = "SentReports"
+    /// The issues of fixes for everyone that the app told about (or that were never this Mac's problem).
+    private static let announcedFixesKey = "AnnouncedFixes"
+
+    /// Where the fix list comes from: main, or `-ReportFixesURL <url>`. Debug builds read it too:
+    /// builds from source are Debug builds.
+    static var reportFixesURL: URL {
+        UserDefaults.standard.string(forKey: "ReportFixesURL").flatMap(URL.init(string:)) ?? ReportFix.listURL
+    }
+
+    /// Keeps the issue a sent report opened, to say when it's fixed.
+    func remember(_ report: ProblemReport, issue: URL) {
+        guard let number = ReportFix.issue(in: issue) else { return }
+        var sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
+        sent[String(number)] = report.title
+        UserDefaults.standard.set(sent, forKey: Self.sentReportsKey)
+    }
+
+    /// Once per launch, after the update check: a sent report whose fix is in this version or in the
+    /// update, or a fix for everyone in this version. One a launch. Where Corkscrew wasn't set up
+    /// before this launch, no program ran, so the fixes for everyone in this version count as told.
+    private func checkForFixedReports(after updateCheck: Task<Void, Never>?) {
+        let sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
+        let wasSetUp = !runtimes.isEmpty
+        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        Task {
+            guard let fixes = try? await ReportFix.download(from: Self.reportFixesURL) else { return }
+            var announced = UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? []
+            if !wasSetUp {
+                announced = Array(Set(announced + ReportFix.included(in: installed, of: fixes)))
+                UserDefaults.standard.set(announced, forKey: Self.announcedFixesKey)
+            }
+            await updateCheck?.value
+            guard let found = ReportFix.available(sent: sent.keys.compactMap(Int.init), announced: Set(announced), in: fixes,
+                                                  installed: installed, latest: availableUpdate?.version) else { return }
+            let title = sent[String(found.fix.issue)]
+            fixedReportToShow = FixedReport(issue: found.fix.issue, title: title ?? found.fix.title ?? "", version: found.fix.version,
+                                            needsUpdate: found.needsUpdate, isSent: title != nil)
+            showFixedReport()
+        }
+    }
+
+    /// Shows the fixed report when the app is in front and no sheet would hide the alert; else at
+    /// the next activation.
+    private func showFixedReport() {
+        guard let fixed = fixedReportToShow, NSApp.isActive, pendingReport == nil, pendingShare == nil else { return }
+        fixedReportToShow = nil
+        fixedReport = fixed
+    }
+
+    /// The alert closed: the report is forgotten, and the fix counts as told. One never shown stays
+    /// for the next launch.
+    func closeFixedReport() {
+        guard let fixed = fixedReport else { return }
+        fixedReport = nil
+        var sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
+        sent[String(fixed.issue)] = nil
+        UserDefaults.standard.set(sent, forKey: Self.sentReportsKey)
+        let announced = UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? []
+        if !announced.contains(fixed.issue) { UserDefaults.standard.set(announced + [fixed.issue], forKey: Self.announcedFixesKey) }
+    }
+
     /// Corkscrew and the Mac, then the program and its settings: what a report says besides the error.
     func reportDetails(for game: Game? = nil, backend: GraphicsBackend? = nil) -> [String] {
         let system = Analytics.System.current(isDebug: Self.isDebugBuild)
-        var lines = ["Corkscrew: \(system.appVersion) (\(system.appBuildNumber))" + (Self.isDebugBuild ? ", debug build" : ""),
+        var lines = ["Corkscrew: \(system.appVersion) (\(system.appBuildNumber))"
+                        + (Self.isDebugBuild ? ", debug build" : Self.isBuiltFromSource ? ", built from source" : ""),
                      "macOS: \(system.osVersion)",
                      "Mac: \(Hardware.model), \(Hardware.chip), \(Hardware.memoryGB) GB",
                      "Wine: \(runtimes.isEmpty ? "not installed" : runtimes.map(\.id).joined(separator: ", ")), engine pack \(EnginePack.current.version)",

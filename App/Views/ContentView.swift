@@ -52,6 +52,7 @@ struct ContentView: View {
         }
         .animation(.snappy(duration: 0.3), value: isSidebarCollapsed)
         .background { WindowButtonsPlacement() }
+        .background { NoFocusAtOpen() }
         .background(Theme.background)
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
         .preferredColorScheme(.dark)

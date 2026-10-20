@@ -28,7 +28,7 @@ If you only change `Packages/GameCore`, you don't need the Wine runtime. The tes
 scripts/test.sh
 ```
 
-To work on the app or run games, you need the full build (runtime, components and app).
+To work on the app or run games, you need the full build (runtime, components and app). Build the app with `scripts/build-app.sh Debug`, as in the README's "To work on Corkscrew".
 
 ## Making a change
 
