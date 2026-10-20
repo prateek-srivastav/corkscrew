@@ -58,7 +58,17 @@ public struct BottleStore: Sendable {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             }
             var bottle = bottle
-            try await runSetup(["wineboot", "--init"], bottle: bottle, engine: engine, name: "create")
+            try await runSetup(["wineboot", "--init"], then: {
+                var followUps = Self.launchSettings(engine: engine)
+                // The Mac's root certificates, which the first launch would import in a session of
+                // its own (4 s before the program starts); the clean snapshot keeps them too. The
+                // file goes into the C:\windows\temp wineboot just made.
+                if bottle.kind == .isolated, (try? HostRootCertificates.writeImport(prefix: location.prefix)) ?? 0 > 0 {
+                    followUps.append((HostRootCertificates.importCommand, "root-certificates"))
+                }
+                return followUps
+            }, bottle: bottle, engine: engine, name: "create")
+            try? fm.removeItem(at: HostRootCertificates.importFile(prefix: location.prefix))
             bottle.runtimeModules = RuntimeModules.fingerprint(runtime: engine.root)
             if bottle.kind == .isolated {
                 try WineMono.link(prefix: location.prefix, runtime: engine.root)
@@ -216,9 +226,22 @@ public struct BottleStore: Sendable {
         try clone(location.prefix, to: location.cleanSnapshot)
     }
 
-    /// Runs a Wine setup command in the bottle (sandboxed for isolated bottles) and waits for the
-    /// bottle's wineserver to exit so the prefix is complete on disk.
-    private func runSetup(_ arguments: [String], bottle: Bottle, engine: Engine, name: String) async throws {
+    /// What the first launch would otherwise set, each in a Wine session of its own that it then waits
+    /// out (5 s before Steam's first start): Wine's crash dialog off, and mode emulation as the default
+    /// Retina mode wants it. `create` writes them in the session `wineboot --init` started.
+    static func launchSettings(engine: Engine) -> [(arguments: [String], log: String)] {
+        var settings = [(CrashDialog.command, "crash-dialog")]
+        if let emulation = ModeEmulation.wanted(retinaMode: GameProfile().retinaMode, engine: engine) {
+            settings.append((ModeEmulation.command(enabled: emulation), "mode-emulation"))
+        }
+        return settings
+    }
+
+    /// Runs a Wine setup command in the bottle (sandboxed for isolated bottles), then, once it has
+    /// succeeded, each of `followUps` in the same session, and waits for the bottle's wineserver to
+    /// exit so the prefix is complete on disk.
+    private func runSetup(_ arguments: [String], then followUps: () -> [(arguments: [String], log: String)] = { [] },
+                          bottle: Bottle, engine: Engine, name: String) async throws {
         try ensureWineServerBase()
         let location = location(of: bottle)
         let context = WineContext(engine: engine, bottle: bottle, location: location, paths: paths, hostEnvironment: hostEnvironment)
@@ -229,6 +252,14 @@ public struct BottleStore: Sendable {
         let plan = try LaunchPlanner.plan(wineArguments: arguments, in: context, dllOverrides: overrides)
         let log = paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/\(name).log")
         let result = try await ProcessRunner.run(plan, log: log, wineserver: engine.wineserver)
+        if result.status == 0 {
+            for followUp in followUps() {
+                // A failure only leaves the setting for the launch to make.
+                let plan = try LaunchPlanner.plan(wineArguments: followUp.arguments, in: context, dllOverrides: overrides)
+                _ = try? await ProcessRunner.run(plan, log: log.deletingLastPathComponent().appending(path: "\(followUp.log).log"),
+                                                 wineserver: engine.wineserver)
+            }
+        }
         // Setup only runs on idle bottles, so whatever still runs after a minute is the setup's own
         // leftovers; stop it rather than wait forever.
         if !ProcessRunner.waitForSession(environment: plan.environment, wineserver: engine.wineserver, timeout: .seconds(60)) {

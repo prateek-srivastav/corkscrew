@@ -84,25 +84,42 @@ public enum HostRootCertificates {
         }
     }
 
+    /// Imports the file `writeImport` made.
+    static let importCommand = ["regedit", "/S", #"C:\windows\temp\corkscrew-root-certificates.reg"#]
+
+    /// Where `writeImport` puts its file; delete it once `importCommand` has run.
+    static func importFile(prefix: URL) -> URL {
+        prefix.appending(path: "drive_c/windows/temp/corkscrew-root-certificates.reg")
+    }
+
+    /// Writes the Mac's roots the bottle doesn't have yet as a `regedit` file for `importCommand`;
+    /// returns how many (no file when none).
+    static func writeImport(prefix: URL) throws -> Int {
+        let certificates = missing(load(), prefix: prefix)
+        guard !certificates.isEmpty else { return 0 }
+        let file = importFile(prefix: prefix)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try registryFile(certificates).write(to: file, atomically: true, encoding: .utf8)
+        return certificates.count
+    }
+
     /// Imports the Mac's roots the bottle doesn't have yet; returns how many. Waits for a bottle
     /// that wasn't running to stop again, so the launch after it starts its own wineserver in its
-    /// own sandbox.
+    /// own sandbox. New bottles have them from `BottleStore.create`; this catches older bottles and
+    /// roots the Mac got since.
     @discardableResult
     static func importMissing(in context: WineContext, log: URL) async throws -> Int {
         let prefix = context.location.prefix
-        let certificates = missing(load(), prefix: prefix)
-        guard !certificates.isEmpty else { return 0 }
+        let count = try writeImport(prefix: prefix)
+        guard count > 0 else { return 0 }
+        defer { try? FileManager.default.removeItem(at: importFile(prefix: prefix)) }
         let wasRunning = WineServer.isRunning(prefix: prefix, base: context.paths.wineServerDirectory)
-        let file = prefix.appending(path: "drive_c/windows/temp/corkscrew-root-certificates.reg")
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try registryFile(certificates).write(to: file, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: file) }
-        let plan = try LaunchPlanner.plan(wineArguments: ["regedit", "/S", #"C:\windows\temp\corkscrew-root-certificates.reg"#], in: context)
+        let plan = try LaunchPlanner.plan(wineArguments: importCommand, in: context)
         let result = try await ProcessRunner.run(plan, log: log, wineserver: context.engine.wineserver)
         guard result.status == 0 else { throw Error.importFailed(status: result.status, log: log.path) }
         if !wasRunning {
             ProcessRunner.waitForSession(environment: plan.environment, wineserver: context.engine.wineserver, timeout: .seconds(30))
         }
-        return certificates.count
+        return count
     }
 }

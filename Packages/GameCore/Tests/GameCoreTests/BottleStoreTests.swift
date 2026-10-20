@@ -10,11 +10,11 @@ struct BottleStoreTests {
     }
 
     /// A runtime whose `wine` runs `script` and whose `wineserver` does nothing.
-    private func engine(in root: URL, wine script: String) throws -> Engine {
+    private func engine(in root: URL, wine script: String, shell: String = "/bin/sh") throws -> Engine {
         let runtime = root.appending(path: "runtime")
         for (tool, script) in [("wine", script), ("wineserver", "exit 0")] {
             let file = runtime.appending(path: "bin/\(tool)")
-            try file.write("#!/bin/sh\n\(script)\n")
+            try file.write("#!\(shell)\n\(script)\n")
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         }
         return Engine(id: "winecx-test", root: runtime, architecture: .x86_64)
@@ -55,6 +55,60 @@ struct BottleStoreTests {
             let listed = try store.list()
             #expect(listed.map(\.id) == [bottle.id])
             #expect(listed.first?.runtimeModules == RuntimeModules.fingerprint(runtime: engine.root))
+        }
+    }
+
+    /// The first launch used to make these settings itself, each in a Wine session it then waited
+    /// out: 5 s before Steam's first start (2026-10-20).
+    @Test(arguments: [false, true])
+    func newBottleHasTheFirstLaunchsSettings(emulatedModes: Bool) async throws {
+        try await withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)
+            let (engine, record) = try recordingEngine(in: root)
+            if emulatedModes { try engine.root.appending(path: "lib/wine/x86_64-unix/win32u.so").write(ModeEmulation.marker) }
+            let store = BottleStore(paths: paths, hostEnvironment: ["HOME": root.path])
+
+            try await store.create(Bottle(name: "Steam", kind: .standard, engineID: engine.id), engine: engine)
+            let commands = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+            #expect(commands.count == (emulatedModes ? 3 : 2))
+            #expect(commands.first == "wineboot --init")
+            #expect(commands.contains { $0.contains("ShowCrashDialog") && $0.hasSuffix("/d 0 /f") })
+            #expect(commands.contains { $0.contains("EmulateModeset") && $0.hasSuffix("/d y /f") } == emulatedModes)
+        }
+    }
+
+    /// An isolated bottle's first launch imported the Mac's root certificates in a Wine session of
+    /// its own, then waited it out: 4 s before the program started (2026-10-20).
+    @Test func newIsolatedBottleHasTheMacsRootCertificates() async throws {
+        try await withTempDir { root in
+            let paths = RuntimeStoreTests.paths(root)
+            let store = BottleStore(paths: paths, hostEnvironment: ["HOME": root.path])
+            let bottle = Bottle(name: "Offline Programs", kind: .isolated, engineID: "winecx-test")
+            let location = store.location(of: bottle)
+            // Setup runs in the sandbox: it starts only the runtime's programs (a re-signed copy of
+            // dash for the script), and they write only into the bottle.
+            let dash = try root.appending(path: "runtime/bin").makeDirectory().appending(path: "dash")
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/dash"), to: dash)
+            await exited(try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", dash.path]))
+            let record = location.home.appending(path: "wine-arguments.txt")
+            let imported = location.home.appending(path: "imported.reg")
+            let file = HostRootCertificates.importFile(prefix: location.prefix)
+            let engine = try engine(in: root, wine: """
+                printf '%s\\n' "$*" >> '\(record.path)'
+                if [ "$1" = regedit ]; then while IFS= read -r line; do printf '%s\\n' "$line"; done < '\(file.path)' > '\(imported.path)'; fi
+                exit 0
+                """, shell: dash.path)
+
+            try await store.create(bottle, engine: engine)
+            let commands = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
+            #expect(commands.first == "wineboot --init")
+            #expect(commands.last.map(String.init) == HostRootCertificates.importCommand.joined(separator: " "))
+            let roots = HostRootCertificates.load()
+            let registry = try String(contentsOf: imported, encoding: .utf8)
+            #expect(!roots.isEmpty && roots.allSatisfy { registry.contains(HostRootCertificates.thumbprint($0)) })
+            // The file is gone before the clean snapshot is taken.
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            #expect(!FileManager.default.fileExists(atPath: HostRootCertificates.importFile(prefix: location.cleanSnapshot).path))
         }
     }
 
