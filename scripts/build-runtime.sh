@@ -544,6 +544,63 @@ if new not in s:
     p.write_text(s.replace(decl_old, decl_new).replace(old, new))
 PATCH
 
+log "Patching winemac: Steam's client stays out of the Dock"
+# Steam's window belongs to steamwebhelper (the "Steam" icon, LoaderBundles.prepareSteamWebHelper).
+# steam.exe only shows its start-up and update windows, but the first of them put it in the Dock
+# for good, as a second Steam icon named "wine" (it runs from wine.app). CrossOver already keeps a
+# GOG helper out of the Dock (CW HACK 24141); steam.exe now goes the same way, by its Windows name,
+# so a steam.exe that Steam restarts from its own bundle stays out too. Its windows still show.
+# App Nap stays off for it, as it would be in the Dock: the client downloads and starts games.
+# Verified 2026-10-21 with Steam: after an unclean exit, its update check at start put "wine" in
+# the Dock; with this patch only "Steam" shows. A clean start shows no steam.exe window either way.
+python3 - "$WINE_SRC/dlls/winemac.drv" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("macdrv_cocoa.h", '''extern bool enable_app_nap;
+''', '''extern bool enable_app_nap;
+extern bool show_in_dock;  /* Corkscrew: false for Steam's client */
+''')
+
+patch("macdrv_main.c", '''bool enable_app_nap = false;
+''', '''bool enable_app_nap = false;
+bool show_in_dock = true;
+''')
+
+patch("macdrv_main.c", '''    len = lstrlenW(appname);
+''', '''    len = lstrlenW(appname);
+
+    /* Corkscrew: Steam's window is steamwebhelper's; the client stays out of the Dock. */
+    {
+        static const WCHAR steam_exeW[] = {'s','t','e','a','m','.','e','x','e',0};
+        show_in_dock = wcsicmp(appname, steam_exeW) != 0;
+    }
+''')
+
+patch("cocoa_app.m", '''                exeName = [NSRunningApplication currentApplication].executableURL.lastPathComponent;
+                if ([blacklistedProcesses containsObject:exeName])
+                {
+''', '''                exeName = [NSRunningApplication currentApplication].executableURL.lastPathComponent;
+                if (!show_in_dock || [blacklistedProcesses containsObject:exeName])
+                {
+                    /* Corkscrew: as below, once. */
+                    static BOOL napOff;
+                    if (!show_in_dock && !enable_app_nap && !napOff)
+                    {
+                        [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+                                                                        reason:@"Running Windows program"] retain]; // intentional leak
+                        napOff = TRUE;
+                    }
+
+''')
+PATCH
+
 log "Patching wineserver: private loopback for offline bottles"
 # Programs often talk to themselves over loopback: a helper serves 127.0.0.1:3216 inside
 # the game, and network libraries make self-connected pairs on random ports. The sandbox of an
