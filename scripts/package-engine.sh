@@ -37,6 +37,8 @@ grep -qa CORKSCREW_NO_LOADER_LINK "$RUNTIME/lib/wine/x86_64-unix/ntdll.so" \
   || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
 grep -qa "processing url" "$RUNTIME/lib/wine/x86_64-windows/inseng.dll" \
   || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
+grep -qa "corkscrew: no internet" "$RUNTIME/lib/wine/x86_64-unix/ws2_32.so" \
+  || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
 [[ -f $RUNTIME/share/wine/mono/wine-mono-$WINE_MONO_VERSION/bin/libmono-2.0-x86_64.dll ]] \
   || { echo "$RUNTIME lacks Wine Mono $WINE_MONO_VERSION: rebuild it" >&2; exit 1; }
 # DXMT needs its winemetal inside the runtime (install-components.sh puts it there; a runtime rebuild

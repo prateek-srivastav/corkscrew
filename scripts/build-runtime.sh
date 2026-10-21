@@ -16,7 +16,8 @@
 #    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
 #    while the program is active instead.
 #  - With CORKSCREW_PRIVATE_LOOPBACK set, wineserver connects only to loopback servers of its own
-#    bottle, so offline bottles can use loopback without reaching services on the Mac.
+#    bottle, so offline bottles can use loopback without reaching services on the Mac. Programs
+#    there log their first blocked internet name lookup and connect (ws2_32).
 #  - A program that destroys a D3DMetal window on another thread no longer hangs the window's
 #    input (winemac).
 #  - With CORKSCREW_HOST_MEMORY_PROTECT=1, VirtualProtect also works on memory outside Wine's own,
@@ -716,6 +717,103 @@ patch('''        set_async_pending( async );
 ''')
 
 p.write_text(s)
+PATCH
+
+log "Patching ws2_32: offline bottles log blocked internet access"
+# A program in an offline bottle that needs the internet fails in its own way: an error box, a
+# crash, or it just quits. The sandbox denies its name lookups and wineserver its connects (above)
+# without a word. With CORKSCREW_PRIVATE_LOOPBACK set, ws2_32 now logs the first of each per process
+# as "corkscrew: no internet: <name or address>", so the app can say why the program failed and
+# offer to move it to Online Programs. Not logged: local names (no dot, .local, this Mac's own),
+# loopback, and datagrams sent to an address (sendto, denied by the sandbox in the program itself).
+python3 - "$WINE_SRC/dlls/ws2_32" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("unixlib.c", '''static NTSTATUS unix_getaddrinfo( void *args )
+{
+''', '''/* Corkscrew: logs the first lookup of an internet name that failed in an offline bottle (see
+ * build-runtime.sh); there the sandbox denies them all. */
+static void note_no_internet( const char *name )
+{
+    static int noted;
+    char own[256];
+    size_t len;
+
+    if (noted || !name || !getenv( "CORKSCREW_PRIVATE_LOOPBACK" ) || !strchr( name, '.' )) return;
+    len = strlen( name );
+    if (len >= 6 && !strcasecmp( name + len - 6, ".local" )) return;
+    if (!gethostname( own, sizeof(own) ) && !strcasecmp( own, name )) return;
+    noted = 1;
+    fprintf( stderr, "corkscrew: no internet: %s\\n", name );
+}
+
+static NTSTATUS unix_getaddrinfo( void *args )
+{
+''')
+
+patch("unixlib.c", '''    ret = getaddrinfo( params->node, service, hints ? &unix_hints : NULL, &unix_info );
+    if (ret)
+        return addrinfo_err_from_unix( ret );
+''', '''    ret = getaddrinfo( params->node, service, hints ? &unix_hints : NULL, &unix_info );
+    if (ret)
+    {
+        note_no_internet( params->node );
+        return addrinfo_err_from_unix( ret );
+    }
+''')
+
+# The gethostbyname that macOS builds (no Linux gethostbyname_r).
+patch("unixlib.c", '''    if (!(unix_host = gethostbyname( params->name )))
+    {
+''', '''    if (!(unix_host = gethostbyname( params->name )))
+    {
+        note_no_internet( params->name );
+''')
+
+patch("socket.c", '''/***********************************************************************
+ *      connect   (ws2_32.4)
+ */
+''', '''/* Corkscrew: logs the first connect in an offline bottle that wineserver denied: one to anything
+ * but the bottle's own loopback listeners (see build-runtime.sh). */
+static void note_no_internet( const struct sockaddr *addr, NTSTATUS status )
+{
+    static LONG noted;
+
+    if (status != STATUS_ACCESS_DENIED || !GetEnvironmentVariableA( "CORKSCREW_PRIVATE_LOOPBACK", NULL, 0 )) return;
+    if (InterlockedExchange( &noted, 1 )) return;
+    MESSAGE( "corkscrew: no internet: %s\\n", debugstr_sockaddr( addr ) );
+}
+
+
+/***********************************************************************
+ *      connect   (ws2_32.4)
+ */
+''')
+
+patch("socket.c", '''    if (status)
+    {
+        /* NtStatusToWSAError() has no mapping for WSAEALREADY */
+''', '''    if (status)
+    {
+        note_no_internet( addr, status );
+        /* NtStatusToWSAError() has no mapping for WSAEALREADY */
+''')
+
+patch("socket.c", '''    free( params );
+    if (ret_len) *ret_len = overlapped->InternalHigh;
+    SetLastError( NtStatusToWSAError( status ) );
+''', '''    free( params );
+    if (ret_len) *ret_len = overlapped->InternalHigh;
+    note_no_internet( name, status );
+    SetLastError( NtStatusToWSAError( status ) );
+''')
 PATCH
 
 log "Patching inseng: CIF reader and downloads (Wine Staging)"

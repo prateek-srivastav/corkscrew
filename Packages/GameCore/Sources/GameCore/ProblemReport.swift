@@ -176,6 +176,19 @@ public struct ProblemReport: Sendable, Equatable, Codable {
         return message
     }
 
+    /// What a program in an offline bottle logs when it tries to reach the internet: its first
+    /// lookup of an internet name and its first connect, both denied (scripts/build-runtime.sh, ws2_32).
+    static let noInternetMarker = "corkscrew: no internet: "
+
+    /// Whether a program in the launch tried to reach the internet from an offline bottle.
+    public static func triedInternet(inLog url: URL, maxBytes: Int = 4 << 20) -> Bool {
+        tail(of: url, maxBytes: maxBytes).map(triedInternet(in:)) ?? false
+    }
+
+    static func triedInternet(in text: String) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { $0.hasPrefix(noInternetMarker) }
+    }
+
     /// Wine's quoted text (`debugstr_w`) up to its closing quote: `\n`, `\r`, `\t`, `\"`, `\\`, and
     /// `\XXXX` (a UTF-16 unit in hex) for any other character outside ASCII. Wine cuts long texts,
     /// marked by `...` after the quote.

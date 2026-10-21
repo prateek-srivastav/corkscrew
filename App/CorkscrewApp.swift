@@ -37,6 +37,22 @@ struct CorkscrewApp: App {
                     }
                 }
                 .background {
+                    Color.clear.alert("\(model.needsInternet?.name ?? "The program") needs the internet",
+                                      isPresented: Binding(get: { model.needsInternet != nil }, set: { if !$0 { model.needsInternet = nil } }),
+                                      presenting: model.needsInternet) { program in
+                        if let move = model.onlineMove(for: program) {
+                            Button(move == .library ? "Move to Online Programs" : "Run in Online Programs") {
+                                model.moveToOnlinePrograms(program)
+                            }
+                            Button("Not Now", role: .cancel) {}
+                        } else {
+                            Button("OK") {}
+                        }
+                    } message: { _ in
+                        Text("Offline Programs has no internet.")
+                    }
+                }
+                .background {
                     Color.clear.alert(model.fixedReport?.isSent == false ? "A reported problem is fixed" : "Your report is fixed",
                                       isPresented: Binding(get: { model.fixedReport != nil }, set: { if !$0 { model.closeFixedReport() } }),
                                       presenting: model.fixedReport) { fixed in

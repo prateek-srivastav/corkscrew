@@ -812,6 +812,34 @@ final class AppModel {
         play(game, transient: true)
     }
 
+    /// How a program that needs the internet gets to Online Programs: its library entry moves, or a
+    /// Run Once program runs there. Nil for a store's game, a setup the installer ran, or when
+    /// there's no Online Programs.
+    enum OnlineMove { case library, runOnce }
+
+    func onlineMove(for game: Game) -> OnlineMove? {
+        guard game.store == nil, bottles.contains(where: { $0.role == .sandboxOnline }) else { return nil }
+        if games.contains(where: { $0.id == game.id }) { return .library }
+        return sessions[game.id]?.isTransient == true && installer.job?.setup?.id != game.id ? .runOnce : nil
+    }
+
+    /// Copies the program into Online Programs, like adding it there; its files in Offline Programs
+    /// stay. Its library entry, with its settings, then starts the copy; a Run Once program runs again.
+    func moveToOnlinePrograms(_ game: Game) {
+        guard let move = onlineMove(for: game), let online = bottles.first(where: { $0.role == .sandboxOnline }) else { return }
+        Task {
+            if move == .runOnce {
+                await runOnce(game.executable, bottle: online)
+                return
+            }
+            guard let executable = await prepareProgram(game.executable, for: online),
+                  var moved = games.first(where: { $0.id == game.id }) else { return }
+            moved.executable = executable
+            moved.bottleID = online.id
+            update(moved)
+        }
+    }
+
     /// Runs a setup from a download in the bottle, without adding it to the library; the session
     /// under the returned entry's id follows it.
     func runSetup(_ setup: URL, in bottle: Bottle, name: String) -> Game {
@@ -1457,6 +1485,9 @@ final class AppModel {
     var pendingReport: PendingReport?
     /// A game that crashed on a known cause, now fixed in its settings: the app asks to start it again.
     var fixedGame: Game?
+    /// A program in Offline Programs that tried to reach the internet, then failed: the app says why
+    /// and offers to move it to Online Programs.
+    var needsInternet: Game?
     /// Where Send Report posts reports; `-ReportRelayURL <url>` tries another server.
     static var reportRelay: URL? { UserDefaults.standard.string(forKey: "ReportRelayURL").flatMap(URL.init(string:)) ?? ProblemReport.relayURL }
 
@@ -1473,8 +1504,9 @@ final class AppModel {
     /// After a launch ends by itself: a report when the program crashed (Wine's backtrace in the
     /// log, Wine ended by a signal, or the program's own handler wrote a crash dump and it quit with
     /// an exit code other than 0), or when it showed an error dialog and quit with an exit code
-    /// other than 0. Or, for a Steam game played a while with settings the tested list doesn't
-    /// have, an offer to share them.
+    /// other than 0. In Offline Programs, when the program tried to reach the internet and then
+    /// crashed or quit with an exit code other than 0, the offer to move it instead. Or, for a Steam
+    /// game played a while with settings the tested list doesn't have, an offer to share them.
     private func sessionEnded(_ game: Game, result: RunResult, backend: GraphicsBackend?, log: URL, played: Duration,
                               ranOwnSettings: Bool) async {
         // Crash dumps (`ProblemReport.dumpFolders`). A Steam game's launch runs steam.exe, so its
@@ -1489,6 +1521,7 @@ final class AppModel {
         let program = game.store == nil ? game.executable : nil
         // A mod's hook into D3DMetal: Wine refused to make the code writable, and the crash is the write.
         let hooksOff = !game.profile.modHooks
+        let offline = bottle(for: game)?.role == .sandbox
         let found = await Task.detached(priority: .utility) {
             let crash = ProblemReport.crash(inLog: log), dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
             let dump = (result.status != 0 || !result.followed.isEmpty) && crash == nil && !result.crashed && dialog == nil
@@ -1496,7 +1529,9 @@ final class AppModel {
             let others = program.map { Array(SetupFinder.otherPrograms(near: $0, helpers: false).prefix(3)) } ?? []
             let wrote = crash.flatMap { ProblemReport.writeAddress(inCrash: $0.summary) } ?? dump?.wrote
             let hookCrash = hooksOff && wrote.map { ProblemReport.refusedHook(inLog: log, wrote: $0) } == true
-            return (crash: crash, dialog: dialog, dump: dump, tail: ProblemReport.logTail(of: log), others: others, hookCrash: hookCrash)
+            let triedInternet = offline && ProblemReport.triedInternet(inLog: log)
+            return (crash: crash, dialog: dialog, dump: dump, tail: ProblemReport.logTail(of: log), others: others, hookCrash: hookCrash,
+                    triedInternet: triedInternet)
         }.value
         // The hook crash has a fix: turn it on and ask for a restart, not a report. A crash with it
         // on gets the report.
@@ -1504,6 +1539,9 @@ final class AppModel {
             fixed.profile.modHooks = true
             update(fixed)
             fixedGame = fixed
+        } else if found.triedInternet, found.crash != nil || result.crashed || result.status != 0 {
+            // The sandbox denied the internet, and the program failed: that's the likely cause, not a bug to report.
+            needsInternet = game
         } else if found.crash != nil || result.crashed {
             offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: found.crash?.summary ?? "Wine \(result.outcome).",
                                 details: reportDetails(for: game, backend: backend), backtrace: found.crash?.backtrace, log: found.tail),
