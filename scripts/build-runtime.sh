@@ -21,6 +21,8 @@
 #    input (winemac).
 #  - With CORKSCREW_HOST_MEMORY_PROTECT=1, VirtualProtect also works on memory outside Wine's own,
 #    such as D3DMetal's functions, so mods can hook a game's graphics (ntdll).
+#  - The Install Engine (inseng) reads CIF files and downloads (Wine Staging), so Microsoft's
+#    DirectX web installer works instead of crashing.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -715,6 +717,19 @@ patch('''        set_async_pending( async );
 
 p.write_text(s)
 PATCH
+
+log "Patching inseng: CIF reader and downloads (Wine Staging)"
+# Microsoft's DirectX web installer (dxwebsetup.exe, which program setups often run) drives the
+# Install Engine. Wine's is stubs, so the installer releases an engine it still uses and crashes
+# (WineHQ bug 39456). Wine Staging's inseng-Implementation patch (pinned in runtime-pins.env)
+# implements the CIF reader and the downloads; the installer copies the files itself. Tested: with
+# internet it installs; without, it shows "Setup could not download the file" and exits.
+inseng_patch=$(fetch "$INSENG_PATCH_URL" "$INSENG_PATCH_SHA256")
+if ! patch -d "$WINE_SRC" -p1 -R -s -f --dry-run <"$inseng_patch" >/dev/null 2>&1; then
+  patch -d "$WINE_SRC" -p1 -N -s -f --dry-run <"$inseng_patch" >/dev/null \
+    || { echo "inseng changed upstream; update INSENG_PATCH_URL in scripts/runtime-pins.env" >&2; exit 1; }
+  patch -d "$WINE_SRC" -p1 -N -s -f <"$inseng_patch"
+fi
 
 log "Staging MoltenVK $MOLTENVK_VERSION"
 if [[ ! -f $DEPS/lib/libMoltenVK.dylib ]]; then
