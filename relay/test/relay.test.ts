@@ -72,13 +72,22 @@ interface Sent {
 
 let github: Sent[];
 let gitHubAnswer: () => Response;
+/** The GitHub App's token requests, apart from the issues. */
+let tokenRequests: Request[];
+let tokenAnswer: () => Response;
 
 beforeEach(() => {
 	github = [];
 	gitHubAnswer = () => Response.json({ html_url: issueLink, number: 42 }, { status: 201 });
+	tokenRequests = [];
+	tokenAnswer = () => Response.json({ token: "installation-token", expires_at: "2026-10-18T10:15:00Z" }, { status: 201 });
 	// The Worker runs in the tests' isolate, so this replaces its fetch too.
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 		const request = new Request(input, init);
+		if (request.url.endsWith("/access_tokens")) {
+			tokenRequests.push(request);
+			return tokenAnswer();
+		}
 		github.push({ url: request.url, method: request.method, headers: request.headers, body: await request.json() });
 		return gitHubAnswer();
 	});
@@ -338,6 +347,8 @@ describe("the relay refuses", () => {
 
 	it("everything when the secrets aren't set", async () => {
 		expect((await send(report, { environment: { ...env, GITHUB_TOKEN: undefined } })).status).toBe(503);
+		const partApp = { ...env, GITHUB_TOKEN: undefined, GITHUB_APP_ID: "12345", GITHUB_APP_INSTALLATION_ID: "678" };
+		expect((await send(report, { environment: partApp })).status).toBe(503);
 		expect((await send(report, { environment: { ...env, RATE_LIMIT_KEY: "" } })).status).toBe(503);
 	});
 
@@ -346,6 +357,77 @@ describe("the relay refuses", () => {
 		await send("{not json");
 		expect(await stored()).toEqual([]);
 		expect(github).toEqual([]);
+	});
+});
+
+describe("the GitHub App", () => {
+	let publicKey: CryptoKey;
+	let appEnv: Env;
+
+	beforeEach(async () => {
+		// A throwaway key, made for each test.
+		const pair = (await crypto.subtle.generateKey(
+			{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+			true,
+			["sign", "verify"],
+		)) as CryptoKeyPair;
+		publicKey = pair.publicKey;
+		const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der)).match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----\n`;
+		// No GITHUB_TOKEN: the app's secrets are enough.
+		appEnv = { ...env, GITHUB_TOKEN: undefined, GITHUB_APP_ID: "12345", GITHUB_APP_INSTALLATION_ID: "678", GITHUB_APP_PRIVATE_KEY: pem };
+	});
+
+	it("gets an installation token with a signed JWT, and opens the issue with it", async () => {
+		const before = Math.floor(Date.now() / 1000);
+		const response = await send(report, { environment: appEnv });
+		expect(response.status).toBe(201);
+
+		expect(tokenRequests).toHaveLength(1);
+		const [tokenRequest] = tokenRequests;
+		expect(tokenRequest.method).toBe("POST");
+		expect(tokenRequest.url).toBe("https://api.github.com/app/installations/678/access_tokens");
+		expect(tokenRequest.headers.get("User-Agent")).toBe("corkscrew-relay");
+		const jwt = tokenRequest.headers.get("Authorization")!.replace(/^Bearer /, "");
+		const [header, payload, signature] = jwt.split(".");
+		const decode = (part: string) => Uint8Array.from(atob(part.replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0));
+		expect(JSON.parse(new TextDecoder().decode(decode(header)))).toEqual({ alg: "RS256", typ: "JWT" });
+		const claims = JSON.parse(new TextDecoder().decode(decode(payload)));
+		expect(claims.iss).toBe("12345");
+		expect(claims.iat).toBeGreaterThanOrEqual(before - 60);
+		expect(claims.iat).toBeLessThanOrEqual(before - 59);
+		expect(claims.exp - claims.iat).toBe(10 * 60);
+		expect(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, decode(signature), new TextEncoder().encode(`${header}.${payload}`))).toBe(true);
+
+		expect(github).toHaveLength(1);
+		expect(github[0].url).toBe("https://api.github.com/repos/Prateek-Srivastav/corkscrew/issues");
+		expect(github[0].headers.get("Authorization")).toBe("Bearer installation-token");
+		expect(github[0].body.labels).toEqual(["bug", "crash-report"]);
+
+		expect((await send(share, { path: "/settings", environment: appEnv })).status).toBe(201);
+		expect(tokenRequests).toHaveLength(2);
+		expect(github[1].body.labels).toEqual(["game-report"]);
+	});
+
+	it("is used instead of GITHUB_TOKEN when both are set", async () => {
+		expect((await send(report, { environment: { ...appEnv, GITHUB_TOKEN: "test-token" } })).status).toBe(201);
+		expect(github[0].headers.get("Authorization")).toBe("Bearer installation-token");
+	});
+
+	it("keeps the report without an issue when the token request fails", async () => {
+		tokenAnswer = () => new Response('{"message":"A JSON web token could not be decoded"}', { status: 401 });
+		const response = await send(report, { environment: appEnv });
+		expect(response.status).toBe(202);
+		expect(github).toEqual([]);
+		expect(await stored()).toHaveLength(1);
+	});
+
+	it("refuses a PKCS#1 key, as GitHub gives it", async () => {
+		const pkcs1 = { ...appEnv, GITHUB_APP_PRIVATE_KEY: "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----\n" };
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		expect((await send(report, { environment: pkcs1 })).status).toBe(202);
+		expect(errors.mock.calls[0][0]).toContain("openssl pkcs8 -topk8 -nocrypt");
+		expect(tokenRequests).toEqual([]);
 	});
 });
 

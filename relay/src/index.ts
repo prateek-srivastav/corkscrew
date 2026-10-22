@@ -2,6 +2,7 @@ import { type Counter, network, senderName, windowAt } from "./counter";
 import { issueFor, openIssue, reportLabels } from "./issue";
 import { InvalidReport, parseReport } from "./report";
 import { parseShare, shareIssue, shareLabels } from "./share";
+import { type GitHubApp, installationToken } from "./token";
 
 export { Counter } from "./counter";
 
@@ -11,7 +12,10 @@ export interface Env {
 	GITHUB_REPOSITORY: string;
 	REPORTS_PER_HOUR: string;
 	ISSUES_PER_DAY: string;
-	/** Secrets. */
+	/** Secrets. The relay opens issues as the GitHub App when its three are set, else with the token. */
+	GITHUB_APP_ID?: string;
+	GITHUB_APP_INSTALLATION_ID?: string;
+	GITHUB_APP_PRIVATE_KEY?: string;
 	GITHUB_TOKEN?: string;
 	RATE_LIMIT_KEY?: string;
 }
@@ -61,7 +65,8 @@ export default {
 		const route = routes.get(url.pathname);
 		if (route === undefined) return answer(404, { error: "Not found." });
 		if (request.method !== "POST") return answer(405, { error: "Use POST." }, { Allow: "POST" });
-		if (!env.GITHUB_TOKEN || !env.RATE_LIMIT_KEY) return answer(503, { error: "The relay isn't set up yet." });
+		const app = gitHubApp(env);
+		if ((app === undefined && !env.GITHUB_TOKEN) || !env.RATE_LIMIT_KEY) return answer(503, { error: "The relay isn't set up yet." });
 		if (!(request.headers.get("Content-Type") ?? "").toLowerCase().startsWith("application/json")) {
 			return answer(415, { error: "Send the report as application/json." });
 		}
@@ -106,7 +111,8 @@ export default {
 			return answer(202, { id });
 		}
 		try {
-			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN }, report.issue(id), route.labels);
+			const token = app !== undefined ? await installationToken(app) : env.GITHUB_TOKEN!;
+			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token }, report.issue(id), route.labels);
 			return answer(201, { issue, id });
 		} catch (error) {
 			console.error(`Report ${id} kept without an issue: ${error instanceof Error ? error.message : error}`);
@@ -144,6 +150,11 @@ async function readBody(request: Request, max: number): Promise<string | "tooLar
 	} catch {
 		return null;
 	}
+}
+
+function gitHubApp(env: Env): GitHubApp | undefined {
+	if (!env.GITHUB_APP_ID || !env.GITHUB_APP_INSTALLATION_ID || !env.GITHUB_APP_PRIVATE_KEY) return undefined;
+	return { id: env.GITHUB_APP_ID, installation: env.GITHUB_APP_INSTALLATION_ID, privateKey: env.GITHUB_APP_PRIVATE_KEY };
 }
 
 function limit(value: string | undefined, fallback: number): number {

@@ -18,7 +18,9 @@ REPORTS_PER_HOUR = "5"
 ISSUES_PER_DAY = "50"
 
 # Secrets (`npx wrangler secret put <name>`, not in this file):
-#   GITHUB_TOKEN    fine-grained token for the repository above, Issues: read and write only
+#   GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY
+#                   the GitHub App that opens the issues (Issues: read and write only); the key in PKCS#8
+#   GITHUB_TOKEN    only while the app's secrets aren't set: a fine-grained token, Issues: read and write
 #   RATE_LIMIT_KEY  random text; the counters are named by a keyed hash of the address, not the address
 
 [[r2_buckets]]
