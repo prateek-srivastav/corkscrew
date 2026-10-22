@@ -49,9 +49,15 @@ if [[ -n ${CORKSCREW_SIGNING_P12:-} ]]; then
   # A keychain of its own, deleted at exit, so the key never goes into the login keychain.
   KEYCHAIN="$SIGNING/signing.keychain-db"
   KEYCHAIN_PASSWORD=$(uuidgen)
-  trap 'security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -rf "$STAGE" "$SIGNING"' EXIT
+  # On the release runner (macOS 26), codesign said "no identity found" with the keychain given only
+  # by --keychain. So it goes first on the search list too, and the old list comes back at exit.
+  KEYCHAINS=$(security list-keychains -d user | tr -d '"')
+  trap 'security list-keychains -d user -s $KEYCHAINS; security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -rf "$STAGE" "$SIGNING"' EXIT
   security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-  security set-keychain-settings -lut 3600 "$KEYCHAIN"
+  security list-keychains -d user -s "$KEYCHAIN" $KEYCHAINS
+  # No timeout and no lock on sleep: the build takes minutes, and a locked keychain fails the signing
+  # (errSecInternalComponent).
+  security set-keychain-settings "$KEYCHAIN"
   security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
   base64 -D <<<"$CORKSCREW_SIGNING_P12" >"$SIGNING/signing.p12"
   security import "$SIGNING/signing.p12" -k "$KEYCHAIN" -f pkcs12 -P "${CORKSCREW_SIGNING_PASSWORD:?}" \
@@ -69,6 +75,7 @@ fi
 # The helpers in Contents/MacOS first, then the app, all with the same identity.
 sign() {
   local helper
+  [[ -z ${KEYCHAIN:-} ]] || security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
   for helper in "$1"/Contents/MacOS/*; do
     [[ $(basename "$helper") == Corkscrew ]] || codesign --force "${SIGN[@]}" "$helper"
   done
