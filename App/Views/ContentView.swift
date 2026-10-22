@@ -2,7 +2,7 @@ import GameCore
 import SwiftUI
 
 enum SidebarItem: Hashable {
-    case library, bottles, setup
+    case library, bottles, setup, reports
 }
 
 struct ContentView: View {
@@ -27,6 +27,7 @@ struct ContentView: View {
                     case .library: LibraryView(openSetup: { navigator.go(.setup) })
                     case .bottles: BottlesView()
                     case .setup: SetupView()
+                    case .reports: ReportsView()
                     }
                 }
                 .id(navigator.route.section)
@@ -77,6 +78,8 @@ struct ContentView: View {
         .swipeNavigation(navigator)
         // Bottles is an Advanced page; turning Advanced off leaves it, and Back doesn't return to it.
         .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
+        // A click on a report notification.
+        .onChange(of: model.reportsToOpen) { navigator.go(.reports) }
         .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
         // Fetches the art pages open with, so a page doesn't show dark while it downloads. Only
         // fetched, not decoded: a page decodes its own art from disk in a few milliseconds.

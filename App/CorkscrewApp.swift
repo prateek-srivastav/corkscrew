@@ -2,6 +2,7 @@ import AppKit
 import GameCore
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 @main
 struct CorkscrewApp: App {
@@ -53,18 +54,8 @@ struct CorkscrewApp: App {
                     }
                 }
                 .background {
-                    Color.clear.alert(model.fixedReport?.isSent == false ? "A reported problem is fixed" : "Your report is fixed",
-                                      isPresented: Binding(get: { model.fixedReport != nil }, set: { if !$0 { model.closeFixedReport() } }),
-                                      presenting: model.fixedReport) { fixed in
-                        if fixed.needsUpdate {
-                            Button("Update") { model.installUpdate() }
-                            Button("Later", role: .cancel) {}
-                        } else {
-                            Button("OK") {}
-                        }
-                    } message: { fixed in
-                        Text(fixed.needsUpdate ? "“\(fixed.title)”: fixed in \(fixed.version). Update to get it."
-                                               : "“\(fixed.title)”: fixed in this version.")
+                    Color.clear.sheet(item: Binding(get: { model.fixedReport }, set: { if $0 == nil { model.closeFixedReport() } })) {
+                        FixedReportSheet(fixed: $0).environment(model)
                     }
                 }
         }
@@ -95,6 +86,9 @@ struct CorkscrewApp: App {
                 Button("Settings…") { navigator.go(.setup) }
                     .keyboardShortcut(",")
             }
+            CommandGroup(replacing: .help) {
+                Button("Your Reports") { navigator.go(.reports) }
+            }
             CommandGroup(after: .newItem) {
                 Button("Add Program…") { model.addProgram(in: model.bottles.first { $0.id == navigator.route.bottleID }) }
                     .keyboardShortcut("o")
@@ -112,6 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Games keep running when the window closes; quitting the app doesn't stop them either.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = ReportNotifications.delegate
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.restoreLaunchers()

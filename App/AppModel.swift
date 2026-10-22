@@ -244,7 +244,7 @@ final class AppModel {
         countFirstLaunch()
         pingDevice()
         offerAppCrashReport()
-        checkForFixedReports(after: checkForUpdate())
+        checkReports(after: checkForUpdate())
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -758,8 +758,10 @@ final class AppModel {
         openRequests.removeAll { $0.id == request.id }
     }
 
-    /// `corkscrew://launch/<game id>` and `corkscrew://stop/<game id>`, for shortcuts and scripts.
+    /// `corkscrew://launch/<game id>` and `corkscrew://stop/<game id>`, for shortcuts and scripts;
+    /// `corkscrew://reports` opens the Reports page.
     private func handleLink(_ url: URL) {
+        if url.host() == "reports" { return openReports() }
         guard let id = UUID(uuidString: url.lastPathComponent), let game = games.first(where: { $0.id == id }) else {
             errorMessage = "No game in the library matches \(url.absoluteString)."
             return
@@ -1635,26 +1637,59 @@ final class AppModel {
         }
     }
 
-    /// A report this Mac sent, now fixed in this version or in the update, or a fix for everyone in
-    /// this version: the app says so once.
-    struct FixedReport {
+    // MARK: Reports and their issues
+
+    /// A report's issue the Reports page follows: one this Mac sent, or one the user added by its
+    /// number. The issue as last read, and what the user saw and was told of (`ReportIssue.signature`).
+    struct TrackedReport: Codable, Identifiable {
+        var number: Int
+        var title: String
+        var sent: Date?
+        var issue: ReportIssue?
+        var seen: ReportIssue.Signature?
+        var told: ReportIssue.Signature?
+        var id: Int { number }
+    }
+
+    /// Newest first. Kept in `TrackedReports`.
+    private(set) var trackedReports: [TrackedReport] = []
+    /// The fix list as last downloaded, kept so statuses don't change while it can't be read.
+    private(set) var reportFixes: [ReportFix] = []
+    /// The first check is done: statuses use the fix list and the update check, so news is real.
+    private(set) var reportsChecked = false
+    /// Raised by a click on a report notification: ContentView opens the Reports page.
+    var reportsToOpen = 0
+
+    /// A report whose fix the user can get, or a fix for everyone in this version: the app's own
+    /// popup says what was wrong and what changed, once.
+    struct FixedReport: Identifiable {
         var issue: Int
         var title: String
         var version: String
         var needsUpdate: Bool
-        /// This Mac sent the report.
+        /// This Mac sent or follows the report.
         var isSent: Bool
+        var cause: String?
+        var change: String?
+        var id: Int { issue }
     }
 
     var fixedReport: FixedReport?
-    /// The fixed report found at launch, until the app is in front and no sheet is open: an alert
+    /// A fixed report found by a check, until the app is in front and no sheet is open: a sheet
     /// asked for in the background doesn't show.
     @ObservationIgnored private var fixedReportToShow: FixedReport?
 
-    /// The issues sent reports opened, by number: the reports' titles, until the app says they're fixed.
+    /// Versions up to 1.0.2 kept the issues of sent reports here, with their titles.
     private static let sentReportsKey = "SentReports"
-    /// The issues of fixes for everyone that the app told about (or that were never this Mac's problem).
+    private static let trackedReportsKey = "TrackedReports"
+    /// The server's time of the last check, the next check's start.
+    private static let reportsCheckedAtKey = "ReportsCheckedAt"
+    private static let reportFixesKey = "ReportFixes"
+    /// The issues of fixes whose popup the user saw (or that were never this Mac's problem).
     private static let announcedFixesKey = "AnnouncedFixes"
+    /// How often the issues are read while the app runs. GitHub allows 60 requests an hour; a check
+    /// takes one, and one more for each tracked issue that changed.
+    private static let reportsCheckInterval: Duration = .seconds(30 * 60)
 
     /// Where the fix list comes from: main, or `-ReportFixesURL <url>`. Debug builds read it too:
     /// builds from source are Debug builds.
@@ -1662,56 +1697,222 @@ final class AppModel {
         UserDefaults.standard.string(forKey: "ReportFixesURL").flatMap(URL.init(string:)) ?? ReportFix.listURL
     }
 
-    /// Keeps the issue a sent report opened, to say when it's fixed.
-    func remember(_ report: ProblemReport, issue: URL) {
-        guard let number = ReportFix.issue(in: issue) else { return }
-        var sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
-        sent[String(number)] = report.title
-        UserDefaults.standard.set(sent, forKey: Self.sentReportsKey)
+    /// Where issues are read: GitHub, or `-ReportIssuesAPI <url>` (a folder like `…/repos/<owner>/<repo>/`).
+    static var reportIssuesAPI: URL {
+        UserDefaults.standard.string(forKey: "ReportIssuesAPI").flatMap(URL.init(string:)) ?? ReportIssues.api
     }
 
-    /// Once per launch, after the update check: a sent report whose fix is in this version or in the
-    /// update, or a fix for everyone in this version. One a launch. Where Corkscrew wasn't set up
-    /// before this launch, no program ran, so the fixes for everyone in this version count as told.
-    private func checkForFixedReports(after updateCheck: Task<Void, Never>?) {
-        let sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
-        let wasSetUp = !runtimes.isEmpty
-        let installed = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        Task {
-            guard let fixes = try? await ReportFix.download(from: Self.reportFixesURL) else { return }
-            var announced = UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? []
-            if !wasSetUp {
-                announced = Array(Set(announced + ReportFix.included(in: installed, of: fixes)))
-                UserDefaults.standard.set(announced, forKey: Self.announcedFixesKey)
+    static var installedVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+
+    func status(of report: TrackedReport) -> ReportIssue.Status {
+        (report.issue ?? ReportIssue(number: report.number, title: report.title))
+            .status(fixes: reportFixes, installed: Self.installedVersion, latest: availableUpdate?.version)
+    }
+
+    private func signature(of report: TrackedReport) -> ReportIssue.Signature {
+        ReportIssue.signature(status(of: report), notes: report.issue?.notes ?? [])
+    }
+
+    /// A report changed since the user last looked: the sidebar's dot.
+    func hasNews(_ report: TrackedReport) -> Bool { reportsChecked && report.seen != signature(of: report) }
+    var hasReportNews: Bool { trackedReports.contains(where: hasNews) }
+
+    /// The user looked at the Reports page.
+    func markReportsSeen() {
+        guard reportsChecked else { return }
+        for index in trackedReports.indices { trackedReports[index].seen = signature(of: trackedReports[index]) }
+        saveTrackedReports()
+    }
+
+    /// Follows the issue a sent report opened, and asks once to show notifications for it.
+    func remember(_ report: ProblemReport, issue: URL) {
+        guard let number = ReportFix.issue(in: issue) else { return }
+        track(TrackedReport(number: number, title: report.title, sent: Date(), issue: ReportIssue(number: number, title: report.title)))
+        ReportNotifications.ask()
+    }
+
+    /// Follows an issue by the number or link the user typed. Throws when there's no such issue.
+    func trackReport(_ text: String) async throws {
+        guard let number = ReportIssues.number(in: text) else { throw ReportTrackingError.notAnIssue }
+        if trackedReports.contains(where: { $0.number == number }) { return }
+        guard let issue = try await ReportIssues.fetch(number, api: Self.reportIssuesAPI) else { throw ReportTrackingError.notFound }
+        guard issue.isSentFromCorkscrew else { throw ReportTrackingError.notSent }
+        track(TrackedReport(number: number, title: issue.title, issue: issue))
+        ReportNotifications.ask()
+    }
+
+    enum ReportTrackingError: LocalizedError {
+        case notAnIssue, notFound, notSent
+        var errorDescription: String? {
+            switch self {
+            case .notAnIssue: "Type an issue number or its link."
+            case .notFound: "No issue with that number."
+            case .notSent: "Only reports sent from Corkscrew can be followed."
             }
-            await updateCheck?.value
-            guard let found = ReportFix.available(sent: sent.keys.compactMap(Int.init), announced: Set(announced), in: fixes,
-                                                  installed: installed, latest: availableUpdate?.version) else { return }
-            let title = sent[String(found.fix.issue)]
-            fixedReportToShow = FixedReport(issue: found.fix.issue, title: title ?? found.fix.title ?? "", version: found.fix.version,
-                                            needsUpdate: found.needsUpdate, isSent: title != nil)
-            showFixedReport()
         }
     }
 
-    /// Shows the fixed report when the app is in front and no sheet would hide the alert; else at
-    /// the next activation.
+    private func track(_ report: TrackedReport) {
+        var report = report
+        // What it is now isn't news.
+        report.seen = signature(of: report)
+        report.told = report.seen
+        trackedReports.insert(report, at: 0)
+        saveTrackedReports()
+    }
+
+    func untrackReport(_ number: Int) {
+        trackedReports.removeAll { $0.number == number }
+        saveTrackedReports()
+    }
+
+    private func saveTrackedReports() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(trackedReports), forKey: Self.trackedReportsKey)
+    }
+
+    /// The tracked reports and the last fix list; the issues of older versions' `SentReports` join them.
+    private func loadTrackedReports() {
+        let defaults = UserDefaults.standard
+        trackedReports = defaults.data(forKey: Self.trackedReportsKey).flatMap { try? JSONDecoder().decode([TrackedReport].self, from: $0) } ?? []
+        reportFixes = defaults.data(forKey: Self.reportFixesKey).flatMap { try? JSONDecoder().decode([ReportFix].self, from: $0) } ?? []
+        let sent = defaults.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
+        for (key, title) in sent.sorted(by: { $0.key > $1.key }) {
+            guard let number = Int(key), !trackedReports.contains(where: { $0.number == number }) else { continue }
+            trackedReports.append(TrackedReport(number: number, title: title))
+        }
+        if !sent.isEmpty {
+            defaults.removeObject(forKey: Self.sentReportsKey)
+            saveTrackedReports()
+        }
+    }
+
+    /// At launch, after the update check, then every half hour: reads the fix list and the tracked
+    /// issues, tells the user of news, and shows a fix popup. Where Corkscrew wasn't set up before
+    /// this launch, no program ran, so the fixes for everyone in this version count as told.
+    private func checkReports(after updateCheck: Task<Void, Never>?) {
+        loadTrackedReports()
+        let wasSetUp = !runtimes.isEmpty
+        Task { [weak self] in
+            await updateCheck?.value
+            var wasSetUp = wasSetUp
+            while let self {
+                await self.checkReports(wasSetUp: wasSetUp)
+                wasSetUp = true
+                try? await Task.sleep(for: Self.reportsCheckInterval)
+            }
+        }
+    }
+
+    private func checkReports(wasSetUp: Bool) async {
+        let installed = Self.installedVersion
+        if let fixes = try? await ReportFix.download(from: Self.reportFixesURL) {
+            reportFixes = fixes
+            UserDefaults.standard.set(try? JSONEncoder().encode(fixes), forKey: Self.reportFixesKey)
+            if !wasSetUp {
+                let announced = UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? []
+                UserDefaults.standard.set(Array(Set(announced + ReportFix.included(in: installed, of: reportFixes))), forKey: Self.announcedFixesKey)
+            }
+        }
+        await readTrackedIssues()
+        reportsChecked = true
+        tellReportNews()
+
+        let announced = Set(UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? [])
+        // A fix popup is shown once, for a followed report too.
+        let followed = trackedReports.filter { !announced.contains($0.number) }
+        guard fixedReport == nil, fixedReportToShow == nil,
+              let found = ReportFix.available(sent: followed.map(\.number), announced: announced, in: reportFixes,
+                                              installed: installed, latest: availableUpdate?.version) else { return }
+        let title = followed.first { $0.number == found.fix.issue }?.title
+        fixedReportToShow = FixedReport(issue: found.fix.issue, title: title ?? found.fix.title ?? "", version: found.fix.version,
+                                        needsUpdate: found.needsUpdate, isSent: title != nil, cause: found.fix.cause, change: found.fix.change)
+        showFixedReport()
+    }
+
+    /// New issues are read on their own; the others in one request for all that changed since the
+    /// last check. A failed read leaves them as they were.
+    private func readTrackedIssues() async {
+        guard !trackedReports.isEmpty else { return }
+        let api = Self.reportIssuesAPI
+        let checkedAt = UserDefaults.standard.object(forKey: Self.reportsCheckedAtKey) as? Date
+        var read: [ReportIssue] = []
+        do {
+            // Before the first check, every issue is new.
+            let known = checkedAt == nil ? [] : Set(trackedReports.filter { $0.issue != nil && $0.told != nil }.map(\.number))
+            for report in trackedReports where !known.contains(report.number) {
+                if let issue = try await ReportIssues.fetch(report.number, api: api) { read.append(issue) }
+            }
+            if !known.isEmpty {
+                // A minute back, for clocks that differ and issues changed while the last check ran.
+                let updated = try await ReportIssues.updated(known, since: (checkedAt ?? Date()).addingTimeInterval(-60), api: api)
+                read += updated.issues
+                UserDefaults.standard.set(updated.checked, forKey: Self.reportsCheckedAtKey)
+            } else {
+                UserDefaults.standard.set(Date(), forKey: Self.reportsCheckedAtKey)
+            }
+        } catch {
+            print("Couldn't read report issues: \(error)")
+        }
+        for issue in read {
+            guard let index = trackedReports.firstIndex(where: { $0.number == issue.number }) else { continue }
+            trackedReports[index].issue = issue
+        }
+        saveTrackedReports()
+    }
+
+    /// A notification for each report whose status or notes changed since the user was last told.
+    /// A report read for the first time (from an older version) only sets what's known.
+    private func tellReportNews() {
+        for index in trackedReports.indices {
+            let report = trackedReports[index]
+            let now = signature(of: report)
+            guard report.told != now else { continue }
+            trackedReports[index].told = now
+            guard let told = report.told else {
+                if report.seen == nil { trackedReports[index].seen = now }
+                continue
+            }
+            let status = status(of: report)
+            // A notification shows plain text: the note's Markdown would show as raw marks.
+            let note = (now.note != told.note ? report.issue?.notes.last?.text : nil).map {
+                (try? AttributedString(markdown: $0, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? $0
+            }
+            ReportNotifications.post(issue: report.number,
+                                     title: now.state != told.state ? "Your report: \(status.line)" : "New note on your report",
+                                     body: "“\(report.title)”" + (note.map { "\n\($0)" } ?? ""),
+                                     isFix: { if case .fixed(_, let availability) = status { availability != .coming } else { false } }())
+        }
+        saveTrackedReports()
+    }
+
+    /// Shows the fixed report when the app is in front and no sheet would hide it; else at the next
+    /// activation.
     private func showFixedReport() {
         guard let fixed = fixedReportToShow, NSApp.isActive, pendingReport == nil, pendingShare == nil else { return }
         fixedReportToShow = nil
         fixedReport = fixed
     }
 
-    /// The alert closed: the report is forgotten, and the fix counts as told. One never shown stays
-    /// for the next launch.
+    /// The popup closed: the fix counts as told. One never shown stays for the next check.
     func closeFixedReport() {
         guard let fixed = fixedReport else { return }
         fixedReport = nil
-        var sent = UserDefaults.standard.dictionary(forKey: Self.sentReportsKey) as? [String: String] ?? [:]
-        sent[String(fixed.issue)] = nil
-        UserDefaults.standard.set(sent, forKey: Self.sentReportsKey)
         let announced = UserDefaults.standard.array(forKey: Self.announcedFixesKey) as? [Int] ?? []
         if !announced.contains(fixed.issue) { UserDefaults.standard.set(announced + [fixed.issue], forKey: Self.announcedFixesKey) }
+    }
+
+    /// The fix popup again, from the report's card.
+    func showFix(of report: TrackedReport) {
+        guard case .fixed(let version, let availability) = status(of: report), availability != .coming,
+              let fix = reportFixes.first(where: { $0.issue == report.number }) else { return }
+        fixedReport = FixedReport(issue: report.number, title: report.title, version: version, needsUpdate: availability == .update,
+                                  isSent: true, cause: fix.cause, change: fix.change)
+    }
+
+    /// A click on a report notification.
+    func openReports() {
+        NSApp.activate()
+        reportsToOpen += 1
     }
 
     /// Corkscrew and the Mac, then the program and its settings: what a report says besides the error.
