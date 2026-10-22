@@ -574,7 +574,8 @@ struct GameHero: View {
             Image(systemName: "ellipsis")
         }
         .menuStyle(.button)
-        .buttonStyle(CircleButtonStyle())
+        .buttonStyle(CircleMenuButtonStyle())
+        .focusLine(in: .circle)
         .menuIndicator(.hidden)
         .fixedSize()
     }
