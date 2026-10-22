@@ -2,8 +2,9 @@
 
 A small Cloudflare Worker that takes what Corkscrew sends to GitHub, so players need no GitHub
 account: the crash and error reports from **Send Report** (`POST /`), and the settings players share
-from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)). It also counts
-Macs (`POST /device`, see [Devices](#devices)). For each report it:
+from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)), and the senders'
+answers to the developer's notes (`POST /reply`, see [Replies](#replies)). It also counts Macs
+(`POST /device`, see [Devices](#devices)). For each report it:
 
 1. checks the size (1 MB at most) and the shape, and limits how many reports one network can send;
 2. keeps the whole report, with the full backtrace and the end of the log, in a private R2 bucket
@@ -12,10 +13,30 @@ Macs (`POST /device`, see [Devices](#devices)). For each report it:
    of the backtrace, labelled `bug` and `crash-report`. The issue says the full report is stored
    privately under its id. A GitHub App opens it, so the author is the app's bot (for example
    `corkscrew-reports[bot]`), not a person;
-4. answers the app with the issue's link.
+4. answers the app with the issue's link and the report's reply key.
 
 The app posts `ProblemReport` from `Packages/GameCore/Sources/GameCore/ProblemReport.swift` as JSON
-(`request(to:)`) and reads `{"issue": "<link>"}` from the answer (`send(to:)`).
+(`request(to:)`) and reads `{"issue": "<link>", "key": "<reply key>"}` from the answer (`send(to:)`).
+
+## Replies
+
+The relay opens the issues, so the sender can't comment on them. When an issue has the `question`
+label, the app's Reports page shows **Reply** under the developer's notes. It posts `ReportReply` from
+`Packages/GameCore/Sources/GameCore/ReportReply.swift` to `/reply`: the issue number, the report's key,
+the answer, and, if the sender chose, the start and the end of the program's last 3 launch logs (home
+folder and user name hidden).
+
+The key is an HMAC-SHA-256 of the issue number with `RATE_LIMIT_KEY`, so the relay keeps nothing to
+check it, and only the Mac that sent the report has it. Issue numbers are public: without the key,
+anyone could answer for any report. Reports from Corkscrew 1.0.2 and older have no key. Their replies
+are kept with `verified: false`, and the issue comment says they may not be from the sender.
+
+The relay answers 403 for a wrong key, and 404 unless the issue is open and has `crash-report`. It
+keeps the reply in R2 under `replies/<id>.json` and adds a comment to the issue that the sender
+answered, with the id. The answer and the logs are not in the comment. It answers 201 `{"id": "<id>"}`,
+or 202 when it couldn't comment (GitHub failed, or the day's issue limit is reached). Replies count
+against the same hourly limit as reports. The app keeps its own copy of each answer and shows it on
+the card.
 
 ## Shared settings
 
@@ -59,6 +80,7 @@ older than that. The tables are in `migrations/`.
 | Backtrace | The start, up to Wine's module list (60 lines at most) | All of it |
 | End of the log | No | Yes |
 | The user's note ("what I was doing") | No | Yes |
+| A reply's answer and launch logs | No (only that there is one) | Yes |
 | The Mac's device ID | No | Yes, and in D1 |
 | The sender's IP address | No | No |
 
@@ -220,6 +242,14 @@ npx wrangler r2 object get corkscrew-reports/reports/<id>.json --remote --file r
 
 Or open **R2 → corkscrew-reports → reports/** in the Cloudflare dashboard. The file holds the id, the
 time the relay received it and the report as the app sent it. Shared settings are under `settings/`.
+
+The issue comment for a reply gives its id:
+
+```bash
+npx wrangler r2 object get corkscrew-reports/replies/<id>.json --remote --file reply.json
+```
+
+The file holds the id, the time, the issue, `verified` and the reply as the app sent it.
 
 ## Read device data
 

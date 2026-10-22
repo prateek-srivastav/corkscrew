@@ -1648,7 +1648,20 @@ final class AppModel {
         var issue: ReportIssue?
         var seen: ReportIssue.Signature?
         var told: ReportIssue.Signature?
+        /// The relay's key for replies (`ReportReply`); nil for reports from 1.0.2 and older.
+        var key: String?
+        /// The program the report was about, whose launch logs a reply can attach.
+        var game: Game.ID?
+        /// What the user answered with Reply, oldest first, so the card shows it with the notes.
+        var replies: [Reply]?
         var id: Int { number }
+
+        struct Reply: Codable {
+            var date: Date
+            var text: String
+            /// How many launch logs went with it.
+            var logs: Int
+        }
     }
 
     /// Newest first. Kept in `TrackedReports`.
@@ -1725,10 +1738,37 @@ final class AppModel {
     }
 
     /// Follows the issue a sent report opened, and asks once to show notifications for it.
-    func remember(_ report: ProblemReport, issue: URL) {
-        guard let number = ReportFix.issue(in: issue) else { return }
-        track(TrackedReport(number: number, title: report.title, sent: Date(), issue: ReportIssue(number: number, title: report.title)))
+    func remember(_ report: ProblemReport, sent: ProblemReport.Sent, game: Game.ID?) {
+        guard let number = ReportFix.issue(in: sent.issue) else { return }
+        track(TrackedReport(number: number, title: report.title, sent: Date(), issue: ReportIssue(number: number, title: report.title),
+                            key: sent.key, game: game))
         ReportNotifications.ask()
+    }
+
+    /// The program a report was about: the one it was sent for, or for reports from 1.0.2 and older
+    /// the program its title names ("<name> crashed", "<name> quit with an error", …).
+    func game(of report: TrackedReport) -> Game? {
+        if let id = report.game { return games.first { $0.id == id } }
+        return games.filter { report.title.hasPrefix($0.name + " ") }.max { $0.name.count < $1.name.count }
+    }
+
+    /// The launch logs a reply can attach: the program's newest ones.
+    func replyLogs(for report: TrackedReport) -> [URL] {
+        game(of: report).map { ReportReply.launchLogs(in: paths.logs(for: $0.id)) } ?? []
+    }
+
+    /// Sends the user's answer to the developer's note, with the start and end of the program's
+    /// newest launch logs if they chose. Throws when the relay doesn't keep it.
+    func reply(to report: TrackedReport, text: String, attachLogs: Bool) async throws {
+        guard let relay = Self.reportRelay else { throw URLError(.unsupportedURL) }
+        let files = attachLogs ? replyLogs(for: report) : []
+        let logs = await Task.detached(priority: .userInitiated) {
+            files.compactMap { file in ReportReply.excerpt(of: file).map { ReportReply.Log(name: file.lastPathComponent, text: $0) } }
+        }.value
+        try await ReportReply(issue: report.number, key: report.key, text: text, logs: logs).send(to: relay)
+        guard let index = trackedReports.firstIndex(where: { $0.number == report.number }) else { return }
+        trackedReports[index].replies = (trackedReports[index].replies ?? []) + [TrackedReport.Reply(date: Date(), text: text, logs: logs.count)]
+        saveTrackedReports()
     }
 
     /// Follows an issue by the number or link the user typed. Throws when there's no such issue.

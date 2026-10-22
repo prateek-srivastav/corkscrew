@@ -5,6 +5,7 @@ import { network, senderName } from "../src/counter";
 import { keptDays, prune } from "../src/device";
 import worker, { type Env } from "../src/index";
 import { backtraceLines, backtraceStart, codeBlock, issueFor } from "../src/issue";
+import { replyKey } from "../src/reply";
 import { maxBytes, parseReport } from "../src/report";
 import { parseShare, shareIssue } from "../src/share";
 
@@ -73,6 +74,8 @@ interface Sent {
 
 let github: Sent[];
 let gitHubAnswer: () => Response;
+/** GitHub's answer to reading an issue (GET), for /reply. */
+let issueAnswer: () => Response;
 /** The GitHub App's token requests, apart from the issues. */
 let tokenRequests: Request[];
 let tokenAnswer: () => Response;
@@ -81,6 +84,7 @@ beforeEach(async () => {
 	await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 	github = [];
 	gitHubAnswer = () => Response.json({ html_url: issueLink, number: 42 }, { status: 201 });
+	issueAnswer = () => Response.json({ number: 42, state: "open", labels: [{ name: "bug" }, { name: "crash-report" }, { name: "question" }] });
 	tokenRequests = [];
 	tokenAnswer = () => Response.json({ token: "installation-token", expires_at: "2026-10-18T10:15:00Z" }, { status: 201 });
 	// The Worker runs in the tests' isolate, so this replaces its fetch too.
@@ -89,6 +93,10 @@ beforeEach(async () => {
 		if (request.url.endsWith("/access_tokens")) {
 			tokenRequests.push(request);
 			return tokenAnswer();
+		}
+		if (request.method === "GET") {
+			github.push({ url: request.url, method: request.method, headers: request.headers, body: { title: "", body: "", labels: [] } });
+			return issueAnswer();
 		}
 		github.push({ url: request.url, method: request.method, headers: request.headers, body: await request.json() });
 		return gitHubAnswer();
@@ -127,6 +135,7 @@ describe("a report", () => {
 		const answer = await response.json<{ issue: string; id: string }>();
 		expect(answer.issue).toBe(issueLink);
 		expect(answer.id).toMatch(/^[0-9a-f-]{36}$/);
+		expect((answer as { key?: string }).key).toBe(await replyKey(42, "test-key"));
 
 		const object = await env.REPORTS.get(`reports/${answer.id}.json`);
 		expect(object?.httpMetadata?.contentType).toBe("application/json");
@@ -416,11 +425,114 @@ _No response_
 	});
 });
 
+/** What the app sends with Reply: `ReportReply`. */
+const reply = {
+	issue: 42,
+	text: "I installed it from the disc image, with Use the disc image.",
+	logs: [{ name: "launch-2026-10-21_20-30-00.log", text: "# backend: wined3d\nlog_line_only_in_r2" }],
+};
+
+describe("a reply", () => {
+	it("with the report's key is kept in R2, and says so on the issue", async () => {
+		const response = await send({ ...reply, key: await replyKey(42, "test-key") }, { path: "/reply" });
+		expect(response.status).toBe(201);
+		const { id } = await response.json<{ id: string }>();
+		const saved = JSON.parse(await (await env.REPORTS.get(`replies/${id}.json`))!.text());
+		expect(saved.issue).toBe(42);
+		expect(saved.verified).toBe(true);
+		expect(saved.reply.text).toBe(reply.text);
+		expect(saved.reply.logs).toEqual(reply.logs);
+
+		const [check, comment] = github;
+		expect(check.method).toBe("GET");
+		expect(check.url).toBe("https://api.github.com/repos/Prateek-Srivastav/corkscrew/issues/42");
+		expect(comment.url).toBe("https://api.github.com/repos/Prateek-Srivastav/corkscrew/issues/42/comments");
+		expect(comment.body.body).toContain("**The sender answered**, with 1 launch log");
+		expect(comment.body.body).toContain(`stored privately under id \`${id}\``);
+		expect(comment.body.body).not.toContain("may not be from");
+		// The answer and the logs stay private.
+		expect(comment.body.body).not.toContain("disc image");
+		expect(comment.body.body).not.toContain("log_line_only_in_r2");
+	});
+
+	it("without a key is taken, but marked as unchecked", async () => {
+		const response = await send({ ...reply, logs: [] }, { path: "/reply" });
+		expect(response.status).toBe(201);
+		const { id } = await response.json<{ id: string }>();
+		expect(JSON.parse(await (await env.REPORTS.get(`replies/${id}.json`))!.text()).verified).toBe(false);
+		const comment = github.at(-1)!.body.body;
+		expect(comment).toContain("**The sender answered**, with Reply");
+		expect(comment).toContain("may not be from the person who sent the report");
+	});
+
+	it("is refused with another issue's key, and kept nowhere", async () => {
+		const response = await send({ ...reply, key: await replyKey(41, "test-key") }, { path: "/reply" });
+		expect(response.status).toBe(403);
+		expect(await stored()).toEqual([]);
+		expect(github).toEqual([]);
+	});
+
+	it.each([
+		["closed", { number: 42, state: "closed", labels: [{ name: "crash-report" }] }],
+		["not opened by a report", { number: 42, state: "open", labels: [{ name: "bug" }] }],
+		["a pull request", { number: 42, state: "open", labels: [{ name: "crash-report" }], pull_request: {} }],
+	])("is refused for an issue that is %s", async (_, issue) => {
+		issueAnswer = () => Response.json(issue);
+		const response = await send(reply, { path: "/reply" });
+		expect(response.status).toBe(404);
+		expect(await stored()).toEqual([]);
+		expect(github.filter((request) => request.method === "POST")).toEqual([]);
+	});
+
+	it("is refused for an issue that doesn't exist", async () => {
+		issueAnswer = () => new Response('{"message":"Not Found"}', { status: 404 });
+		expect((await send(reply, { path: "/reply" })).status).toBe(404);
+	});
+
+	it("is kept without a comment when GitHub fails", async () => {
+		issueAnswer = () => new Response('{"message":"Server Error"}', { status: 502 });
+		const checkFails = await send(reply, { path: "/reply" });
+		expect(checkFails.status).toBe(202);
+		issueAnswer = () => Response.json({ number: 42, state: "open", labels: [{ name: "crash-report" }] });
+		gitHubAnswer = () => new Response('{"message":"Bad credentials"}', { status: 401 });
+		const commentFails = await send(reply, { path: "/reply" });
+		expect(commentFails.status).toBe(202);
+		expect(await stored()).toHaveLength(2);
+	});
+
+	it.each([
+		["no issue", { ...reply, issue: undefined }],
+		["an issue that isn't a number", { ...reply, issue: "42" }],
+		["a key of the wrong form", { ...reply, key: "short" }],
+		["an empty answer", { ...reply, text: "  " }],
+		["an answer too long", { ...reply, text: "x".repeat(10_001) }],
+		["too many logs", { ...reply, logs: Array(4).fill(reply.logs[0]) }],
+		["a log without a name", { ...reply, logs: [{ text: "x" }] }],
+	])("is refused with %s", async (_, body) => {
+		const response = await send(body, { path: "/reply" });
+		expect(response.status).toBe(400);
+		expect(await stored()).toEqual([]);
+	});
+
+	it("shares the hourly limit with reports", async () => {
+		const address = "198.51.100.77";
+		for (let count = 0; count < 5; count++) expect((await send(report, { address })).status).toBe(201);
+		expect((await send(reply, { path: "/reply", address })).status).toBe(429);
+	});
+
+	it("doesn't give a key with shared settings", async () => {
+		const response = await send(share, { path: "/settings" });
+		expect(response.status).toBe(201);
+		expect((await response.json<{ key?: string }>()).key).toBeUndefined();
+	});
+});
+
 describe("the relay refuses", () => {
 	it("other paths and methods", async () => {
 		expect((await send(report, { path: "/reports" })).status).toBe(404);
 		expect((await send(share, { path: "/settings/" })).status).toBe(404);
 		expect((await send(ping, { path: "/device", method: "GET" })).status).toBe(405);
+		expect((await send(reply, { path: "/reply", method: "GET" })).status).toBe(405);
 		const get = await send(undefined, { method: "GET" });
 		expect(get.status).toBe(405);
 		expect(get.headers.get("Allow")).toBe("POST");

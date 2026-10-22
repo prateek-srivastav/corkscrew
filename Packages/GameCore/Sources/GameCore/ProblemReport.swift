@@ -98,8 +98,20 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     /// The report as JSON, for the server at `relay`.
     public func request(to relay: URL) throws -> URLRequest { try Self.post(self, to: relay) }
 
-    /// Posts the report. The server answers `{"issue": "<link>"}` with the issue it opened, if any.
-    public func send(to relay: URL) async throws -> URL? { try await Self.send(request(to: relay)) }
+    /// The issue a sent report opened, and the key that lets its sender reply there (`ReportReply`).
+    public struct Sent: Sendable, Equatable {
+        public var issue: URL
+        /// Nil from a relay older than replies.
+        public var key: String?
+    }
+
+    /// Posts the report. The server answers `{"issue": "<link>", "key": "…"}` with the issue it
+    /// opened, if any.
+    public func send(to relay: URL) async throws -> Sent? {
+        let answer = try await Self.answer(request(to: relay))
+        guard let issue = (answer["issue"] as? String).flatMap(URL.init(string:)) else { return nil }
+        return Sent(issue: issue, key: answer["key"] as? String)
+    }
 
     /// `value` as JSON, posted to the relay: a report, or settings a player shares.
     static func post(_ value: some Encodable, to url: URL) throws -> URLRequest {
@@ -114,12 +126,16 @@ public struct ProblemReport: Sendable, Equatable, Codable {
 
     /// Sends a request from `post(_:to:)`. Throws unless the relay answers 2xx; returns the issue's link, if any.
     static func send(_ request: URLRequest) async throws -> URL? {
+        (try await answer(request)["issue"] as? String).flatMap(URL.init(string:))
+    }
+
+    /// Sends a request from `post(_:to:)`. Throws unless the relay answers 2xx; returns its JSON answer.
+    static func answer(_ request: URLRequest) async throws -> [String: Any] {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let status = (response as? HTTPURLResponse)?.statusCode, (200..<300).contains(status) else {
             throw URLError(.badServerResponse)
         }
-        let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (answer?["issue"] as? String).flatMap(URL.init(string:))
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     // MARK: Wine crashes

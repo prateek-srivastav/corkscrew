@@ -46,9 +46,13 @@ private struct ReportCard: View {
     let report: AppModel.TrackedReport
     let isNew: Bool
     @Environment(AppModel.self) private var model
+    @State private var isReplying = false
+    /// The notes and replies show only when the user opens the card, so a long list stays short.
+    @State private var isExpanded = false
 
     var body: some View {
         let status = model.status(of: report)
+        let thread = thread
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: status.systemImage)
                 .font(.system(size: Theme.controlIconSize, weight: .semibold))
@@ -69,13 +73,29 @@ private struct ReportCard: View {
                             Text("·")
                             Text("Sent \(sent.formatted(date: .abbreviated, time: .omitted))")
                         }
+                        if !thread.isEmpty {
+                            Text("·")
+                            Button { toggle() } label: {
+                                HStack(spacing: 4) {
+                                    Text(thread.count == 1 ? "1 message" : "\(thread.count) messages")
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 }
-                ForEach((report.issue?.notes ?? []).reversed()) { NoteView(note: $0) }
-                if status == .needsDetails {
-                    Text("Add details on its GitHub page.").font(.subheadline).foregroundStyle(.secondary)
+                if isExpanded {
+                    ForEach(thread) { message in
+                        switch message {
+                        case .note(let note): NoteView(note: note)
+                        case .reply(let reply): ReplyView(reply: reply)
+                        }
+                    }
                 }
                 actions(status)
             }
@@ -86,7 +106,40 @@ private struct ReportCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface, in: .rect(cornerRadius: Theme.cornerRadius))
         .overlay { RoundedRectangle(cornerRadius: Theme.cornerRadius).strokeBorder(Theme.stroke) }
+        .contentShape(.rect(cornerRadius: Theme.cornerRadius))
+        .onTapGesture { if !thread.isEmpty { toggle() } }
         .contextMenu { menuItems }
+        .sheet(isPresented: $isReplying) { ReplySheet(report: report).environment(model) }
+    }
+
+    private func toggle() {
+        withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+    }
+
+    /// The developer's notes and the user's replies, newest first.
+    private var thread: [Message] {
+        let notes = (report.issue?.notes ?? []).map(Message.note)
+        let replies = (report.replies ?? []).map(Message.reply)
+        return (notes + replies).sorted { $0.date > $1.date }
+    }
+
+    private enum Message: Identifiable {
+        case note(ReportIssue.Note)
+        case reply(AppModel.TrackedReport.Reply)
+
+        var date: Date {
+            switch self {
+            case .note(let note): note.date
+            case .reply(let reply): reply.date
+            }
+        }
+
+        var id: String {
+            switch self {
+            case .note(let note): "note-\(note.id)"
+            case .reply(let reply): "reply-\(reply.date.timeIntervalSinceReferenceDate)"
+            }
+        }
     }
 
     @ViewBuilder
@@ -102,13 +155,20 @@ private struct ReportCard: View {
                     .buttonStyle(.pill)
             }
             .padding(.top, 2)
+        } else if status == .needsDetails, AppModel.reportRelay != nil {
+            Button(report.replies == nil ? "Reply" : "Reply Again", systemImage: "arrowshape.turn.up.left") { isReplying = true }
+                .buttonStyle(.prominentPill)
+                .padding(.top, 2)
+        } else if status == .needsDetails {
+            Text("Add details on its GitHub page.").font(.subheadline).foregroundStyle(.secondary)
         }
     }
 
     private var menu: some View {
         Menu { menuItems } label: { Image(systemName: "ellipsis") }
             .menuStyle(.button)
-            .buttonStyle(CircleButtonStyle())
+            .buttonStyle(CircleMenuButtonStyle())
+            .focusLine(in: .circle)
             .menuIndicator(.hidden)
             .fixedSize()
     }
@@ -141,6 +201,103 @@ private struct NoteView: View {
 
     static func markdown(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+/// What the user answered with Reply. Only this Mac keeps the text to show it; the relay's copy is private.
+private struct ReplyView: View {
+    let reply: AppModel.TrackedReport.Reply
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("You · \(reply.date.formatted(date: .abbreviated, time: .omitted))"
+                 + (reply.logs == 0 ? "" : " · \(reply.logs == 1 ? "1 launch log" : "\(reply.logs) launch logs")"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(reply.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.12), in: .rect(cornerRadius: 8))
+    }
+}
+
+/// The user's answer to the developer's note, with the program's newest launch logs if they
+/// choose. Only the developer sees it: the relay keeps it privately and says on the issue that
+/// there is one.
+private struct ReplySheet: View {
+    let report: AppModel.TrackedReport
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var attachLogs = true
+    @State private var isSending = false
+    @State private var error: String?
+
+    var body: some View {
+        let logs = model.replyLogs(for: report)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Reply to the developer").font(.headline)
+                Text("“\(report.title)”").foregroundStyle(.secondary).lineLimit(2)
+            }
+            if let note = report.issue?.notes.last {
+                Text(NoteView.markdown(note.text))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.05), in: .rect(cornerRadius: 8))
+            }
+            TextEditor(text: $text)
+                .font(.body)
+                .frame(height: 120)
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(Theme.surface, in: .rect(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke) }
+            if !logs.isEmpty {
+                HStack(spacing: 6) {
+                    Toggle("Attach the last \(logs.count == 1 ? "launch log" : "\(logs.count) launch logs")", isOn: $attachLogs)
+                    InfoButton(text: "The start and the end of \(model.game(of: report)?.name ?? "the program")'s newest launch logs. "
+                               + "Your home folder shows as ~ and your user name as <user>.")
+                }
+            }
+            InfoLine("Only the developer sees your answer.",
+                     info: "Corkscrew's server keeps your answer and the logs privately, and adds a comment to the public issue "
+                        + "that you answered. It doesn't show what you wrote.")
+                .foregroundStyle(.secondary)
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                BusyButton("Send", busyTitle: "Sending…", isBusy: isSending, action: send)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private func send() {
+        guard !isSending else { return }
+        isSending = true
+        error = nil
+        Task {
+            defer { isSending = false }
+            do {
+                try await model.reply(to: report, text: text.trimmingCharacters(in: .whitespacesAndNewlines), attachLogs: attachLogs)
+                dismiss()
+            } catch {
+                self.error = "Couldn't send it. Try again later."
+            }
+        }
     }
 }
 

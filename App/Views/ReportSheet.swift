@@ -125,7 +125,7 @@ struct ReportSheet: View {
             do {
                 var report = report
                 report.device = AppModel.deviceID
-                if let issue = try await report.send(to: relay) { model.remember(report, issue: issue) }
+                if let sent = try await report.send(to: relay) { model.remember(report, sent: sent, game: pending.gameID) }
                 sent = true
             } catch {
                 sendError = "Couldn't send the report: \(AppModel.describe(error)). You can report it on GitHub instead."

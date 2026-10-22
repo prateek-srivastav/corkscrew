@@ -89,3 +89,37 @@ export async function openIssue(github: GitHub, issue: { title: string; body: st
 	}
 	return answer.html_url;
 }
+
+/** Whether issue `number` is open and has the `crash-report` label: an issue a report opened that
+ * still waits for details. Throws when GitHub fails; a missing issue or a pull request is false. */
+export async function isOpenReportIssue(github: GitHub, number: number): Promise<boolean> {
+	const response = await fetch(`https://api.github.com/repos/${github.repository}/issues/${number}`, {
+		headers: headers(github),
+		signal: AbortSignal.timeout(10_000),
+	});
+	if (response.status === 404 || response.status === 410) return false;
+	if (!response.ok) throw new Error(`GitHub answered ${response.status}: ${(await response.text()).slice(0, 500)}`);
+	const issue = (await response.json()) as { state?: unknown; labels?: { name?: unknown }[]; pull_request?: unknown };
+	return issue.pull_request === undefined && issue.state === "open"
+		&& (issue.labels ?? []).some((label) => label.name === reportLabels[1]);
+}
+
+/** Adds a comment to issue `number`. Throws when GitHub says no. */
+export async function commentOnIssue(github: GitHub, number: number, body: string): Promise<void> {
+	const response = await fetch(`https://api.github.com/repos/${github.repository}/issues/${number}/comments`, {
+		method: "POST",
+		headers: { ...headers(github), "Content-Type": "application/json" },
+		body: JSON.stringify({ body }),
+		signal: AbortSignal.timeout(10_000),
+	});
+	if (!response.ok) throw new Error(`GitHub answered ${response.status}: ${(await response.text()).slice(0, 500)}`);
+}
+
+function headers(github: GitHub): Record<string, string> {
+	return {
+		Accept: "application/vnd.github+json",
+		Authorization: `Bearer ${github.token}`,
+		"User-Agent": "corkscrew-relay",
+		"X-GitHub-Api-Version": "2022-11-28",
+	};
+}
