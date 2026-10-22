@@ -78,7 +78,23 @@ The app looks for a new version each time it opens. It reads `update.json` from 
 
 When a version fixes an issue that a sent report opened, add the issue and that version to `docs/fixes.json` on main: `[{"issue": 51, "version": "1.0.2"}]`. The app that sent the report reads the list when it opens and says once that the report is fixed: "fixed in this version", or "Update to get it" once the release is published. Before that, the entry shows nothing, so you can add it with the fix. For a fix that many may have hit, add `"everyone": true` and a `"title"` (one short line): every Mac whose version has the fix then shows "A reported problem is fixed" once, after an update too. Macs where Corkscrew wasn't set up yet count it as told. It isn't offered as an update: it shows only in a version that has the fix. Older versions read this file too: add keys, don't rename or remove them, and don't move the file. To try it, open a build with `-ReportFixesURL <url>` and a `SentReports` default such as `{51 = "Game crashed";}`. Debug builds read the list too, as builds from source are Debug builds.
 
-The app is ad hoc signed, so users confirm it once with **Open Anyway**. Signing with a Developer ID and notarizing would remove that step; it needs an Apple Developer Program membership.
+## Signing
+
+Releases are signed with Corkscrew's own self-signed certificate. So every version has the same designated requirement (`identifier "io.github.prateek-srivastav.Corkscrew" and certificate leaf = H"<SHA-1>"`), and macOS keeps the permissions users gave Corkscrew (Documents, notifications and so on) after an update. An ad hoc signature changes with each build, so macOS sees each update as a new app and asks again.
+
+Make the certificate once, on your Mac:
+
+```bash
+scripts/make-signing-cert.sh
+```
+
+It writes `~/.corkscrew-signing/corkscrew-signing.p12` and its password file, and prints the commands that put them into the repository's Actions secrets (`CORKSCREW_SIGNING_P12`, the `.p12` in base64, and `CORKSCREW_SIGNING_PASSWORD`) and the certificate's SHA-1 into the Actions variable `CORKSCREW_SIGNING_SHA1`. Keep a backup of both files outside the repository, and never make a new certificate: a new one makes every user give the permissions again. Never commit them.
+
+The **Release** workflow passes these to `scripts/make-dmg.sh`, which imports the certificate into a keychain of its own (deleted at the end) and signs the app and `perf-overlay` with it. Every run in this repository uses the same secret, whoever pushed the tag, so every release has the same fingerprint; the build stops if the certificate's SHA-1 isn't `CORKSCREW_SIGNING_SHA1`, or if either is missing. Forks and pull requests from forks get no secrets: their builds are ad hoc signed, and they can't sign as Corkscrew. Without the variables, `make-dmg.sh` signs ad hoc (builds from source, local tries). To check a build: `codesign -d -r- Corkscrew.app`.
+
+The in-app updater keeps the signature as it is: it unpacks the zip with `ditto`, removes the quarantine attribute and runs `codesign --verify --deep --strict`, which a self-signed signature passes. Users who update from an ad hoc version (1.0.2 and older) get each permission prompt once more; after that, updates keep them.
+
+The certificate isn't a Developer ID and the app isn't notarized, so Gatekeeper still rejects a downloaded DMG: users confirm it once with **Open Anyway**. The install script and the updater remove the quarantine attribute, so they don't ask. A Developer ID and notarization would remove that step; they need an Apple Developer Program membership, and would change the designated requirement once more.
 
 ## Website
 
