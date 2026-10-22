@@ -1,4 +1,6 @@
 [
   {"issue": 52, "version": "1.0.2", "everyone": true, "title": "Some programs in Protected bottles didn't start",
-   "cause": "Only the program's file was copied, not its folder.", "change": "Corkscrew copies the program's whole folder."}
+   "cause": "Only the program's file was copied, not its folder.", "change": "Corkscrew copies the program's whole folder."},
+  {"issue": 55, "version": "1.0.3",
+   "cause": "Wine's Install Engine, which Microsoft's DirectX web setup uses, was missing.", "change": "Corkscrew's Wine has it: the setup works in Online Programs, and offline it says it can't download."}
 ]
