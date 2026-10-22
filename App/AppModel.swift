@@ -27,6 +27,10 @@ final class AppModel {
         var task: Task<Void, Never>?
         /// Not in the library: started with "Run once".
         var isTransient: Bool
+        /// A Steam game's launch: where it is.
+        var phase: Launcher.LaunchPhase?
+        /// The programs whose windows this launch brought forward.
+        var broughtForward: Set<pid_t> = []
 
         var isActive: Bool { status == .preparing || status == .running }
     }
@@ -984,8 +988,12 @@ final class AppModel {
                 self?.sessions[game.id]?.status = .running
                 let started = ContinuousClock.now
                 if game.profile.performanceOverlay { Self.startOverlay(prefix: prepared.context.location.prefix) }
-                let result = try await Launcher.run(prepared)
+                let result = try await Launcher.run(prepared) { progress in
+                    Task { @MainActor in self?.launchProgressed(game.id, progress) }
+                }
                 self?.sessions[game.id]?.status = Task.isCancelled ? .stopped : .exited(result.status)
+                // The game's programs are gone: its page shows Play now, not at the next look 2 s on.
+                await self?.refreshRunningPrograms()
                 if !Task.isCancelled {
                     // With Steam already running, the game ran with Steam's settings: nothing of its own to share.
                     await self?.sessionEnded(game, result: result, backend: prepared.plan.backend, log: prepared.log,
@@ -998,6 +1006,16 @@ final class AppModel {
                 if !Task.isCancelled { self?.offerReport(.launchFailed, for: game, summary: Self.describe(error)) }
             }
             self?.refreshRunningBottles()
+        }
+    }
+
+    /// A Steam game's launch moved on. While Corkscrew is in front, the window to see comes forward:
+    /// macOS opens a Wine program's first window behind it (the Rockstar launcher's Sign In, say).
+    private func launchProgressed(_ gameID: Game.ID, _ progress: Launcher.LaunchProgress) {
+        guard sessions[gameID]?.isActive == true else { return }
+        sessions[gameID]?.phase = progress.phase
+        if let pid = progress.front, NSApp.isActive, sessions[gameID]?.broughtForward.insert(pid).inserted == true {
+            NSRunningApplication(processIdentifier: pid)?.activate(from: .current, options: [])
         }
     }
 
