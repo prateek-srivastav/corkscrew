@@ -49,15 +49,19 @@ If the download is the program itself, with no setup, step 4 is **Add to Library
 
 ### Usage counts
 
-Corkscrew sends a few anonymous counts that show how many people install it and on which Macs:
+Corkscrew sends a few counts that show how many people install it and on which Macs:
 
 - **install**: from the install script, after an install or an update. It has the version, the version it replaced, macOS, the Mac model, the chip and memory, and the language.
 - **first_launch**: once, the first time Corkscrew opens, with the same details.
 - **setup_done**: when **Set Up Corkscrew** finishes. It has how long setup took, whether it installed Rosetta, and where Wine came from.
 
-The counts go to [Aptabase](https://aptabase.com). Aptabase shows the country from the connection and doesn't keep the IP address. Nothing identifies you: no name, account, Apple ID, files, programs or games, and no ID that lasts (Aptabase's visitor hash changes every day). The code is in [Analytics.swift](Packages/GameCore/Sources/GameCore/Analytics.swift) and the [install script](scripts/install.sh).
+The counts go to [Aptabase](https://aptabase.com). Aptabase shows the country from the connection and doesn't keep the IP address or an ID that lasts (its visitor hash changes every day).
 
-To turn them off, switch off **Send anonymous usage counts** in Settings → Privacy. Or install with `DO_NOT_TRACK=1`, which also turns off the app's counts before it opens:
+**Device ID.** To count Macs, not launches, and to link a crash report to the Mac that sent it, Corkscrew also makes one ID for your Mac: a salted SHA-256 hash of the Mac's hardware UUID. The hardware UUID and serial number never leave the Mac. The ID stays the same on that Mac, also after **Clean Up and Uninstall**, and you can't reset it, so it counts as personal data under the GDPR. Once each time Corkscrew opens, it sends the ID with the Mac model, chip, memory, and the macOS and Corkscrew versions to Corkscrew's relay ([`relay/`](relay)), which adds the country from the connection. **Send Report** sends the ID with the report. The relay keeps them privately in Cloudflare: when each Mac was first and last seen with its details, and which Mac sent which report. The ID is never in a public GitHub issue. A Mac not seen for 365 days, and a report link older than that, are deleted. With the switch below off, nothing more is sent, so your Mac's data is deleted 365 days after its last ping.
+
+Nothing else identifies you: no name, account, Apple ID, files, programs or games, and no IP address. The code is in [Analytics.swift](Packages/GameCore/Sources/GameCore/Analytics.swift), [DeviceID.swift](Packages/GameCore/Sources/GameCore/DeviceID.swift) and the [install script](scripts/install.sh).
+
+To turn off the counts and the device ID, switch off **Send usage counts** in Settings → Privacy. Reports then go without the ID. Or install with `DO_NOT_TRACK=1`, which also turns off the app's counts before it opens:
 
 ```bash
 curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | DO_NOT_TRACK=1 bash

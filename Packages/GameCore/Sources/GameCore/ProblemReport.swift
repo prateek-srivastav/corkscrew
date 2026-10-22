@@ -30,6 +30,9 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     /// What the user was doing, if they say.
     public var note = ""
     public var date = Date()
+    /// The Mac's `DeviceID`, set just before sending while usage counts are on. Only the relay sees
+    /// it: it isn't in `text` or `issueURL`, so not in the public issue.
+    public var device: String?
 
     public init(kind: Kind, title: String, summary: String, details: [String], backtrace: String? = nil, log: String? = nil) {
         self.kind = kind

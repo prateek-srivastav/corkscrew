@@ -1,10 +1,11 @@
-import { reset } from "cloudflare:test";
+import { applyD1Migrations, reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { network, senderName } from "../src/counter";
-import worker, { type Env, maxBytes } from "../src/index";
+import { keptDays, prune } from "../src/device";
+import worker, { type Env } from "../src/index";
 import { backtraceLines, backtraceStart, codeBlock, issueFor } from "../src/issue";
-import { parseReport } from "../src/report";
+import { maxBytes, parseReport } from "../src/report";
 import { parseShare, shareIssue } from "../src/share";
 
 /** A winedbg block, as `ProblemReport.crash(in:)` cuts it from a launch log. */
@@ -76,7 +77,8 @@ let gitHubAnswer: () => Response;
 let tokenRequests: Request[];
 let tokenAnswer: () => Response;
 
-beforeEach(() => {
+beforeEach(async () => {
+	await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 	github = [];
 	gitHubAnswer = () => Response.json({ html_url: issueLink, number: 42 }, { status: 201 });
 	tokenRequests = [];
@@ -182,6 +184,123 @@ describe("a report", () => {
 		const answer = await response.json<{ issue?: string; id: string }>();
 		expect(answer.issue).toBeUndefined();
 		expect(await stored()).toEqual([`reports/${answer.id}.json`]);
+	});
+});
+
+/** A `DeviceID`, as the app sends it. */
+const deviceID = "3f".repeat(32);
+
+/** What the app sends to /device: `DevicePing`. */
+const ping = {
+	id: deviceID,
+	model: "Mac16,1",
+	chip: "Apple M4",
+	memoryGB: 16,
+	osVersion: "27.0",
+	appVersion: "1.0.2",
+	appBuild: "18",
+	isDebug: false,
+};
+
+interface DeviceRow {
+	id: string;
+	first_seen: string;
+	last_seen: string;
+	details: string;
+}
+
+describe("a device ping", () => {
+	it("adds the Mac, then updates when it was last seen", async () => {
+		expect((await send(ping, { path: "/device" })).status).toBe(204);
+		const first = await env.DB.prepare("SELECT * FROM devices").first<DeviceRow>();
+		expect(first?.id).toBe(deviceID);
+		expect(first?.first_seen).toBe(first?.last_seen);
+		expect(JSON.parse(first!.details)).toEqual({ ...ping, id: undefined, country: null });
+
+		expect((await send({ ...ping, appVersion: "1.0.3" }, { path: "/device" })).status).toBe(204);
+		const rows = (await env.DB.prepare("SELECT * FROM devices").all<DeviceRow>()).results;
+		expect(rows).toHaveLength(1);
+		expect(rows[0].first_seen).toBe(first?.first_seen);
+		expect(JSON.parse(rows[0].details).appVersion).toBe("1.0.3");
+		// No R2 object, no issue, no address.
+		expect(await stored()).toEqual([]);
+		expect(github).toEqual([]);
+		expect(rows[0].details).not.toContain("203.0.113.");
+	});
+
+	it("needs no GitHub secrets", async () => {
+		expect((await send(ping, { path: "/device", environment: { ...env, GITHUB_TOKEN: undefined } })).status).toBe(204);
+		expect((await send(ping, { path: "/device", environment: { ...env, RATE_LIMIT_KEY: "" } })).status).toBe(503);
+	});
+
+	it.each([
+		["an ID too short", { ...ping, id: "3f".repeat(31) }],
+		["an ID in capitals", { ...ping, id: "3F".repeat(32) }],
+		["an ID that isn't hex", { ...ping, id: "zz".repeat(32) }],
+		["no ID", { ...ping, id: undefined }],
+		["a model too long", { ...ping, model: "x".repeat(65) }],
+		["memory that isn't a number", { ...ping, memoryGB: "16" }],
+		["isDebug that isn't a boolean", { ...ping, isDebug: "no" }],
+		["a list", [ping]],
+	])("is refused with %s", async (_, body) => {
+		expect((await send(body, { path: "/device" })).status).toBe(400);
+		expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM devices").first("n")).toBe(0);
+	});
+
+	it("is refused when larger than 4 KB, or not JSON", async () => {
+		expect((await send({ ...ping, chip: "x".repeat(5_000) }, { path: "/device" })).status).toBe(413);
+		expect((await send("{not json", { path: "/device" })).status).toBe(400);
+		expect((await send(JSON.stringify(ping), { path: "/device", headers: { "Content-Type": "text/plain" } })).status).toBe(415);
+	});
+
+	it("takes 30 an hour from one network", async () => {
+		for (let count = 0; count < 30; count++) expect((await send(ping, { path: "/device", address: "192.0.2.9" })).status).toBe(204);
+		expect((await send(ping, { path: "/device", address: "192.0.2.9" })).status).toBe(429);
+		// Reports have their own limit.
+		expect((await send(report, { address: "192.0.2.9" })).status).toBe(201);
+	});
+});
+
+describe("a report with a device ID", () => {
+	it("links the issue to the Mac in D1, and keeps the ID in R2 but out of the issue", async () => {
+		const response = await send({ ...report, device: deviceID });
+		expect(response.status).toBe(201);
+		const answer = await response.json<{ issue: string; id: string }>();
+		const row = await env.DB.prepare("SELECT * FROM reports").first<{ id: string; issue: number; device: string }>();
+		expect(row).toMatchObject({ id: answer.id, issue: 42, device: deviceID });
+		expect(JSON.parse(await (await env.REPORTS.get(`reports/${answer.id}.json`))!.text()).report.device).toBe(deviceID);
+		expect(JSON.stringify(github[0].body)).not.toContain(deviceID);
+	});
+
+	it("is linked without an issue when GitHub fails", async () => {
+		gitHubAnswer = () => new Response("{}", { status: 500 });
+		const response = await send({ ...report, device: deviceID });
+		expect(response.status).toBe(202);
+		const row = await env.DB.prepare("SELECT * FROM reports").first<{ issue: number | null; device: string }>();
+		expect(row).toMatchObject({ issue: null, device: deviceID });
+	});
+
+	it("is refused with an ID of the wrong form, and isn't linked without one", async () => {
+		expect((await send({ ...report, device: "abc" })).status).toBe(400);
+		expect((await send(report)).status).toBe(201);
+		expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM reports").first("n")).toBe(0);
+	});
+});
+
+describe("the daily cron", () => {
+	it(`deletes Macs and report links older than ${keptDays} days`, async () => {
+		const now = new Date("2027-10-22T03:17:00Z");
+		const old = new Date(now.getTime() - (keptDays + 1) * 24 * 60 * 60 * 1000).toISOString();
+		const recent = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+		await env.DB.batch([
+			env.DB.prepare("INSERT INTO devices VALUES (?1, ?2, ?2, '{}')").bind("a".repeat(64), old),
+			env.DB.prepare("INSERT INTO devices VALUES (?1, ?2, ?2, '{}')").bind("b".repeat(64), recent),
+			env.DB.prepare("INSERT INTO reports VALUES ('old', 1, ?1, ?2)").bind("a".repeat(64), old),
+			env.DB.prepare("INSERT INTO reports VALUES ('recent', 2, ?1, ?2)").bind("b".repeat(64), recent),
+		]);
+		await prune(env.DB, now);
+		expect((await env.DB.prepare("SELECT id FROM devices").all()).results).toEqual([{ id: "b".repeat(64) }]);
+		expect((await env.DB.prepare("SELECT id FROM reports").all()).results).toEqual([{ id: "recent" }]);
 	});
 });
 
@@ -301,6 +420,7 @@ describe("the relay refuses", () => {
 	it("other paths and methods", async () => {
 		expect((await send(report, { path: "/reports" })).status).toBe(404);
 		expect((await send(share, { path: "/settings/" })).status).toBe(404);
+		expect((await send(ping, { path: "/device", method: "GET" })).status).toBe(405);
 		const get = await send(undefined, { method: "GET" });
 		expect(get.status).toBe(405);
 		expect(get.headers.get("Allow")).toBe("POST");

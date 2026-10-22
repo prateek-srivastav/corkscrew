@@ -242,6 +242,7 @@ final class AppModel {
         updateBackupExclusions()
         trimCaches()
         countFirstLaunch()
+        pingDevice()
         offerAppCrashReport()
         checkForFixedReports(after: checkForUpdate())
     }
@@ -481,8 +482,8 @@ final class AppModel {
     static let lowersLaunchersKey = "LowerLaunchersDuringGames"
     /// Settings → "While you play": installed games left out of Time Machine backups.
     static let excludesGamesFromBackupsKey = "ExcludeGamesFromBackups"
-    /// Settings → "Privacy": anonymous usage counts (`Analytics`). On until turned off there, or by
-    /// install.sh with DO_NOT_TRACK.
+    /// Settings → "Privacy": usage counts (`Analytics`) and the device ID (`DeviceID`, sent at launch
+    /// and with reports). On until turned off there, or by install.sh with DO_NOT_TRACK.
     static let sendsUsageCountsKey = "SendsUsageCounts"
     static var sendsUsageCounts: Bool { UserDefaults.standard.object(forKey: sendsUsageCountsKey) as? Bool ?? true }
 
@@ -1478,6 +1479,17 @@ final class AppModel {
     /// Not the DMG's or the update's app (`scripts/make-dmg.sh` marks those): a Debug or Release
     /// build from source. Reports say so.
     static let isBuiltFromSource = Bundle.main.object(forInfoDictionaryKey: "CorkscrewDistribution") as? String != "release"
+
+    /// This Mac's `DeviceID` while usage counts are on; nil when they're off.
+    static var deviceID: String? { sendsUsageCounts ? DeviceID.current() : nil }
+
+    /// Once a launch, while usage counts are on: this Mac's ID and details to the relay, which
+    /// counts Macs with it. One that fails is dropped.
+    private func pingDevice() {
+        guard let id = Self.deviceID, let relay = Self.reportRelay else { return }
+        let ping = DevicePing(id: id, system: .current(isDebug: Self.isDebugBuild))
+        Task.detached { try? await ping.send(to: relay) }
+    }
 
     /// Sends one anonymous count unless Settings turned them off, and returns whether it went.
     @discardableResult
