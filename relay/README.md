@@ -2,7 +2,8 @@
 
 A small Cloudflare Worker that takes what Corkscrew sends to GitHub, so players need no GitHub
 account: the crash and error reports from **Send Report** (`POST /`), and the settings players share
-from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)). For each report it:
+from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)). It also counts
+Macs (`POST /device`, see [Devices](#devices)). For each report it:
 
 1. checks the size (1 MB at most) and the shape, and limits how many reports one network can send;
 2. keeps the whole report, with the full backtrace and the end of the log, in a private R2 bucket
@@ -32,6 +33,24 @@ The relay keeps the share in R2 under `settings/<id>.json` and opens a Game repo
 player's text is in code blocks, so it can't mention people, render as Markdown or add a field.
 Shares count against the same limits as reports.
 
+## Devices
+
+While **Send usage counts** is on, the app posts `DevicePing` from
+`Packages/GameCore/Sources/GameCore/DeviceID.swift` to `/device` once a launch: the Mac's device ID
+(64 hex digits, a salted SHA-256 of its hardware UUID), the Mac model, chip, memory, and the macOS and
+Corkscrew versions, and whether it's a Debug build. The relay adds the country Cloudflare reads from
+the connection (`request.cf.country`) and keeps one row per Mac in the D1 database
+`corkscrew-devices` (table `devices`: `id`, `first_seen`, `last_seen`, `details` JSON). It answers
+204. Pings need `RATE_LIMIT_KEY` but no GitHub secrets, and have their own limit: 30 an hour per
+network, 4 KB each.
+
+A report sent with the switch on has the ID in `device`. The relay keeps it in the R2 copy, adds a
+row to table `reports` (`id` = the report's R2 id, `issue` = the issue number or null, `device`,
+`received`), and leaves it out of the issue.
+
+A daily cron (`[triggers]` in `wrangler.toml`) deletes Macs not seen for 365 days and report rows
+older than that. The tables are in `migrations/`.
+
 ## What is public and what is private
 
 | Part of the report | Public issue | Private R2 copy |
@@ -40,6 +59,7 @@ Shares count against the same limits as reports.
 | Backtrace | The start, up to Wine's module list (60 lines at most) | All of it |
 | End of the log | No | Yes |
 | The user's note ("what I was doing") | No | Yes |
+| The Mac's device ID | No | Yes, and in D1 |
 | The sender's IP address | No | No |
 
 The relay never stores or logs the IP address. To count reports, it names a counter by a keyed hash
@@ -74,6 +94,17 @@ You need Node.js 22 or later and the GitHub CLI (`gh`). Run the commands in this
 
    ```bash
    npx wrangler r2 bucket lifecycle add corkscrew-reports expire-reports --expire-days 365
+   ```
+
+   Make the private D1 database for devices, then put the `database_id` it prints into
+   `wrangler.toml` (`[[d1_databases]]`), and make its tables:
+
+   ```bash
+   npx wrangler d1 create corkscrew-devices
+   ```
+
+   ```bash
+   npx wrangler d1 migrations apply corkscrew-devices --remote
    ```
 
    The rate-limit counters are Durable Objects. `wrangler deploy` makes them from `wrangler.toml`, so
@@ -190,6 +221,28 @@ npx wrangler r2 object get corkscrew-reports/reports/<id>.json --remote --file r
 Or open **R2 → corkscrew-reports → reports/** in the Cloudflare dashboard. The file holds the id, the
 time the relay received it and the report as the app sent it. Shared settings are under `settings/`.
 
+## Read device data
+
+```bash
+npx wrangler d1 execute corkscrew-devices --remote --command "SELECT COUNT(*) FROM devices WHERE json_extract(details, '$.isDebug') = 0"
+```
+
+```bash
+npx wrangler d1 execute corkscrew-devices --remote --command "SELECT r.issue, d.details FROM reports r LEFT JOIN devices d ON d.id = r.device WHERE r.issue = <number>"
+```
+
+To try the relay on this Mac, with a local D1 and R2 and no GitHub issue:
+
+```bash
+npx wrangler d1 migrations apply corkscrew-devices --local
+```
+
+```bash
+npx wrangler dev --local --var RATE_LIMIT_KEY:local --var GITHUB_TOKEN:none --var ISSUES_PER_DAY:0
+```
+
+Don't put these values in `.dev.vars`: the tests read that file too.
+
 To watch the relay live (errors from GitHub, reports kept without an issue), run `npx wrangler tail`.
 
 ## Limits
@@ -198,9 +251,10 @@ Set in `wrangler.toml` under `[vars]`; deploy again after a change.
 
 | Limit | Default |
 | --- | --- |
-| Report size | 1 MB (`maxBytes` in `src/index.ts`) |
+| Report size | 1 MB (`maxBytes` in `src/report.ts`) |
 | Reports from one address in an hour (IPv6: one /64) | `REPORTS_PER_HOUR = "5"` |
 | Issues the relay opens in a day (UTC), from all senders | `ISSUES_PER_DAY = "50"` |
+| Device pings from one network in an hour; ping size | 30; 4 KB (`pingsPerHour`, `maxPingBytes` in `src/device.ts`) |
 
 Over the daily issue limit, the relay still keeps reports, without an issue.
 
@@ -210,8 +264,9 @@ Over the daily issue limit, the relay still keeps reports, without an issue.
 | --- | --- | --- |
 | 201 | `{"issue", "id"}` | The report is kept and the issue is open. |
 | 202 | `{"id"}` | The report is kept, without an issue: the daily limit, or GitHub failed. |
+| 204 | (none) | `POST /device`: the Mac is kept. |
 | 400 | `{"error"}` | The body isn't JSON, or isn't a report. |
-| 404, 405 | `{"error"}` | Not `POST /` or `POST /settings`. |
+| 404, 405 | `{"error"}` | Not `POST /`, `POST /settings` or `POST /device`. |
 | 413 | `{"error"}` | The report is larger than 1 MB. |
 | 415 | `{"error"}` | The body isn't `application/json`. |
 | 429 | `{"error"}`, `Retry-After` | Too many reports from this address in this hour. |

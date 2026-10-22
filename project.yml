@@ -14,8 +14,9 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
-    # Ad hoc signed (no Developer ID yet, so downloads need "Open Anyway" once), no App Sandbox (Wine
-    # needs the whole Mac; isolated bottles get their own sandbox per launch).
+    # Ad hoc signed (scripts/make-dmg.sh signs releases with Corkscrew's certificate; not notarized, so
+    # downloads need "Open Anyway" once), no App Sandbox (Wine needs the whole Mac; isolated bottles get
+    # their own sandbox per launch).
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""

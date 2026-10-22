@@ -12,12 +12,17 @@ public struct ReportFix: Codable, Sendable, Equatable {
     /// What the alert names for those who didn't send the report. An `everyone` fix without one is
     /// told to the sender only.
     public var title: String?
+    /// What was wrong and what changed, a short line each, for the fix popup.
+    public var cause: String?
+    public var change: String?
 
-    public init(issue: Int, version: String, everyone: Bool = false, title: String? = nil) {
+    public init(issue: Int, version: String, everyone: Bool = false, title: String? = nil, cause: String? = nil, change: String? = nil) {
         self.issue = issue
         self.version = version
         self.everyone = everyone
         self.title = title
+        self.cause = cause
+        self.change = change
     }
 
     /// A missing `everyone` is false.
@@ -27,6 +32,8 @@ public struct ReportFix: Codable, Sendable, Equatable {
         version = try c.decode(String.self, forKey: .version)
         everyone = try c.decodeIfPresent(Bool.self, forKey: .everyone) ?? false
         title = try c.decodeIfPresent(String.self, forKey: .title)
+        cause = try c.decodeIfPresent(String.self, forKey: .cause)
+        change = try c.decodeIfPresent(String.self, forKey: .change)
     }
 
     /// `docs/fixes.json` on main, which the app reads when it opens. Older versions read it too, so

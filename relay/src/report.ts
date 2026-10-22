@@ -13,15 +13,26 @@ export interface ProblemReport {
 	note: string;
 	/** ISO 8601. */
 	date: string;
+	/** The Mac's `DeviceID`, while its usage counts are on. Kept in R2 and D1, never in the issue. */
+	device?: string;
 }
 
 export const kinds = ["crash", "launchFailed", "error", "appCrash"] as const;
 export type Kind = (typeof kinds)[number];
 
+/** The largest report the relay takes, in bytes. Not exported from index.ts: workerd takes every
+ * export of the main module as an entrypoint, and refuses one that isn't a handler. */
+export const maxBytes = 1 << 20;
+
 /** The longest fields the relay takes. The backtrace and log are limited by the request size. */
 export const limits = { title: 256, summary: 4_000, details: 200, detail: 2_000, note: 10_000 };
 
 export class InvalidReport extends Error {}
+
+/** A Mac's `DeviceID` (DeviceID.swift): 64 lowercase hex digits. */
+export function isDeviceID(value: unknown): value is string {
+	return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
 
 /** The report in `value`, checked against the app's format. Throws `InvalidReport`. */
 export function parseReport(value: unknown): ProblemReport {
@@ -43,6 +54,9 @@ export function parseReport(value: unknown): ProblemReport {
 	const date = text(fields, "date", 64);
 	if (Number.isNaN(Date.parse(date))) throw new InvalidReport('"date" isn\'t an ISO 8601 date.');
 
+	const device = fields.device ?? undefined;
+	if (device !== undefined && !isDeviceID(device)) throw new InvalidReport('"device" must be 64 lowercase hex digits.');
+
 	return {
 		kind: kind as Kind,
 		title,
@@ -52,6 +66,7 @@ export function parseReport(value: unknown): ProblemReport {
 		log: optionalText(fields, "log"),
 		note: fields.note === undefined ? "" : text(fields, "note", limits.note),
 		date,
+		device,
 	};
 }
 

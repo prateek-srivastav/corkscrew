@@ -27,6 +27,17 @@ ISSUES_PER_DAY = "50"
 binding = "REPORTS"
 bucket_name = "corkscrew-reports"
 
+# Macs that sent a device ping, and which Mac sent each report (tables in migrations/). Private.
+[[d1_databases]]
+binding = "DB"
+database_name = "corkscrew-devices"
+database_id = "bd5462bb-93e0-4837-b224-80b62c0f0b59"
+migrations_dir = "migrations"
+
+# Daily: deletes Macs not seen for 365 days, and report links older than that.
+[triggers]
+crons = ["17 3 * * *"]
+
 # The rate-limit counters: one small Durable Object per sender and hour, and one per day for issues.
 [[durable_objects.bindings]]
 name = "COUNTERS"

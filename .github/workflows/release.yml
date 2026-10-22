@@ -28,8 +28,24 @@ jobs:
           [[ "v$version" == "$TAG" ]] || { echo "::error::Tag $TAG doesn't match the app's version $version in project.yml"; exit 1; }
       # Only what the app needs: mingw-w64 for the Steam web helper wrapper, XcodeGen for the project.
       - run: brew install mingw-w64 xcodegen
-      # Also checks that the engine pack is published, and puts it in the app.
-      - run: scripts/make-dmg.sh
+      # Also checks that the engine pack is published, and puts it in the app. Signs with Corkscrew's
+      # certificate (scripts/make-signing-cert.sh): the same designated requirement in every release
+      # keeps users' permissions after an update. Every run here uses the same secret, whoever pushed
+      # the tag; the CORKSCREW_SIGNING_SHA1 variable (public) pins the certificate, so a wrong secret
+      # fails. Forks get no secrets and so an ad hoc signature; this repository's releases must not.
+      - name: Build the DMG
+        env:
+          CORKSCREW_SIGNING_P12: ${{ secrets.CORKSCREW_SIGNING_P12 }}
+          CORKSCREW_SIGNING_PASSWORD: ${{ secrets.CORKSCREW_SIGNING_PASSWORD }}
+          CORKSCREW_SIGNING_SHA1: ${{ vars.CORKSCREW_SIGNING_SHA1 }}
+          # Expressions compare strings without case.
+          UPSTREAM: ${{ github.repository == 'prateek-srivastav/corkscrew' }}
+        run: |
+          if [[ $UPSTREAM == true && ( -z $CORKSCREW_SIGNING_P12 || -z $CORKSCREW_SIGNING_SHA1 ) ]]; then
+            echo "::error::The CORKSCREW_SIGNING_P12 secret or CORKSCREW_SIGNING_SHA1 variable is missing: see docs/RELEASING.md"
+            exit 1
+          fi
+          scripts/make-dmg.sh
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}

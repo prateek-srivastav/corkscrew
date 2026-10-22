@@ -1,3 +1,4 @@
 [
-  {"issue": 52, "version": "1.0.2", "everyone": true, "title": "Some programs in Protected bottles didn't start"}
+  {"issue": 52, "version": "1.0.2", "everyone": true, "title": "Some programs in Protected bottles didn't start",
+   "cause": "Only the program's file was copied, not its folder.", "change": "Corkscrew copies the program's whole folder."}
 ]

@@ -106,6 +106,25 @@ struct ProblemReportTests {
         #expect(ProblemReport.errorDialog(in: question + "\n" + Self.dialog) == "bind: Access denied.: Access denied.")
     }
 
+    /// Lines a test program logged in Offline Programs (2026-10-22): a lookup, then a connect.
+    @Test func findsBlockedInternetAccess() throws {
+        let log = """
+            0024:fixme:winsock:x
+            corkscrew: no internet: example.com
+            corkscrew: no internet: { family AF_INET, address 1.1.1.1, port 80 }
+            getaddrinfo(example.com) = 11001
+            """
+        #expect(ProblemReport.triedInternet(in: log))
+        #expect(!ProblemReport.triedInternet(in: Self.dialog))
+        // Only Wine's own line counts, not a program's text that quotes it.
+        #expect(!ProblemReport.triedInternet(in: "00d0:trace:msgbox:MSGBOX_OnInit L\"corkscrew: no internet: x.com\""))
+        try withTempDir { dir in
+            let file = dir.appending(path: "launch.log")
+            try (log + "\n" + String(repeating: "padding line\n", count: 1_000)).write(to: file, atomically: true, encoding: .utf8)
+            #expect(ProblemReport.triedInternet(inLog: file))
+        }
+    }
+
     /// A minidump with only what the reader uses: a module list, and an exception unless nil, with
     /// an access violation's parameters (a write to `wrote`).
     static func minidump(_ modules: [(path: String, base: UInt64, size: UInt32)],

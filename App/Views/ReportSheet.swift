@@ -123,6 +123,8 @@ struct ReportSheet: View {
         Task {
             defer { isSending = false }
             do {
+                var report = report
+                report.device = AppModel.deviceID
                 if let issue = try await report.send(to: relay) { model.remember(report, issue: issue) }
                 sent = true
             } catch {
@@ -136,7 +138,8 @@ struct ReportSheet: View {
         (AppModel.reportRelay == nil
             ? "Report on GitHub opens a new issue on Corkscrew's GitHub page with this report filled in. GitHub issues are public. "
             : "Send Report sends this report to Corkscrew's server, which keeps it privately and opens a public GitHub issue "
-                + "with the title, the details and the start of the backtrace. Your note and the log stay private. ")
+                + "with the title, the details and the start of the backtrace. Your note, the log and, with usage counts on, "
+                + "this Mac's ID stay private. ")
             + "The report has no files or names: your home folder shows as ~ and your user name as <user>."
     }
 }

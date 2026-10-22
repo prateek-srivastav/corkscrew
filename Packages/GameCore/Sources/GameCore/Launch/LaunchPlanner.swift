@@ -224,6 +224,9 @@ public enum LaunchPlanner {
         // +msgbox prints the text of each message box (a program's error dialog) into the log, for
         // `ProblemReport.errorDialog(inLog:)`. Nothing else: no cost when no box shows.
         env["WINEDEBUG"] = verboseLogging ? "err+all,fixme-all,+loaddll,+msgbox" : "-all,+msgbox"
+        // Errors only. At its default (info) MoltenVK prints ~170 lines for each Vulkan instance,
+        // which filled the 200-line log tail of crash reports and pushed out the launch header.
+        if !verboseLogging { env["MVK_CONFIG_LOG_LEVEL"] = "1" }
         if context.bottle.kind == .isolated {
             // Keeps Unix-side libraries (fontconfig, MoltenVK, …) out of your real home folder, and
             // temporary files in the bottle: nothing else is writable.

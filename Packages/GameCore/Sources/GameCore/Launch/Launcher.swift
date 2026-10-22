@@ -28,6 +28,28 @@ public enum Launcher {
         public var gameFolder: String? = nil
     }
 
+    /// Where a Steam game's launch is, for the user to see while it starts.
+    public enum LaunchPhase: Sendable, Equatable {
+        /// Steam starts, or gets the game ready.
+        case steam
+        /// On the game's first launch, Steam installs what it needs.
+        case installing
+        /// The Rockstar Games Launcher signs in.
+        case rockstar
+        /// The game runs, with no window yet.
+        case loading
+        /// The game's window shows.
+        case playing
+    }
+
+    public struct LaunchProgress: Sendable, Equatable {
+        public var phase: LaunchPhase
+        /// The program whose window is the one to bring forward: the game's once it shows, else the
+        /// Rockstar launcher's, else (while Steam gets the game ready) one Steam opened. Nil while
+        /// none shows.
+        public var front: pid_t?
+    }
+
     /// A game started with `steam.exe -applaunch <id>`. Steam, and launchers like Rockstar's, keep
     /// running after the game quits, so the launch ends with the game's own programs (those in its
     /// Steam folder), and closes what it started.
@@ -45,6 +67,9 @@ public enum Launcher {
     static let gameStartTimeout: Duration = .seconds(600)
     static let gameQuitGrace: Duration = .seconds(10)
     static let pollInterval: Duration = .seconds(2)
+    /// How long the Rockstar Games Launcher may take to quit by itself after the game (it saves to
+    /// the cloud first; about 8 s).
+    static let rockstarQuitTimeout: Duration = .seconds(30)
     /// How long Steam may run with no window before it counts as closed, and how often to look.
     static let steamClosedGrace: Duration = .seconds(30)
     static let steamWindowPoll: Duration = .seconds(10)
@@ -212,14 +237,19 @@ public enum Launcher {
         return SteamGameLaunch(
             installDir: app.installFolder.lastPathComponent,
             steamWasRunning: BottleProcesses.isSteamRunning(prefix: prefix),
-            usesRockstarLauncher: FileManager.default.fileExists(
-                atPath: app.installFolder.appending(path: "Redistributables/Rockstar-Games-Launcher.exe").path)
+            usesRockstarLauncher: usesRockstarLauncher(installFolder: app.installFolder)
         )
     }
 
+    /// Whether the Steam game in `installFolder` starts the Rockstar Games Launcher.
+    static func usesRockstarLauncher(installFolder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: installFolder.appending(path: "Redistributables/Rockstar-Games-Launcher.exe").path)
+    }
+
     /// Runs a prepared launch to completion; cancelling stops the bottle's whole session. A Steam
-    /// game's launch lasts until the game quits, then closes what it started.
-    public static func run(_ prepared: Prepared) async throws -> RunResult {
+    /// game's launch lasts until the game quits, then closes what it started; `progress` hears where
+    /// it is while it does.
+    public static func run(_ prepared: Prepared, progress: (@Sendable (LaunchProgress) -> Void)? = nil) async throws -> RunResult {
         let wineserver = prepared.context.engine.wineserver
         if let wrapper = prepared.steamWebHelperWrapper,
            let steam = prepared.plan.arguments.first(where: { $0.lowercased().hasSuffix("steam.exe") }) {
@@ -240,22 +270,94 @@ public enum Launcher {
         }
         async let steam = ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
         let prefix = prepared.context.location.prefix
+        // A window Steam opens while it gets the game ready asks something (the game runs on
+        // another computer, sign in); Steam's windows already open don't.
+        let steamWindows = BottleProcesses.windowsOnScreen(prefix: prefix, of: SteamGameLook.isSteam)
         var programs: Set<String> = []
-        let started = try await waitForQuit {
-            let running = steamGamePrograms(BottleProcesses.list(prefix: prefix), installDir: game.installDir)
-            programs.formUnion(running)
-            return !running.isEmpty
-        }
-        if started {
-            if !game.steamWasRunning {
-                try await closeSteam(prepared)
-            } else if game.usesRockstarLauncher {
-                try await closeRockstarLauncher(prepared)
+        var started = false
+        var last: LaunchProgress?
+        try await waitForQuit {
+            let processes = BottleProcesses.list(prefix: prefix)
+            programs.formUnion(steamGamePrograms(processes, installDir: game.installDir))
+            let look = SteamGameLook(processes, installDir: game.installDir, usesRockstarLauncher: game.usesRockstarLauncher)
+            // Once the game shows, it plays: its window may go to another Space (full screen).
+            if let progress, last?.phase != .playing, !started || !look.game.isEmpty {
+                let window = BottleProcesses.frontWindowOwner(among: Set(look.game.map(\.pid)))
+                let phase = window == nil ? look.phase : .playing
+                let front = window ?? BottleProcesses.frontWindowOwner(among: Set(look.rockstar.map(\.pid)))
+                    ?? (phase == .steam ? BottleProcesses.frontWindowOwner(among: Set(look.steam.map(\.pid)), excluding: steamWindows) : nil)
+                let now = LaunchProgress(phase: phase, front: front)
+                if now != last { progress(now) }
+                last = now
             }
+            return look.grace(started: &started, usesRockstarLauncher: game.usesRockstarLauncher)
         }
+        if started, game.usesRockstarLauncher { await closeRockstarLauncherAfterSave(prepared, game: game) }
+        if started, !game.steamWasRunning { try await closeSteam(prepared) }
         var result = try await steam
         result.followed = programs.sorted()
         return result
+    }
+
+    /// One look at a Steam game's launch, from the bottle's processes.
+    struct SteamGameLook {
+        /// The game's own programs (`rdr2.exe`), from its folder: not its installers, nor the program
+        /// that only starts Rockstar's launcher (`PlayRDR2.exe`).
+        var game: [BottleProcesses.Entry] = []
+        /// Steam's install script, or the installers it runs (`Redistributables`, `_CommonRedist`).
+        var installing = false
+        /// The Rockstar Games Launcher, its helpers, and the program that starts it.
+        var rockstar: [BottleProcesses.Entry] = []
+        /// Steam's programs with windows (`isSteam`).
+        var steam: [BottleProcesses.Entry] = []
+
+        init(_ processes: [BottleProcesses.Entry], installDir: String, usesRockstarLauncher: Bool) {
+            let folder = "\\steamapps\\common\\\(installDir.lowercased())\\"
+            for process in processes {
+                let program = process.program
+                if program.contains("\\redistributables\\") || program.contains("\\_commonredist\\")
+                    || (program.hasSuffix("\\steamservice.exe") && process.arguments.contains { $0.lowercased() == "/installscript" }) {
+                    installing = true
+                } else if let range = program.range(of: folder) {
+                    let file = program[range.upperBound...]
+                    if usesRockstarLauncher, file.hasPrefix("play"), !file.contains("\\") {
+                        rockstar.append(process)
+                    } else {
+                        game.append(process)
+                    }
+                } else if program.contains("\\rockstar games\\launcher\\") || program.contains("\\rockstar games\\social club\\") {
+                    rockstar.append(process)
+                } else if Self.isSteam(process) {
+                    steam.append(process)
+                }
+            }
+        }
+
+        /// Steam's client, and its interface: behind the wrapper, `steamwebhelper_real.exe` owns
+        /// the windows.
+        static func isSteam(_ process: BottleProcesses.Entry) -> Bool {
+            process.isSteamClient || process.isSteamWebHelper || process.program.hasSuffix("\\steamwebhelper_real.exe")
+        }
+
+        /// What `waitForQuit` gets for this look: nil while the game, or what leads to it, runs;
+        /// otherwise how long nothing may run. `started` turns true once the game has run.
+        func grace(started: inout Bool, usesRockstarLauncher: Bool) -> Duration? {
+            if !game.isEmpty {
+                started = true
+                return nil
+            }
+            // After a Rockstar game, its launcher quits too: Play shows at once.
+            if started { return usesRockstarLauncher ? .zero : gameQuitGrace }
+            // On a first launch Steam installs what the game needs first, and Rockstar's launcher
+            // can update itself and restart.
+            return installing || !rockstar.isEmpty ? nil : gameStartTimeout
+        }
+
+        var phase: LaunchPhase {
+            if !game.isEmpty { return .loading }
+            if installing { return .installing }
+            return rockstar.isEmpty ? .steam : .rockstar
+        }
     }
 
     /// The names of a Steam game's programs among `processes`, lowercased: `rdr2.exe`.
@@ -281,23 +383,18 @@ public enum Launcher {
         }
     }
 
-    /// Waits for the game's programs to appear and then be gone for `grace`. False when they never
-    /// appeared within `timeout` (a launcher error, say): then the launch stays open.
-    static func waitForQuit(
-        timeout: Duration = gameStartTimeout, grace: Duration = gameQuitGrace, poll: Duration = pollInterval,
-        isRunning: () -> Bool
-    ) async throws -> Bool {
+    /// Polls `look` until nothing has run for as long as it asks: it returns nil while the game (or
+    /// what starts it) runs, otherwise how long nothing may run, counted from the last time
+    /// something did (or from the start).
+    static func waitForQuit(poll: Duration = pollInterval, look: () -> Duration?) async throws {
         let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        var lastSeen: ContinuousClock.Instant?
+        var lastSeen = clock.now
         while true {
             try await Task.sleep(for: poll)
-            if isRunning() {
+            if let grace = look() {
+                if clock.now - lastSeen >= grace { return }
+            } else {
                 lastSeen = clock.now
-            } else if let seen = lastSeen {
-                if clock.now - seen >= grace { return true }
-            } else if clock.now >= deadline {
-                return false
             }
         }
     }
@@ -389,6 +486,22 @@ public enum Launcher {
             wineArguments: ["taskkill", "/f", "/im", "Launcher.exe", "/im", "SocialClubHelper.exe"], in: prepared.context)
         _ = try await ProcessRunner.run(plan, log: prepared.log.deletingLastPathComponent().appending(path: "rockstar-close.log"),
                                         wineserver: prepared.context.engine.wineserver)
+    }
+
+    /// After the game, lets the Rockstar Games Launcher save to the cloud and quit by itself, then
+    /// closes what it leaves running (`SocialClubHelper.exe`).
+    static func closeRockstarLauncherAfterSave(_ prepared: Prepared, game: SteamGameLaunch) async {
+        let prefix = prepared.context.location.prefix
+        let clock = ContinuousClock()
+        let deadline = clock.now + rockstarQuitTimeout
+        while clock.now < deadline,
+              BottleProcesses.list(prefix: prefix).contains(where: { $0.program.hasSuffix("\\rockstar games\\launcher\\launcher.exe") }) {
+            try? await Task.sleep(for: .seconds(1))
+        }
+        // The game is back (it restarted itself): it needs the launcher.
+        guard SteamGameLook(BottleProcesses.list(prefix: prefix), installDir: game.installDir,
+                            usesRockstarLauncher: true).game.isEmpty else { return }
+        try? await closeRockstarLauncher(prepared)
     }
 
     static let wrapperPoll: Duration = .seconds(1)

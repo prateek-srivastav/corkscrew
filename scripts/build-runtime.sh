@@ -16,11 +16,14 @@
 #    another desktop and they don't cover other programs' windows; the menu bar and Dock hide
 #    while the program is active instead.
 #  - With CORKSCREW_PRIVATE_LOOPBACK set, wineserver connects only to loopback servers of its own
-#    bottle, so offline bottles can use loopback without reaching services on the Mac.
+#    bottle, so offline bottles can use loopback without reaching services on the Mac. Programs
+#    there log their first blocked internet name lookup and connect (ws2_32).
 #  - A program that destroys a D3DMetal window on another thread no longer hangs the window's
 #    input (winemac).
 #  - With CORKSCREW_HOST_MEMORY_PROTECT=1, VirtualProtect also works on memory outside Wine's own,
 #    such as D3DMetal's functions, so mods can hook a game's graphics (ntdll).
+#  - The Install Engine (inseng) reads CIF files and downloads (Wine Staging), so Microsoft's
+#    DirectX web installer works instead of crashing.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -541,6 +544,63 @@ if new not in s:
     p.write_text(s.replace(decl_old, decl_new).replace(old, new))
 PATCH
 
+log "Patching winemac: Steam's client stays out of the Dock"
+# Steam's window belongs to steamwebhelper (the "Steam" icon, LoaderBundles.prepareSteamWebHelper).
+# steam.exe only shows its start-up and update windows, but the first of them put it in the Dock
+# for good, as a second Steam icon named "wine" (it runs from wine.app). CrossOver already keeps a
+# GOG helper out of the Dock (CW HACK 24141); steam.exe now goes the same way, by its Windows name,
+# so a steam.exe that Steam restarts from its own bundle stays out too. Its windows still show.
+# App Nap stays off for it, as it would be in the Dock: the client downloads and starts games.
+# Verified 2026-10-21 with Steam: after an unclean exit, its update check at start put "wine" in
+# the Dock; with this patch only "Steam" shows. A clean start shows no steam.exe window either way.
+python3 - "$WINE_SRC/dlls/winemac.drv" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("macdrv_cocoa.h", '''extern bool enable_app_nap;
+''', '''extern bool enable_app_nap;
+extern bool show_in_dock;  /* Corkscrew: false for Steam's client */
+''')
+
+patch("macdrv_main.c", '''bool enable_app_nap = false;
+''', '''bool enable_app_nap = false;
+bool show_in_dock = true;
+''')
+
+patch("macdrv_main.c", '''    len = lstrlenW(appname);
+''', '''    len = lstrlenW(appname);
+
+    /* Corkscrew: Steam's window is steamwebhelper's; the client stays out of the Dock. */
+    {
+        static const WCHAR steam_exeW[] = {'s','t','e','a','m','.','e','x','e',0};
+        show_in_dock = wcsicmp(appname, steam_exeW) != 0;
+    }
+''')
+
+patch("cocoa_app.m", '''                exeName = [NSRunningApplication currentApplication].executableURL.lastPathComponent;
+                if ([blacklistedProcesses containsObject:exeName])
+                {
+''', '''                exeName = [NSRunningApplication currentApplication].executableURL.lastPathComponent;
+                if (!show_in_dock || [blacklistedProcesses containsObject:exeName])
+                {
+                    /* Corkscrew: as below, once. */
+                    static BOOL napOff;
+                    if (!show_in_dock && !enable_app_nap && !napOff)
+                    {
+                        [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+                                                                        reason:@"Running Windows program"] retain]; // intentional leak
+                        napOff = TRUE;
+                    }
+
+''')
+PATCH
+
 log "Patching wineserver: private loopback for offline bottles"
 # Programs often talk to themselves over loopback: a helper serves 127.0.0.1:3216 inside
 # the game, and network libraries make self-connected pairs on random ports. The sandbox of an
@@ -715,6 +775,116 @@ patch('''        set_async_pending( async );
 
 p.write_text(s)
 PATCH
+
+log "Patching ws2_32: offline bottles log blocked internet access"
+# A program in an offline bottle that needs the internet fails in its own way: an error box, a
+# crash, or it just quits. The sandbox denies its name lookups and wineserver its connects (above)
+# without a word. With CORKSCREW_PRIVATE_LOOPBACK set, ws2_32 now logs the first of each per process
+# as "corkscrew: no internet: <name or address>", so the app can say why the program failed and
+# offer to move it to Online Programs. Not logged: local names (no dot, .local, this Mac's own),
+# loopback, and datagrams sent to an address (sendto, denied by the sandbox in the program itself).
+python3 - "$WINE_SRC/dlls/ws2_32" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("unixlib.c", '''static NTSTATUS unix_getaddrinfo( void *args )
+{
+''', '''/* Corkscrew: logs the first lookup of an internet name that failed in an offline bottle (see
+ * build-runtime.sh); there the sandbox denies them all. */
+static void note_no_internet( const char *name )
+{
+    static int noted;
+    char own[256];
+    size_t len;
+
+    if (noted || !name || !getenv( "CORKSCREW_PRIVATE_LOOPBACK" ) || !strchr( name, '.' )) return;
+    len = strlen( name );
+    if (len >= 6 && !strcasecmp( name + len - 6, ".local" )) return;
+    if (!gethostname( own, sizeof(own) ) && !strcasecmp( own, name )) return;
+    noted = 1;
+    fprintf( stderr, "corkscrew: no internet: %s\\n", name );
+}
+
+static NTSTATUS unix_getaddrinfo( void *args )
+{
+''')
+
+patch("unixlib.c", '''    ret = getaddrinfo( params->node, service, hints ? &unix_hints : NULL, &unix_info );
+    if (ret)
+        return addrinfo_err_from_unix( ret );
+''', '''    ret = getaddrinfo( params->node, service, hints ? &unix_hints : NULL, &unix_info );
+    if (ret)
+    {
+        note_no_internet( params->node );
+        return addrinfo_err_from_unix( ret );
+    }
+''')
+
+# The gethostbyname that macOS builds (no Linux gethostbyname_r).
+patch("unixlib.c", '''    if (!(unix_host = gethostbyname( params->name )))
+    {
+''', '''    if (!(unix_host = gethostbyname( params->name )))
+    {
+        note_no_internet( params->name );
+''')
+
+patch("socket.c", '''/***********************************************************************
+ *      connect   (ws2_32.4)
+ */
+''', '''/* Corkscrew: logs the first connect in an offline bottle that wineserver denied: one to anything
+ * but the bottle's own loopback listeners (see build-runtime.sh). */
+static void note_no_internet( const struct sockaddr *addr, NTSTATUS status )
+{
+    static LONG noted;
+
+    if (status != STATUS_ACCESS_DENIED || !GetEnvironmentVariableA( "CORKSCREW_PRIVATE_LOOPBACK", NULL, 0 )) return;
+    if (InterlockedExchange( &noted, 1 )) return;
+    MESSAGE( "corkscrew: no internet: %s\\n", debugstr_sockaddr( addr ) );
+}
+
+
+/***********************************************************************
+ *      connect   (ws2_32.4)
+ */
+''')
+
+patch("socket.c", '''    if (status)
+    {
+        /* NtStatusToWSAError() has no mapping for WSAEALREADY */
+''', '''    if (status)
+    {
+        note_no_internet( addr, status );
+        /* NtStatusToWSAError() has no mapping for WSAEALREADY */
+''')
+
+patch("socket.c", '''    free( params );
+    if (ret_len) *ret_len = overlapped->InternalHigh;
+    SetLastError( NtStatusToWSAError( status ) );
+''', '''    free( params );
+    if (ret_len) *ret_len = overlapped->InternalHigh;
+    note_no_internet( name, status );
+    SetLastError( NtStatusToWSAError( status ) );
+''')
+PATCH
+
+log "Patching inseng: CIF reader and downloads (Wine Staging)"
+# Microsoft's DirectX web installer (dxwebsetup.exe, which program setups often run) drives the
+# Install Engine. Wine's is stubs, so the installer releases an engine it still uses and crashes
+# (WineHQ bug 39456). Wine Staging's inseng-Implementation patch (pinned in runtime-pins.env)
+# implements the CIF reader and the downloads; the installer copies the files itself. Tested: with
+# internet it installs; without, it shows "Setup could not download the file" and exits.
+inseng_patch=$(fetch "$INSENG_PATCH_URL" "$INSENG_PATCH_SHA256")
+if ! patch -d "$WINE_SRC" -p1 -R -s -f --dry-run <"$inseng_patch" >/dev/null 2>&1; then
+  patch -d "$WINE_SRC" -p1 -N -s -f --dry-run <"$inseng_patch" >/dev/null \
+    || { echo "inseng changed upstream; update INSENG_PATCH_URL in scripts/runtime-pins.env" >&2; exit 1; }
+  patch -d "$WINE_SRC" -p1 -N -s -f <"$inseng_patch"
+fi
 
 log "Staging MoltenVK $MOLTENVK_VERSION"
 if [[ ! -f $DEPS/lib/libMoltenVK.dylib ]]; then

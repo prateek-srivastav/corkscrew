@@ -72,6 +72,10 @@ struct Sidebar: View {
                 if advancedMode {
                     section(.bottles, title: "Bottles", systemImage: "shippingbox.fill")
                 }
+                // Once there's a report to follow (Help > Your Reports opens the page before that).
+                if !model.trackedReports.isEmpty || navigator.route.section == .reports {
+                    section(.reports, title: "Reports", systemImage: "exclamationmark.bubble.fill", needsAttention: model.hasReportNews)
+                }
                 section(.setup, title: "Settings", systemImage: "gearshape.fill",
                         needsAttention: !model.isReady || model.availableUpdate != nil)
             }

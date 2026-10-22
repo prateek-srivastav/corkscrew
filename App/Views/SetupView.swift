@@ -49,11 +49,13 @@ struct SetupView: View {
                 }
 
                 SettingsGroup("Privacy") {
-                    SettingsRow("Send anonymous usage counts", systemImage: "chart.bar.fill", tint: .blue,
+                    SettingsRow("Send usage counts", systemImage: "chart.bar.fill", tint: .blue,
                                 detail: "Counts the first launch and each finished setup, with the Mac model, chip and memory, the "
-                                    + "macOS and Corkscrew versions, and the language. The country comes from the connection; the "
-                                    + "IP address isn't kept. No names, files or programs.") {
-                        toggle("Send anonymous usage counts", isOn: $sendsUsageCounts)
+                                    + "macOS and Corkscrew versions, and the language. At each launch, and with each report you "
+                                    + "send, Corkscrew's server also gets this Mac's ID: a hash of its hardware ID that stays the "
+                                    + "same, so it can count Macs. The country comes from the connection; the IP address isn't "
+                                    + "kept. No names, files or programs.") {
+                        toggle("Send usage counts", isOn: $sendsUsageCounts)
                     } footer: {
                         Link("What's sent", destination: Self.usageCountsPage).font(.subheadline).padding(.top, 2)
                     }

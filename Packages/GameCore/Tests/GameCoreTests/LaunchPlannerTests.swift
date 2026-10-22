@@ -198,6 +198,7 @@ struct LaunchPlannerTests {
             #expect(dxmt.environment["DXVK_ASYNC"] == nil)
             #expect(dxmt.environment["MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS"] == "0")
             #expect(dxmt.environment["MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION"] == "1")
+            #expect(dxmt.environment["MVK_CONFIG_LOG_LEVEL"] == "1")
             #expect(dxmt.sandboxProfile?.contains("ShaderCache/\(game.gameID.uuidString)") == true)
 
             game.profile.backendOverride = .dxvk
@@ -215,6 +216,11 @@ struct LaunchPlannerTests {
             // Setup commands don't get game settings.
             let setup = try LaunchPlanner.plan(wineArguments: ["wineboot"], in: context)
             #expect(setup.environment["MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS"] == nil)
+            #expect(setup.environment["MVK_CONFIG_LOG_LEVEL"] == "1")
+
+            // Verbose logging keeps MoltenVK's own default.
+            game.profile.verboseLogging = true
+            #expect(try LaunchPlanner.plan(game, in: context).environment["MVK_CONFIG_LOG_LEVEL"] == nil)
         }
     }
 

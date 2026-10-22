@@ -2,7 +2,7 @@ import GameCore
 import SwiftUI
 
 enum SidebarItem: Hashable {
-    case library, bottles, setup
+    case library, bottles, setup, reports
 }
 
 struct ContentView: View {
@@ -27,6 +27,7 @@ struct ContentView: View {
                     case .library: LibraryView(openSetup: { navigator.go(.setup) })
                     case .bottles: BottlesView()
                     case .setup: SetupView()
+                    case .reports: ReportsView()
                     }
                 }
                 .id(navigator.route.section)
@@ -77,6 +78,8 @@ struct ContentView: View {
         .swipeNavigation(navigator)
         // Bottles is an Advanced page; turning Advanced off leaves it, and Back doesn't return to it.
         .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
+        // A click on a report notification.
+        .onChange(of: model.reportsToOpen) { navigator.go(.reports) }
         .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
         // Fetches the art pages open with, so a page doesn't show dark while it downloads. Only
         // fetched, not decoded: a page decodes its own art from disk in a few milliseconds.
@@ -228,6 +231,28 @@ extension AppModel.Session.Status {
         case .exited(let code): "Exited with code \(code)"
         case .stopped: "Stopped"
         case .failed(let message): "Couldn't start: \(message)"
+        }
+    }
+}
+
+extension Launcher.LaunchPhase {
+    /// While a Steam game starts: what happens now. Nil once its window shows.
+    var text: String? {
+        switch self {
+        case .steam: "Waiting for Steam…"
+        case .installing: "Installing what the game needs…"
+        case .rockstar: "Rockstar is signing you in…"
+        case .loading: "Loading the game…"
+        case .playing: nil
+        }
+    }
+
+    var info: String {
+        switch self {
+        case .steam: "Steam gets the game ready to start. When Steam isn't open yet, it starts first, which takes about a minute."
+        case .installing: "On a game's first launch, Steam installs the programs it needs. An installer may ask you to click through it."
+        case .rockstar: "Rockstar's launcher signs you in, checks your games and syncs cloud saves. This takes about a minute."
+        case .loading, .playing: "The game runs and opens its window soon."
         }
     }
 }
