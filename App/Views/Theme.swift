@@ -213,7 +213,7 @@ func busyItem(_ title: String, _ busyTitle: String, _ isBusy: Bool, action: @esc
     Button(isBusy ? busyTitle : title, action: action).disabled(isBusy)
 }
 
-/// A round icon-only button, for "…" menus and the panel's close button.
+/// A round icon-only button, like the panel's close button. "…" menus use `CircleMenuButtonStyle`.
 struct CircleButtonStyle: PrimitiveButtonStyle {
     var size = Theme.controlHeight
 
@@ -222,6 +222,14 @@ struct CircleButtonStyle: PrimitiveButtonStyle {
             .buttonStyle(Look { CircleButton(configuration: $0, size: size) })
             .focusLine(in: .circle)
     }
+}
+
+/// The round look for a "…" menu. A menu's button takes only a `ButtonStyle`: with the primitive
+/// `CircleButtonStyle` it falls back to the flat system look.
+struct CircleMenuButtonStyle: ButtonStyle {
+    var size = Theme.controlHeight
+
+    func makeBody(configuration: Configuration) -> some View { CircleButton(configuration: configuration, size: size) }
 }
 
 /// The round button's look, a view of its own for its hover state (see `PillButton`).

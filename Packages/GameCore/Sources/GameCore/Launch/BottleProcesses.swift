@@ -98,11 +98,19 @@ public enum BottleProcesses {
     /// Whether one of `pids` has a normal window on screen (on the current Space; minimized and
     /// hidden windows don't count). Needs no Screen Recording permission: no titles are read.
     static func hasWindowOnScreen(pids: Set<pid_t>) -> Bool {
+        frontWindowOwner(among: pids) != nil
+    }
+
+    /// Of `pids`, the one with the frontmost normal window on screen (as `hasWindowOnScreen` counts
+    /// them: a window behind others is on screen), leaving out the windows numbered in `old`.
+    static func frontWindowOwner(among pids: Set<pid_t>, excluding old: Set<Int> = []) -> pid_t? {
+        guard !pids.isEmpty else { return nil }
+        // Front to back.
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        return windows.contains { window in
-            (window[kCGWindowLayer as String] as? Int) == 0
-                && (window[kCGWindowOwnerPID as String] as? Int).map { pids.contains(pid_t($0)) } == true
-        }
+        return windows.lazy.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
+            .filter { ($0[kCGWindowNumber as String] as? Int).map { !old.contains($0) } ?? true }
+            .compactMap { ($0[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) }
+            .first { pids.contains($0) }
     }
 
     /// The numbers of the bottle's normal windows on screen (as `hasWindowOnScreen` counts them),

@@ -30,6 +30,9 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     /// What the user was doing, if they say.
     public var note = ""
     public var date = Date()
+    /// The Mac's `DeviceID`, set just before sending while usage counts are on. Only the relay sees
+    /// it: it isn't in `text` or `issueURL`, so not in the public issue.
+    public var device: String?
 
     public init(kind: Kind, title: String, summary: String, details: [String], backtrace: String? = nil, log: String? = nil) {
         self.kind = kind
@@ -95,8 +98,20 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     /// The report as JSON, for the server at `relay`.
     public func request(to relay: URL) throws -> URLRequest { try Self.post(self, to: relay) }
 
-    /// Posts the report. The server answers `{"issue": "<link>"}` with the issue it opened, if any.
-    public func send(to relay: URL) async throws -> URL? { try await Self.send(request(to: relay)) }
+    /// The issue a sent report opened, and the key that lets its sender reply there (`ReportReply`).
+    public struct Sent: Sendable, Equatable {
+        public var issue: URL
+        /// Nil from a relay older than replies.
+        public var key: String?
+    }
+
+    /// Posts the report. The server answers `{"issue": "<link>", "key": "…"}` with the issue it
+    /// opened, if any.
+    public func send(to relay: URL) async throws -> Sent? {
+        let answer = try await Self.answer(request(to: relay))
+        guard let issue = (answer["issue"] as? String).flatMap(URL.init(string:)) else { return nil }
+        return Sent(issue: issue, key: answer["key"] as? String)
+    }
 
     /// `value` as JSON, posted to the relay: a report, or settings a player shares.
     static func post(_ value: some Encodable, to url: URL) throws -> URLRequest {
@@ -111,12 +126,16 @@ public struct ProblemReport: Sendable, Equatable, Codable {
 
     /// Sends a request from `post(_:to:)`. Throws unless the relay answers 2xx; returns the issue's link, if any.
     static func send(_ request: URLRequest) async throws -> URL? {
+        (try await answer(request)["issue"] as? String).flatMap(URL.init(string:))
+    }
+
+    /// Sends a request from `post(_:to:)`. Throws unless the relay answers 2xx; returns its JSON answer.
+    static func answer(_ request: URLRequest) async throws -> [String: Any] {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let status = (response as? HTTPURLResponse)?.statusCode, (200..<300).contains(status) else {
             throw URLError(.badServerResponse)
         }
-        let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (answer?["issue"] as? String).flatMap(URL.init(string:))
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     // MARK: Wine crashes
@@ -174,6 +193,19 @@ public struct ProblemReport: Sendable, Equatable, Codable {
         let message = unquoted(line[start...]).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !message.isEmpty, !message.hasSuffix("?"), !message.hasSuffix("？") else { return nil }
         return message
+    }
+
+    /// What a program in an offline bottle logs when it tries to reach the internet: its first
+    /// lookup of an internet name and its first connect, both denied (scripts/build-runtime.sh, ws2_32).
+    static let noInternetMarker = "corkscrew: no internet: "
+
+    /// Whether a program in the launch tried to reach the internet from an offline bottle.
+    public static func triedInternet(inLog url: URL, maxBytes: Int = 4 << 20) -> Bool {
+        tail(of: url, maxBytes: maxBytes).map(triedInternet(in:)) ?? false
+    }
+
+    static func triedInternet(in text: String) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { $0.hasPrefix(noInternetMarker) }
     }
 
     /// Wine's quoted text (`debugstr_w`) up to its closing quote: `\n`, `\r`, `\t`, `\"`, `\\`, and

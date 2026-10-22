@@ -515,7 +515,14 @@ struct GameHero: View {
                         .buttonStyle(.pill)
                 }
                 moreMenu(state: state, isActive: isActive)
-                if let session {
+                if let session, session.status == .running, let phase = session.phase, let text = phase.text {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        InfoLine(text, info: phase.info)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+                } else if let session {
                     HStack(spacing: 6) {
                         if isActive { Circle().fill(Theme.running).frame(width: 8, height: 8) }
                         Text(session.status.text).lineLimit(2)
@@ -574,7 +581,8 @@ struct GameHero: View {
             Image(systemName: "ellipsis")
         }
         .menuStyle(.button)
-        .buttonStyle(CircleButtonStyle())
+        .buttonStyle(CircleMenuButtonStyle())
+        .focusLine(in: .circle)
         .menuIndicator(.hidden)
         .fixedSize()
     }

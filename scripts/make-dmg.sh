@@ -1,6 +1,10 @@
 #!/bin/bash
 # Builds the Release app and packs it into dist/Corkscrew-<version>.dmg, with an Applications link to
-# drag it to. Ad hoc signed: until there's a Developer ID, macOS asks to "Open Anyway" once.
+# drag it to. Signed with Corkscrew's certificate (scripts/make-signing-cert.sh) when
+# CORKSCREW_SIGNING_P12 (the .p12, base64) and CORKSCREW_SIGNING_PASSWORD are set, so every release
+# has the same designated requirement and keeps users' permissions; else ad hoc (forks, local tries).
+# With CORKSCREW_SIGNING_SHA1 set, the certificate must have that SHA-1 (the release workflow sets it).
+# Not notarized either way: macOS asks to "Open Anyway" once.
 # The app in the DMG carries its engine pack (EnginePackPin.swift) in Contents/Resources/EnginePack,
 # so setup downloads only Steam. The pack comes from dist/runtime-<release>/ when it's there, else
 # from its release; either way it must match the pinned SHA-256. Its release has to be published
@@ -37,6 +41,41 @@ fi
 [[ $(shasum -a 256 "$PACK" | cut -d' ' -f1) == "$PACK_SHA256" ]] \
   || { echo "$PACK doesn't match the SHA-256 in $PIN" >&2; exit 1; }
 
+STAGE=$(mktemp -d)
+SIGNING=$(mktemp -d)
+trap 'rm -rf "$STAGE" "$SIGNING"' EXIT
+SIGN=(--sign -)
+if [[ -n ${CORKSCREW_SIGNING_P12:-} ]]; then
+  # A keychain of its own, deleted at exit, so the key never goes into the login keychain.
+  KEYCHAIN="$SIGNING/signing.keychain-db"
+  KEYCHAIN_PASSWORD=$(uuidgen)
+  trap 'security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -rf "$STAGE" "$SIGNING"' EXIT
+  security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+  security set-keychain-settings -lut 3600 "$KEYCHAIN"
+  security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+  base64 -D <<<"$CORKSCREW_SIGNING_P12" >"$SIGNING/signing.p12"
+  security import "$SIGNING/signing.p12" -k "$KEYCHAIN" -f pkcs12 -P "${CORKSCREW_SIGNING_PASSWORD:?}" \
+    -T /usr/bin/codesign >/dev/null
+  rm "$SIGNING/signing.p12"
+  security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+  # Self-signed, so not trusted (CSSMERR_TP_NOT_TRUSTED): codesign takes it by its SHA-1 all the same.
+  IDENTITY=$(security find-identity -p codesigning "$KEYCHAIN" | awk '/\) [0-9A-F]{40} /{print $2; exit}')
+  [[ -n $IDENTITY ]] || { echo "No code-signing identity in CORKSCREW_SIGNING_P12" >&2; exit 1; }
+  [[ -z ${CORKSCREW_SIGNING_SHA1:-} || $IDENTITY == "$(tr a-f A-F <<<"$CORKSCREW_SIGNING_SHA1")" ]] \
+    || { echo "CORKSCREW_SIGNING_P12 holds certificate $IDENTITY, not $CORKSCREW_SIGNING_SHA1" >&2; exit 1; }
+  SIGN=(--sign "$IDENTITY" --keychain "$KEYCHAIN")
+  echo "Signing with certificate $IDENTITY"
+fi
+# The helpers in Contents/MacOS first, then the app, all with the same identity.
+sign() {
+  local helper
+  for helper in "$1"/Contents/MacOS/*; do
+    [[ $(basename "$helper") == Corkscrew ]] || codesign --force "${SIGN[@]}" "$helper"
+  done
+  codesign --force "${SIGN[@]}" "$1"
+  codesign --verify --deep --strict "$1"
+}
+
 # Marks the app as a release build: reports from builds from source say so.
 scripts/build-app.sh Release CORKSCREW_DISTRIBUTION=release
 APP=build/DerivedData/Build/Products/Release/Corkscrew.app
@@ -48,7 +87,7 @@ mkdir -p dist
 # The app alone: an update downloads about 7 MB, and the new app downloads the engine pack only when
 # it pins a newer one.
 ZIP="dist/Corkscrew-$VERSION-app.zip"
-codesign --verify --deep --strict "$APP"
+sign "$APP"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 # The full URL: GitHub sends releases/latest/download/update.json to a signed CDN URL, and a file name
@@ -63,8 +102,6 @@ cat >dist/update.json <<EOF
 EOF
 
 DMG="dist/Corkscrew-$VERSION.dmg"
-STAGE=$(mktemp -d)
-trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/Corkscrew.app"
 # Into the staged copy, so later Release builds of the app don't carry an old pack.
 RESOURCES="$STAGE/Corkscrew.app/Contents/Resources/EnginePack"
@@ -72,8 +109,7 @@ mkdir -p "$RESOURCES"
 cp "$PACK" "$RESOURCES/"
 # The licenses and source list in the open too: Apple's license wants its notices with every copy of D3DMetal.
 tar -xf "$PACK" -C "$RESOURCES" --strip-components 1 "${PACK_NAME%.tar.xz}/LICENSES" "${PACK_NAME%.tar.xz}/SOURCES.md"
-codesign --force --sign - "$STAGE/Corkscrew.app"
-codesign --verify --deep --strict "$STAGE/Corkscrew.app"
+sign "$STAGE/Corkscrew.app"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -quiet -volname "Corkscrew $VERSION" -srcfolder "$STAGE" -format ULFO -ov "$DMG"
 (cd dist && shasum -a 256 "$(basename "$DMG")" >"$(basename "$DMG").sha256")

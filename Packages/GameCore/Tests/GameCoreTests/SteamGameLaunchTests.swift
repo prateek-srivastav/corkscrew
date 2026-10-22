@@ -122,31 +122,129 @@ struct SteamGameLaunchTests {
         // Seen for three polls, then gone: quit after the grace period.
         var polls = 0
         var lastSeen = clock.now
-        let quit = try await Launcher.waitForQuit(timeout: .seconds(60), grace: .milliseconds(30), poll: .milliseconds(10)) {
+        try await Launcher.waitForQuit(poll: .milliseconds(10)) {
             polls += 1
-            let running = (2...4).contains(polls)
-            if running { lastSeen = clock.now }
-            return running
+            guard (2...4).contains(polls) else { return polls > 4 ? .milliseconds(30) : .seconds(60) }
+            lastSeen = clock.now
+            return nil
         }
-        #expect(quit)
         #expect(polls > 4)
         #expect(clock.now - lastSeen >= .milliseconds(30), "waited out the grace period")
 
         // A restart within the grace period doesn't count as quitting. The grace is generous so the
         // two-poll gap stays inside it on a slow machine.
         polls = 0
-        let restarted = try await Launcher.waitForQuit(timeout: .seconds(60), grace: .milliseconds(500), poll: .milliseconds(10)) {
+        try await Launcher.waitForQuit(poll: .milliseconds(10)) {
             polls += 1
-            let running = polls == 1 || (4...6).contains(polls)
-            if running { lastSeen = clock.now }
-            return running
+            guard polls == 1 || (4...6).contains(polls) else { return .milliseconds(500) }
+            lastSeen = clock.now
+            return nil
         }
-        #expect(restarted)
         #expect(polls > 6, "the second run is the one that ended")
         #expect(clock.now - lastSeen >= .milliseconds(500))
 
-        // Never started: give up after the timeout, leaving the launch open.
-        let never = try await Launcher.waitForQuit(timeout: .milliseconds(50), grace: .milliseconds(10), poll: .milliseconds(10)) { false }
-        #expect(never == false)
+        // Never started: the timeout counts from the start.
+        let start = clock.now
+        try await Launcher.waitForQuit(poll: .milliseconds(10)) { .milliseconds(50) }
+        #expect(clock.now - start >= .milliseconds(50))
+    }
+
+    // Process lists from RDR2's launches (2026-10-21), as `ps` showed them.
+    static let steam = [
+        BottleProcesses.Entry(pid: 1, arguments: ["/Users/me/Bottles/X/prefix/drive_c/Program Files (x86)/Steam/steam.exe", "-silent"]),
+        BottleProcesses.Entry(pid: 2, arguments: [#"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe"#, "-nocrashdialog"]),
+        BottleProcesses.Entry(pid: 3, arguments: [#"C:\Program Files (x86)\Common Files\Steam\steamservice.exe"#, "/RunAsService"]),
+        BottleProcesses.Entry(pid: 4, arguments: [#"C:\windows\system32\explorer.exe"#, "/desktop"]),
+    ]
+    static let rdr2Folder = #"C:\Program Files (x86)\Steam\steamapps\common\Red Dead Redemption 2\"#
+    static let rdr2 = Launcher.SteamGameLaunch(installDir: "Red Dead Redemption 2", steamWasRunning: true, usesRockstarLauncher: true)
+
+    static func running(_ programs: String...) -> [BottleProcesses.Entry] {
+        steam + programs.enumerated().map { index, line in
+            // The program, then its arguments: `name.exe /a /b`.
+            let split = line.range(of: ".exe ").map { [String(line[..<$0.lowerBound]) + ".exe"] + line[$0.upperBound...].split(separator: " ").map(String.init) }
+            return BottleProcesses.Entry(pid: pid_t(100 + index), arguments: split ?? [line])
+        }
+    }
+
+    /// Follows a launch through `looks`: the phase each shows, and when the wait would end.
+    static func follow(_ looks: [[BottleProcesses.Entry]], game: Launcher.SteamGameLaunch = rdr2)
+        -> (phases: [Launcher.LaunchPhase], graces: [Duration?]) {
+        var started = false
+        let looks = looks.map { Launcher.SteamGameLook($0, installDir: game.installDir, usesRockstarLauncher: game.usesRockstarLauncher) }
+        return (looks.map(\.phase), looks.map { $0.grace(started: &started, usesRockstarLauncher: game.usesRockstarLauncher) })
+    }
+
+    /// RDR2's first launch: Steam runs its install script and the game's installers for minutes
+    /// before the game starts. They aren't the game: the launch waited 10 s after the Rockstar
+    /// launcher's installer and closed Steam during DirectX's.
+    @Test func aFirstLaunchWaitsForSteamsInstallers() {
+        let script = #"C:\Program Files (x86)\Steam\bin\SteamService.exe /installscript "# + Self.rdr2Folder
+        let redist = #"C:\Program Files (x86)\Steam\steamapps\common\Steamworks Shared\_CommonRedist\"#
+        let looks = [
+            Self.running(script, Self.rdr2Folder + #"Redistributables\Social-Club-Setup.exe /silent"#),
+            Self.running(script, Self.rdr2Folder + #"Redistributables\Rockstar-Games-Launcher.exe /s /t"#,
+                         #"C:\Program Files\Rockstar Games\Launcher\Redistributables\VCRed\vc_redist.x86.exe /install /norestart /quiet"#),
+            Self.running(script, Self.rdr2Folder + #"Redistributables\Rockstar-Games-Launcher.exe /s /t"#,
+                         #"C:\Program Files\Rockstar Games\Launcher\RockstarService.exe install"#),
+            Self.running(script, #"C:\windows\system32\cmd.exe /s/c"#, redist + #"vcredist\2017\vc_redist.x86.exe /q /norestart"#),
+            Self.running(script, redist + #"DirectX\Jun2010\DXSETUP.exe /silent"#),
+        ]
+        #expect(!Launcher.steamGamePrograms(looks[1], installDir: "Red Dead Redemption 2").isEmpty, "what the launch took for the game")
+        let (phases, graces) = Self.follow(looks)
+        #expect(phases == Array(repeating: .installing, count: 5))
+        #expect(graces == Array(repeating: nil, count: 5))
+        // Then Steam starts the game: in the gap, the launch waits as long as for Steam to start it.
+        #expect(Self.follow([Self.running()]).graces == [Launcher.gameStartTimeout])
+    }
+
+    /// RDR2's second launch: Rockstar's launcher updated itself. `PlayRDR2.exe` (which waits for the
+    /// launcher) quit with the old launcher, and the launch ended 10 s later, while the new one ran.
+    @Test func aLaunchWaitsWhileRockstarsLauncherUpdatesItself() {
+        let launcher = #"C:\Program Files\Rockstar Games\Launcher\"#
+        let looks = [
+            Self.running(Self.rdr2Folder + "PlayRDR2.exe", launcher + "Launcher.exe -skipPatcherCheck -steamAppId=1174180",
+                         launcher + "RockstarService.exe start"),
+            Self.running(launcher + "Launcher.exe -upgrade", launcher + "RockstarService.exe start"),
+            Self.running(launcher + "Launcher.exe -upgrade", launcher + #"ThirdParty\Crashpad\RockstarErrorHandler.exe"#,
+                         #"C:\Program Files\Rockstar Games\Social Club\SocialClubHelper.exe --allow-file-access-from-files"#),
+            Self.running(Self.rdr2Folder + "PlayRDR2.exe", launcher + "Launcher.exe -skipPatcherCheck"),
+        ]
+        let (phases, graces) = Self.follow(looks)
+        #expect(phases == Array(repeating: .rockstar, count: 4))
+        #expect(graces == Array(repeating: nil, count: 4))
+    }
+
+    /// While Steam gets the game ready, a window it opens comes forward (RDR2 ran on another
+    /// computer: Steam asked, behind Corkscrew, for 4 minutes). Steam's windows are its client's and
+    /// its interface's, not its service's.
+    @Test func knowsSteamsOwnPrograms() {
+        let real = #"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper_real.exe -nocrashdialog"#
+        let look = Launcher.SteamGameLook(Self.running(real, Self.rdr2Folder + "PlayRDR2.exe"),
+                                          installDir: Self.rdr2.installDir, usesRockstarLauncher: true)
+        #expect(look.steam.map(\.pid) == [1, 2, 100])
+        #expect(look.rockstar.map(\.pid) == [101])
+    }
+
+    /// A warm launch, and a quit from the game's menu: Play shows again once `RDR2.exe` and its crash
+    /// handler are gone, while the launcher still saves to the cloud.
+    @Test func aRockstarGameHasQuitOnceItsOwnProgramsAreGone() {
+        let launcher = #"C:\Program Files\Rockstar Games\Launcher\Launcher.exe -skipPatcherCheck"#
+        let helper = #"C:\Program Files\Rockstar Games\Social Club\SocialClubHelper.exe --type=renderer"#
+        let play = Self.rdr2Folder + "PlayRDR2.exe"
+        let game = Self.rdr2Folder + "RDR2.exe -skipPatcherCheck"
+        let crashpad = Self.rdr2Folder + #"x64\crashpad\release\crashpad_handler.exe --attachment=x"#
+        let (phases, graces) = Self.follow([
+            Self.running(), Self.running(play), Self.running(play, launcher), Self.running(play, launcher, helper),
+            Self.running(play, launcher, helper, game), Self.running(play, launcher, helper, game, crashpad),
+            Self.running(play, launcher, helper, crashpad), Self.running(play, launcher, helper),
+        ])
+        #expect(phases == [.steam, .rockstar, .rockstar, .rockstar, .loading, .loading, .loading, .rockstar])
+        #expect(graces == [Launcher.gameStartTimeout, nil, nil, nil, nil, nil, nil, .zero])
+
+        // Other games can restart themselves: they keep the grace period.
+        let other = Launcher.SteamGameLaunch(installDir: "Other", steamWasRunning: true, usesRockstarLauncher: false)
+        let folder = #"C:\Program Files (x86)\Steam\steamapps\common\Other\"#
+        #expect(Self.follow([Self.running(folder + "PlayOther.exe"), Self.running()], game: other).graces == [nil, Launcher.gameQuitGrace])
     }
 }

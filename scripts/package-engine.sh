@@ -35,6 +35,10 @@ done
 # The runtime has to match today's patches (build-runtime.sh); a stale one would ship old behavior.
 grep -qa CORKSCREW_NO_LOADER_LINK "$RUNTIME/lib/wine/x86_64-unix/ntdll.so" \
   || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
+grep -qa "processing url" "$RUNTIME/lib/wine/x86_64-windows/inseng.dll" \
+  || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
+grep -qa "corkscrew: no internet" "$RUNTIME/lib/wine/x86_64-unix/ws2_32.so" \
+  || { echo "$RUNTIME predates the current Wine patches: rebuild it" >&2; exit 1; }
 [[ -f $RUNTIME/share/wine/mono/wine-mono-$WINE_MONO_VERSION/bin/libmono-2.0-x86_64.dll ]] \
   || { echo "$RUNTIME lacks Wine Mono $WINE_MONO_VERSION: rebuild it" >&2; exit 1; }
 # DXMT needs its winemetal inside the runtime (install-components.sh puts it there; a runtime rebuild
@@ -85,6 +89,7 @@ log "Collecting the source"
 COMMIT=$(git -C "$REPO" rev-parse HEAD)
 crossover=$(fetch "$CROSSOVER_URL" "$CROSSOVER_SHA256")
 cp "$crossover" "$OUT/wine-crossover-$CROSSOVER_VERSION-source.tar.gz"
+cp "$(fetch "$INSENG_PATCH_URL" "$INSENG_PATCH_SHA256")" "$OUT/wine-staging-inseng-Implementation.patch"
 cp "$DOWNLOADS/$(basename "$NETTLE_URL")" "$OUT/nettle-source.tar.gz"
 cp "$DOWNLOADS/$(basename "$GNUTLS_URL")" "$OUT/gnutls-source.tar.xz"
 cp "$DOWNLOADS/$(basename "$FREETYPE_URL")" "$OUT/freetype-source.tar.xz"
@@ -105,7 +110,7 @@ https://github.com/Prateek-Srivastav/corkscrew/tree/$COMMIT/scripts
 
 | Component | Version | License | Source |
 |---|---|---|---|
-| Wine (CodeWeavers' winecx), with Corkscrew's patches in scripts/build-runtime.sh | $CROSSOVER_VERSION | LGPL 2.1 or later | wine-crossover-$CROSSOVER_VERSION-source.tar.gz |
+| Wine (CodeWeavers' winecx), with Corkscrew's patches in scripts/build-runtime.sh and Wine Staging's inseng patch | $CROSSOVER_VERSION | LGPL 2.1 or later | wine-crossover-$CROSSOVER_VERSION-source.tar.gz, wine-staging-inseng-Implementation.patch |
 | Wine Mono (runtime/winecx-$CROSSOVER_VERSION/share/wine/mono) | $WINE_MONO_VERSION | MIT, LGPL and others (LICENSES/wine-mono/COPYING) | wine-mono-$WINE_MONO_VERSION-source.tar.xz |
 | GnuTLS | 3.8.13 | LGPL 2.1 or later | gnutls-source.tar.xz |
 | Nettle | 3.10 | LGPL 3 or GPL 2 | nettle-source.tar.gz |

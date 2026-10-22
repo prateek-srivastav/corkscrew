@@ -49,15 +49,19 @@ If the download is the program itself, with no setup, step 4 is **Add to Library
 
 ### Usage counts
 
-Corkscrew sends a few anonymous counts that show how many people install it and on which Macs:
+Corkscrew sends a few counts that show how many people install it and on which Macs:
 
 - **install**: from the install script, after an install or an update. It has the version, the version it replaced, macOS, the Mac model, the chip and memory, and the language.
 - **first_launch**: once, the first time Corkscrew opens, with the same details.
 - **setup_done**: when **Set Up Corkscrew** finishes. It has how long setup took, whether it installed Rosetta, and where Wine came from.
 
-The counts go to [Aptabase](https://aptabase.com). Aptabase shows the country from the connection and doesn't keep the IP address. Nothing identifies you: no name, account, Apple ID, files, programs or games, and no ID that lasts (Aptabase's visitor hash changes every day). The code is in [Analytics.swift](Packages/GameCore/Sources/GameCore/Analytics.swift) and the [install script](scripts/install.sh).
+The counts go to [Aptabase](https://aptabase.com). Aptabase shows the country from the connection and doesn't keep the IP address or an ID that lasts (its visitor hash changes every day).
 
-To turn them off, switch off **Send anonymous usage counts** in Settings → Privacy. Or install with `DO_NOT_TRACK=1`, which also turns off the app's counts before it opens:
+**Device ID.** To count Macs, not launches, and to link a crash report to the Mac that sent it, Corkscrew also makes one ID for your Mac: a salted SHA-256 hash of the Mac's hardware UUID. The hardware UUID and serial number never leave the Mac. The ID stays the same on that Mac, also after **Clean Up and Uninstall**, and you can't reset it, so it counts as personal data under the GDPR. Once each time Corkscrew opens, it sends the ID with the Mac model, chip, memory, and the macOS and Corkscrew versions to Corkscrew's relay ([`relay/`](relay)), which adds the country from the connection. **Send Report** sends the ID with the report. The relay keeps them privately in Cloudflare: when each Mac was first and last seen with its details, and which Mac sent which report. The ID is never in a public GitHub issue. A Mac not seen for 365 days, and a report link older than that, are deleted. With the switch below off, nothing more is sent, so your Mac's data is deleted 365 days after its last ping.
+
+Nothing else identifies you: no name, account, Apple ID, files, programs or games, and no IP address. The code is in [Analytics.swift](Packages/GameCore/Sources/GameCore/Analytics.swift), [DeviceID.swift](Packages/GameCore/Sources/GameCore/DeviceID.swift) and the [install script](scripts/install.sh).
+
+To turn off the counts and the device ID, switch off **Send usage counts** in Settings → Privacy. Reports then go without the ID. Or install with `DO_NOT_TRACK=1`, which also turns off the app's counts before it opens:
 
 ```bash
 curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | DO_NOT_TRACK=1 bash
@@ -66,6 +70,8 @@ curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | DO_NOT_TRA
 ### Crash and error reports
 
 When a program crashes, quits after an error message, or doesn't start, or Corkscrew itself quits unexpectedly, Corkscrew shows a report. For a crash that only the program's own handler caught, the report has the exception from its crash dump; the dump itself is never sent. An error message has a **Report…** button too. The report has what happened, the Corkscrew, macOS and Wine versions, the Mac, the bottle, the program's graphics and settings, Wine's backtrace and the end of the log. Your home folder shows as `~` and your user name as `<user>`.
+
+A program in Offline Programs that tried to reach the internet and then crashed or quit with an error gets no report. Corkscrew says it needs the internet and offers to move it to Online Programs: it copies the program's folder there and points the library entry at the copy. The files in Offline Programs stay. A program that a setup installed may need its setup run again in Online Programs.
 
 Nothing is sent until you click. **Send Report** sends the report to Corkscrew's relay ([`relay/`](relay)), a small Cloudflare Worker. It keeps the whole report privately and opens a public [GitHub issue](https://github.com/Prateek-Srivastav/corkscrew/issues?q=label%3Acrash-report) with the title, the summary line, the details and the start of the backtrace; your note and the end of the log stay private. The relay doesn't keep your IP address. If sending fails, **Report on GitHub…** copies the whole report and opens a new [bug report](https://github.com/Prateek-Srivastav/corkscrew/issues/new?template=bug_report.yml) with as much of it as fits in the link; paste the rest. GitHub issues are public, so read the report first.
 
@@ -226,6 +232,6 @@ This repository only contains Corkscrew's own code. The build scripts download e
 | [Swift Argument Parser](https://github.com/apple/swift-argument-parser) | `gamecore-cli` | Apache 2.0 |
 | D3DMetal, from Apple's [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) 3.0 | Direct3D 11/12 → Metal | Apple's license (`Apple-License.rtf`, `Apple-Acknowledgements.rtf`). Not open source and not covered by Corkscrew's GPL. Its `redist` components may be redistributed only for non-commercial purposes, with Apple's notices: the free engine pack includes them, and anything that sells Corkscrew must leave them out. |
 
-**Our changes to Wine** are patches applied by `scripts/build-runtime.sh`: the loader's Info.plist (bundle identifier, Game Mode keys); starting programs from an app bundle so Game Mode turns on; an opt-out of the loader's re-exec link for sandboxed bottles; `--in-process-gpu` for Rockstar's Social Club; full-screen windows at the normal window level, for Mission Control (winemac); no input hang when a program destroys a D3DMetal window on another thread (winemac); VirtualProtect on D3DMetal's functions for games with mod hooks on (ntdll); display modes up to the panel's pixel size when mode changes are emulated (win32u); and loopback only to the bottle's own listeners in offline bottles (wineserver).
+**Our changes to Wine** are patches applied by `scripts/build-runtime.sh`: the loader's Info.plist (bundle identifier, Game Mode keys); starting programs from an app bundle so Game Mode turns on; an opt-out of the loader's re-exec link for sandboxed bottles; `--in-process-gpu` for Rockstar's Social Club; full-screen windows at the normal window level, for Mission Control (winemac); no input hang when a program destroys a D3DMetal window on another thread (winemac); VirtualProtect on D3DMetal's functions for games with mod hooks on (ntdll); display modes up to the panel's pixel size when mode changes are emulated (win32u); loopback only to the bottle's own listeners in offline bottles (wineserver); and a log line when a program in an offline bottle tries to reach the internet (ws2_32). It also applies Wine Staging's Install Engine patch, so Microsoft's DirectX web installer works instead of crashing (inseng).
 
 Steam, Rockstar Games, Red Dead Redemption, Black Myth: Wukong, God of War, FIFA, DirectX, DLSS, FSR, Metal and other names are trademarks of their owners. Corkscrew isn't affiliated with or endorsed by any of them.

@@ -2,7 +2,9 @@
 
 A small Cloudflare Worker that takes what Corkscrew sends to GitHub, so players need no GitHub
 account: the crash and error reports from **Send Report** (`POST /`), and the settings players share
-from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)). For each report it:
+from the share sheet (`POST /settings`, see [Shared settings](#shared-settings)), and the senders'
+answers to the developer's notes (`POST /reply`, see [Replies](#replies)). It also counts Macs
+(`POST /device`, see [Devices](#devices)). For each report it:
 
 1. checks the size (1 MB at most) and the shape, and limits how many reports one network can send;
 2. keeps the whole report, with the full backtrace and the end of the log, in a private R2 bucket
@@ -11,10 +13,30 @@ from the share sheet (`POST /settings`, see [Shared settings](#shared-settings))
    of the backtrace, labelled `bug` and `crash-report`. The issue says the full report is stored
    privately under its id. A GitHub App opens it, so the author is the app's bot (for example
    `corkscrew-reports[bot]`), not a person;
-4. answers the app with the issue's link.
+4. answers the app with the issue's link and the report's reply key.
 
 The app posts `ProblemReport` from `Packages/GameCore/Sources/GameCore/ProblemReport.swift` as JSON
-(`request(to:)`) and reads `{"issue": "<link>"}` from the answer (`send(to:)`).
+(`request(to:)`) and reads `{"issue": "<link>", "key": "<reply key>"}` from the answer (`send(to:)`).
+
+## Replies
+
+The relay opens the issues, so the sender can't comment on them. When an issue has the `question`
+label, the app's Reports page shows **Reply** under the developer's notes. It posts `ReportReply` from
+`Packages/GameCore/Sources/GameCore/ReportReply.swift` to `/reply`: the issue number, the report's key,
+the answer, and, if the sender chose, the start and the end of the program's last 3 launch logs (home
+folder and user name hidden).
+
+The key is an HMAC-SHA-256 of the issue number with `RATE_LIMIT_KEY`, so the relay keeps nothing to
+check it, and only the Mac that sent the report has it. Issue numbers are public: without the key,
+anyone could answer for any report. Reports from Corkscrew 1.0.2 and older have no key. Their replies
+are kept with `verified: false`, and the issue comment says they may not be from the sender.
+
+The relay answers 403 for a wrong key, and 404 unless the issue is open and has `crash-report`. It
+keeps the reply in R2 under `replies/<id>.json` and adds a comment to the issue that the sender
+answered, with the id. The answer and the logs are not in the comment. It answers 201 `{"id": "<id>"}`,
+or 202 when it couldn't comment (GitHub failed, or the day's issue limit is reached). Replies count
+against the same hourly limit as reports. The app keeps its own copy of each answer and shows it on
+the card.
 
 ## Shared settings
 
@@ -32,6 +54,24 @@ The relay keeps the share in R2 under `settings/<id>.json` and opens a Game repo
 player's text is in code blocks, so it can't mention people, render as Markdown or add a field.
 Shares count against the same limits as reports.
 
+## Devices
+
+While **Send usage counts** is on, the app posts `DevicePing` from
+`Packages/GameCore/Sources/GameCore/DeviceID.swift` to `/device` once a launch: the Mac's device ID
+(64 hex digits, a salted SHA-256 of its hardware UUID), the Mac model, chip, memory, and the macOS and
+Corkscrew versions, and whether it's a Debug build. The relay adds the country Cloudflare reads from
+the connection (`request.cf.country`) and keeps one row per Mac in the D1 database
+`corkscrew-devices` (table `devices`: `id`, `first_seen`, `last_seen`, `details` JSON). It answers
+204. Pings need `RATE_LIMIT_KEY` but no GitHub secrets, and have their own limit: 30 an hour per
+network, 4 KB each.
+
+A report sent with the switch on has the ID in `device`. The relay keeps it in the R2 copy, adds a
+row to table `reports` (`id` = the report's R2 id, `issue` = the issue number or null, `device`,
+`received`), and leaves it out of the issue.
+
+A daily cron (`[triggers]` in `wrangler.toml`) deletes Macs not seen for 365 days and report rows
+older than that. The tables are in `migrations/`.
+
 ## What is public and what is private
 
 | Part of the report | Public issue | Private R2 copy |
@@ -40,6 +80,8 @@ Shares count against the same limits as reports.
 | Backtrace | The start, up to Wine's module list (60 lines at most) | All of it |
 | End of the log | No | Yes |
 | The user's note ("what I was doing") | No | Yes |
+| A reply's answer and launch logs | No (only that there is one) | Yes |
+| The Mac's device ID | No | Yes, and in D1 |
 | The sender's IP address | No | No |
 
 The relay never stores or logs the IP address. To count reports, it names a counter by a keyed hash
@@ -74,6 +116,17 @@ You need Node.js 22 or later and the GitHub CLI (`gh`). Run the commands in this
 
    ```bash
    npx wrangler r2 bucket lifecycle add corkscrew-reports expire-reports --expire-days 365
+   ```
+
+   Make the private D1 database for devices, then put the `database_id` it prints into
+   `wrangler.toml` (`[[d1_databases]]`), and make its tables:
+
+   ```bash
+   npx wrangler d1 create corkscrew-devices
+   ```
+
+   ```bash
+   npx wrangler d1 migrations apply corkscrew-devices --remote
    ```
 
    The rate-limit counters are Durable Objects. `wrangler deploy` makes them from `wrangler.toml`, so
@@ -190,6 +243,36 @@ npx wrangler r2 object get corkscrew-reports/reports/<id>.json --remote --file r
 Or open **R2 → corkscrew-reports → reports/** in the Cloudflare dashboard. The file holds the id, the
 time the relay received it and the report as the app sent it. Shared settings are under `settings/`.
 
+The issue comment for a reply gives its id:
+
+```bash
+npx wrangler r2 object get corkscrew-reports/replies/<id>.json --remote --file reply.json
+```
+
+The file holds the id, the time, the issue, `verified` and the reply as the app sent it.
+
+## Read device data
+
+```bash
+npx wrangler d1 execute corkscrew-devices --remote --command "SELECT COUNT(*) FROM devices WHERE json_extract(details, '$.isDebug') = 0"
+```
+
+```bash
+npx wrangler d1 execute corkscrew-devices --remote --command "SELECT r.issue, d.details FROM reports r LEFT JOIN devices d ON d.id = r.device WHERE r.issue = <number>"
+```
+
+To try the relay on this Mac, with a local D1 and R2 and no GitHub issue:
+
+```bash
+npx wrangler d1 migrations apply corkscrew-devices --local
+```
+
+```bash
+npx wrangler dev --local --var RATE_LIMIT_KEY:local --var GITHUB_TOKEN:none --var ISSUES_PER_DAY:0
+```
+
+Don't put these values in `.dev.vars`: the tests read that file too.
+
 To watch the relay live (errors from GitHub, reports kept without an issue), run `npx wrangler tail`.
 
 ## Limits
@@ -198,9 +281,10 @@ Set in `wrangler.toml` under `[vars]`; deploy again after a change.
 
 | Limit | Default |
 | --- | --- |
-| Report size | 1 MB (`maxBytes` in `src/index.ts`) |
+| Report size | 1 MB (`maxBytes` in `src/report.ts`) |
 | Reports from one address in an hour (IPv6: one /64) | `REPORTS_PER_HOUR = "5"` |
 | Issues the relay opens in a day (UTC), from all senders | `ISSUES_PER_DAY = "50"` |
+| Device pings from one network in an hour; ping size | 30; 4 KB (`pingsPerHour`, `maxPingBytes` in `src/device.ts`) |
 
 Over the daily issue limit, the relay still keeps reports, without an issue.
 
@@ -210,8 +294,9 @@ Over the daily issue limit, the relay still keeps reports, without an issue.
 | --- | --- | --- |
 | 201 | `{"issue", "id"}` | The report is kept and the issue is open. |
 | 202 | `{"id"}` | The report is kept, without an issue: the daily limit, or GitHub failed. |
+| 204 | (none) | `POST /device`: the Mac is kept. |
 | 400 | `{"error"}` | The body isn't JSON, or isn't a report. |
-| 404, 405 | `{"error"}` | Not `POST /` or `POST /settings`. |
+| 404, 405 | `{"error"}` | Not `POST /`, `POST /settings` or `POST /device`. |
 | 413 | `{"error"}` | The report is larger than 1 MB. |
 | 415 | `{"error"}` | The body isn't `application/json`. |
 | 429 | `{"error"}`, `Retry-After` | Too many reports from this address in this hour. |
