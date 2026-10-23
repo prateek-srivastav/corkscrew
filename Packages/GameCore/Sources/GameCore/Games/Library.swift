@@ -13,10 +13,13 @@ public struct Game: Codable, Sendable, Equatable, Identifiable {
     public var store: StoreItem?
     /// Where the icon comes from when it isn't `executable` (a Steam game launches `steam.exe`).
     public var iconSource: URL?
+    /// How the program came in, for reports; nil for store entries and programs added before 1.0.4.
+    public var source: ProgramSource?
 
     public init(
         id: UUID = UUID(), name: String, executable: URL, bottleID: UUID, profile: GameProfile = GameProfile(),
-        addedAt: Date = .now, lastPlayedAt: Date? = nil, store: StoreItem? = nil, iconSource: URL? = nil
+        addedAt: Date = .now, lastPlayedAt: Date? = nil, store: StoreItem? = nil, iconSource: URL? = nil,
+        source: ProgramSource? = nil
     ) {
         self.id = id
         self.name = name
@@ -27,6 +30,7 @@ public struct Game: Codable, Sendable, Equatable, Identifiable {
         self.lastPlayedAt = lastPlayedAt
         self.store = store
         self.iconSource = iconSource
+        self.source = source
     }
 
     /// Identifies a store entry across launches: the same item in the same bottle.
@@ -38,6 +42,66 @@ public struct Game: Codable, Sendable, Equatable, Identifiable {
         let root = GameDetector.gameRoot(for: executable)
         if root != executable.deletingLastPathComponent() { return root.lastPathComponent }
         return executable.deletingPathExtension().lastPathComponent
+    }
+}
+
+/// How a program came in: the file the user picked (an .exe, or a download Corkscrew unpacked)
+/// and what the install did with it.
+public struct ProgramSource: Codable, Sendable, Equatable, CustomStringConvertible {
+    public enum Install: String, Codable, Sendable {
+        /// The .exe, run where it was (already in the bottle, or a bottle that sees the Mac's folders).
+        case inPlace
+        /// The .exe copied into the bottle, with its folder or alone.
+        case copied
+        /// A download whose setup ran.
+        case setup
+        /// A download without a setup: its game folder was kept.
+        case gameFolder
+    }
+
+    public enum Disc: String, Codable, Sendable {
+        /// Put in the bottle's drive (D:).
+        case mounted
+        /// Its files copied out.
+        case unpacked
+    }
+
+    /// The picked file's format: "exe", "zip", "rar", "7z", "iso", …
+    public var format: String
+    /// How many files a split download had; 1 otherwise.
+    public var parts: Int
+    public var install: Install
+    /// A disc image in the download, or the download itself.
+    public var disc: Disc?
+
+    public init(format: String, parts: Int = 1, install: Install, disc: Disc? = nil) {
+        self.format = format
+        self.parts = parts
+        self.install = install
+        self.disc = disc
+    }
+
+    /// A download's format from its first part: `rar` for `.part1.rar` and `.r00`, `7z` for `.7z.001`.
+    public static func format(of file: URL) -> String {
+        let ext = file.pathExtension.lowercased()
+        if ext.wholeMatch(of: /\d+/) != nil { return file.deletingPathExtension().pathExtension.lowercased() }
+        return ext.wholeMatch(of: /r\d\d/) != nil ? "rar" : ext
+    }
+
+    /// "a .exe, copied into the bottle", "a .rar in 3 parts, setup run from the disc in the drive", …
+    public var description: String {
+        let file = "a .\(format)" + (parts > 1 ? " in \(parts) parts" : "")
+        let from = switch disc {
+        case .mounted: " from the disc in the drive"
+        case .unpacked: " from the disc's unpacked files"
+        case nil: ""
+        }
+        return switch install {
+        case .inPlace: file + ", run where it was"
+        case .copied: file + ", copied into the bottle"
+        case .setup: file + ", setup run" + from
+        case .gameFolder: file + ", no setup: game folder kept" + from
+        }
     }
 }
 

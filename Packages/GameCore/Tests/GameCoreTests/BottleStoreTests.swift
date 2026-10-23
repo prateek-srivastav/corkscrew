@@ -70,9 +70,10 @@ struct BottleStoreTests {
 
             try await store.create(Bottle(name: "Steam", kind: .standard, engineID: engine.id), engine: engine)
             let commands = try String(contentsOf: record, encoding: .utf8).split(separator: "\n")
-            #expect(commands.count == (emulatedModes ? 3 : 2))
+            #expect(commands.count == (emulatedModes ? 5 : 4))
             #expect(commands.first == "wineboot --init")
             #expect(commands.contains { $0.contains("ShowCrashDialog") && $0.hasSuffix("/d 0 /f") })
+            #expect(commands.filter { $0.contains("AeDebug /v Debugger") && $0.hasSuffix("winedbg.txt 2>&1 /f") }.count == 2)
             #expect(commands.contains { $0.contains("EmulateModeset") && $0.hasSuffix("/d y /f") } == emulatedModes)
         }
     }

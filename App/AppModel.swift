@@ -800,13 +800,15 @@ final class AppModel {
     }
 
     /// Adds the program to the library (copying it into an isolated bottle first) and returns it.
+    /// `source`: how a download came in; nil for a program the user picked.
     @discardableResult
-    func addToLibrary(_ program: URL, bottle: Bottle, name: String? = nil) async -> Game? {
+    func addToLibrary(_ program: URL, bottle: Bottle, name: String? = nil, source: ProgramSource? = nil) async -> Game? {
+        let source = source ?? programSource(program, bottle: bottle)
         guard let executable = await prepareProgram(program, for: bottle) else { return nil }
         let profile = if let tested = Steam.testedProfile(forProgram: executable) { tested }
                       else { await Task.detached { GameProfile.detected(for: executable) }.value }
         let game = Game(name: name ?? Game.defaultName(for: executable), executable: executable, bottleID: bottle.id,
-                        profile: profile)
+                        profile: profile, source: source)
         library.games.append(game)
         saveLibrary()
         return game
@@ -814,8 +816,10 @@ final class AppModel {
 
     /// Runs the program without adding it to the library.
     func runOnce(_ program: URL, bottle: Bottle) async {
+        let source = programSource(program, bottle: bottle)
         guard let executable = await prepareProgram(program, for: bottle) else { return }
-        let game = Game(name: executable.deletingPathExtension().lastPathComponent, executable: executable, bottleID: bottle.id)
+        let game = Game(name: executable.deletingPathExtension().lastPathComponent, executable: executable, bottleID: bottle.id,
+                        source: source)
         play(game, transient: true)
     }
 
@@ -849,8 +853,8 @@ final class AppModel {
 
     /// Runs a setup from a download in the bottle, without adding it to the library; the session
     /// under the returned entry's id follows it.
-    func runSetup(_ setup: URL, in bottle: Bottle, name: String) -> Game {
-        let game = Game(name: name, executable: setup, bottleID: bottle.id)
+    func runSetup(_ setup: URL, in bottle: Bottle, name: String, source: ProgramSource) -> Game {
+        let game = Game(name: name, executable: setup, bottleID: bottle.id, source: source)
         start(game, transient: true)
         return game
     }
@@ -868,6 +872,11 @@ final class AppModel {
 
     /// The program's own folder goes with it (a clone on the bottles' disk); one in a shared folder
     /// such as Downloads goes alone.
+    /// A program the user picked: run where it is, or copied into the bottle first.
+    private func programSource(_ program: URL, bottle: Bottle) -> ProgramSource {
+        ProgramSource(format: program.pathExtension.lowercased(), install: needsImport(program, into: bottle) ? .copied : .inPlace)
+    }
+
     private func prepareProgram(_ program: URL, for bottle: Bottle) async -> URL? {
         guard needsImport(program, into: bottle) else { return program }
         let store = BottleStore(paths: paths)
@@ -1555,8 +1564,16 @@ final class AppModel {
         let hooksOff = !game.profile.modHooks
         let offline = bottle(for: game)?.role == .sandbox
         let found = await Task.detached(priority: .utility) {
-            let crash = ProblemReport.crash(inLog: log), dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
-            let dump = (result.status != 0 || !result.followed.isEmpty) && crash == nil && !result.crashed && dialog == nil
+            // winedbg's output for a GUI program is in the bottle's file (`ProblemReport.crash`): read
+            // once, then gone, so a later session can't report this crash again.
+            let crash = ProblemReport.crash(inLog: log, prefix: prefix, since: since)
+            ProblemReport.removeDebuggerOutput(prefix: prefix)
+            let dialog = result.status != 0 ? ProblemReport.errorDialog(inLog: log) : nil
+            // A crash without winedbg's backtrace: the program's own handler may have written a dump
+            // (Unity's does), which can name the module.
+            let wantsDump = (result.status != 0 || !result.followed.isEmpty) && crash == nil && !result.crashed && dialog == nil
+                || crash.map { !ProblemReport.hasBacktrace($0.backtrace) } == true
+            let dump = wantsDump
                 ? ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: since, executables: executables) : nil
             let others = program.map { Array(SetupFinder.otherPrograms(near: $0, helpers: false).prefix(3)) } ?? []
             let wrote = crash.flatMap { ProblemReport.writeAddress(inCrash: $0.summary) } ?? dump?.wrote
@@ -1575,8 +1592,10 @@ final class AppModel {
             // The sandbox denied the internet, and the program failed: that's the likely cause, not a bug to report.
             needsInternet = game
         } else if found.crash != nil || result.crashed {
+            // Only the dump's name: it holds the program's memory, and the issue is public.
+            let dump = found.dump.map { ["Crash dump: \($0.file)", "Crash dump exception: \($0.summary)"] } ?? []
             offer(ProblemReport(kind: .crash, title: "\(game.name) crashed", summary: found.crash?.summary ?? "Wine \(result.outcome).",
-                                details: reportDetails(for: game, backend: backend), backtrace: found.crash?.backtrace, log: found.tail),
+                                details: reportDetails(for: game, backend: backend) + dump, backtrace: found.crash?.backtrace, log: found.tail),
                   logFile: log, backend: backend, game: game, otherPrograms: found.others)
         } else if let dump = found.dump {
             // Only the dump's name: it holds the program's memory, and the issue is public.
@@ -1963,11 +1982,22 @@ final class AppModel {
                      "macOS: \(system.osVersion)",
                      "Mac: \(Hardware.model), \(Hardware.chip), \(Hardware.memoryGB) GB",
                      "Wine: \(runtimes.isEmpty ? "not installed" : runtimes.map(\.id).joined(separator: ", ")), engine pack \(EnginePack.current.version)",
-                     "Rosetta: \(hasRosetta ? "installed" : "not installed")"]
+                     "Rosetta: \(hasRosetta ? "installed" : "not installed")",
+                     "Advanced Mode: \(UserDefaults.standard.bool(forKey: Theme.advancedModeKey) ? "on" : "off")"]
         guard let game else { return lines }
         lines.append("Program: \(game.name)" + (game.store?.appID.map { " (Steam app \($0))" } ?? ""))
+        let started = installer.job?.setup?.id == game.id ? "an install's setup"
+            : sessions[game.id]?.isTransient == true && game.store == nil ? "Run Once" : "the library"
+        lines.append("Added from: " + (game.store != nil ? "Steam" : game.source?.description ?? "not recorded (added with an older Corkscrew)")
+                     + "; started from \(started)")
         if let bottle = bottle(for: game) {
-            lines.append("Bottle: \(bottle.name), Wine \(bottle.engineID), \(bottle.windowsVersion.rawValue), " + (bottle.kind == .isolated
+            let role = switch bottle.role {
+            case .steam: "Steam bottle"
+            case .sandbox: "Offline Programs bottle"
+            case .sandboxOnline: "Online Programs bottle"
+            case nil: "own bottle"
+            }
+            lines.append("Bottle: \(bottle.name) (\(role)), Wine \(bottle.engineID), \(bottle.windowsVersion.rawValue), " + (bottle.kind == .isolated
                 ? "protected, internet \(bottle.isolation.allowNetwork ? "on" : "off")" : "not protected"))
         }
         let profile = game.profile

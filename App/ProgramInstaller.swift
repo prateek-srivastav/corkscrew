@@ -39,6 +39,8 @@ final class ProgramInstaller {
         /// Shown above the step: why setup is offered again, and the like.
         var note: String?
         var discs: [DiscImage.Mounted] = []
+        /// What happened to a disc image in the download: put in the drive, or unpacked.
+        var disc: ProgramSource.Disc?
         var candidates: [SetupFinder.Candidate] = []
         /// The bottle's programs and shortcuts before the setup ran.
         var snapshot: [String: Date] = [:]
@@ -47,6 +49,10 @@ final class ProgramInstaller {
         var originalDeleted = false
 
         var source: URL { parts[0] }
+        /// How a program from this download came in, for reports.
+        func programSource(_ install: ProgramSource.Install) -> ProgramSource {
+            ProgramSource(format: ProgramSource.format(of: source), parts: parts.count, install: install, disc: disc)
+        }
         /// A disc image picked on its own, not an archive.
         var isDiscImage: Bool { parts.count == 1 && Archive.isDiscImage(source) }
         /// "Game" for Game.part1.rar, Game.7z.001 or Game.iso.
@@ -161,6 +167,7 @@ final class ProgramInstaller {
     func useDiscs(_ images: [URL], mount: Bool) {
         guard let job, let prefix, let folder = setupFolder else { return }
         self.job?.step = .preparingDisc(mounting: mount)
+        self.job?.disc = mount ? .mounted : .unpacked
         let deletesOriginal = job.isDiscImage && job.original == .move
         run { [weak self] in
             if mount {
@@ -212,7 +219,7 @@ final class ProgramInstaller {
         run { [weak self] in
             guard let self else { return }
             self.job?.snapshot = await Self.offMain { SetupFinder.snapshot(prefix: prefix) }
-            let setup = model.runSetup(installer, in: bottle, name: "Setup – \(name)")
+            let setup = model.runSetup(installer, in: bottle, name: "Setup – \(name)", source: job.programSource(.setup))
             self.job?.setup = setup
             await model.session(for: setup)?.task?.value
             if case .failed(let message) = model.session(for: setup)?.status {
@@ -267,7 +274,8 @@ final class ProgramInstaller {
             // Installed again over itself: the library has it already.
             let path = program.standardizedFileURL.path.lowercased()
             if !model.games.contains(where: { $0.bottleID == bottle.id && $0.executable.standardizedFileURL.path.lowercased() == path }) {
-                await model.addToLibrary(program, bottle: bottle, name: name.isEmpty ? nil : name)
+                await model.addToLibrary(program, bottle: bottle, name: name.isEmpty ? nil : name,
+                                         source: job?.programSource(.setup))
             }
             done()
         }
@@ -319,7 +327,7 @@ final class ProgramInstaller {
                 return inside.dropFirst(inside.count > 1 ? 1 : 0).reduce(target) { $0.appending(path: $1) }
             }
             await cleanUp(deletingOriginal: true)
-            await model.addToLibrary(kept, bottle: bottle, name: Game.defaultName(for: kept))
+            await model.addToLibrary(kept, bottle: bottle, name: Game.defaultName(for: kept), source: job.programSource(.gameFolder))
             done()
         }
     }

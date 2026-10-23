@@ -136,4 +136,26 @@ struct LibraryTests {
             #expect(LaunchLogs.list(for: id, paths: paths).map(\.lastPathComponent) == [newer, older])
         }
     }
+
+    /// Reports say how a program came in: an .exe, or a download and what its install did.
+    @Test func programSourceSaysHowAProgramCameIn() throws {
+        #expect(ProgramSource.format(of: URL(fileURLWithPath: "/d/Game.part1.rar")) == "rar")
+        #expect(ProgramSource.format(of: URL(fileURLWithPath: "/d/Game.r00")) == "rar")
+        #expect(ProgramSource.format(of: URL(fileURLWithPath: "/d/Game.7z.001")) == "7z")
+        #expect(ProgramSource.format(of: URL(fileURLWithPath: "/d/Game.ISO")) == "iso")
+        #expect(ProgramSource(format: "exe", install: .copied).description == "a .exe, copied into the bottle")
+        #expect(ProgramSource(format: "exe", install: .inPlace).description == "a .exe, run where it was")
+        #expect(ProgramSource(format: "rar", parts: 3, install: .setup, disc: .mounted).description
+                == "a .rar in 3 parts, setup run from the disc in the drive")
+        #expect(ProgramSource(format: "iso", install: .gameFolder, disc: .unpacked).description
+                == "a .iso, no setup: game folder kept from the disc's unpacked files")
+
+        // Saved with the library; entries from before have none.
+        let game = Game(name: "Demo", executable: URL(fileURLWithPath: "/Demo.exe"), bottleID: UUID(),
+                        source: ProgramSource(format: "zip", install: .gameFolder))
+        #expect(try JSONDecoder().decode(Game.self, from: JSONEncoder().encode(game)) == game)
+        var old = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(game)) as? [String: Any])
+        old["source"] = nil
+        #expect(try JSONDecoder().decode(Game.self, from: JSONSerialization.data(withJSONObject: old)).source == nil)
+    }
 }
