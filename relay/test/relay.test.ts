@@ -124,8 +124,9 @@ function send(
 	return worker.fetch(request, options.environment ?? env);
 }
 
+/** The kept reports, shares and replies, without the `issues/` links to them. */
 async function stored(): Promise<string[]> {
-	return (await env.REPORTS.list()).objects.map((object) => object.key);
+	return (await env.REPORTS.list()).objects.map((object) => object.key).filter((key) => !key.startsWith("issues/"));
 }
 
 describe("a report", () => {
@@ -158,8 +159,11 @@ describe("a report", () => {
 		for (const detail of report.details) expect(body).toContain(detail);
 		expect(body).toContain("=>0 0x0000000140001234 in example (+0x1234)");
 		expect(body).toContain("14 more lines in the stored report.");
-		expect(body).toContain(`is stored privately under id \`${answer.id}\``);
-		expect(body).toContain("the whole backtrace, the end of the log, a note from the user");
+		expect(body).toContain("the whole backtrace, the end of the log, a note from the user) is stored privately.");
+		// Only the link the relay keeps names the private copy; the public issue doesn't.
+		expect(body).not.toContain(answer.id);
+		const link = await env.REPORTS.get("issues/42.json");
+		expect(JSON.parse(await link!.text())).toEqual({ issue: 42, kept: `reports/${answer.id}.json` });
 		// The module list, the log and the note stay private.
 		expect(body).not.toContain("Deferred        kernel32");
 		expect(body).not.toContain("example_log_line_only_in_r2");
@@ -174,7 +178,7 @@ describe("a report", () => {
 		const { body } = github[0].body;
 		expect(body).not.toContain("### Backtrace");
 		expect(body).toContain("**Error in Corkscrew**");
-		expect(body).toContain("The full report is stored privately under id");
+		expect(body).toContain("The full report is stored privately.");
 	});
 
 	it("is read as Swift's JSONEncoder writes it", async () => {
@@ -193,6 +197,7 @@ describe("a report", () => {
 		const answer = await response.json<{ issue?: string; id: string }>();
 		expect(answer.issue).toBeUndefined();
 		expect(await stored()).toEqual([`reports/${answer.id}.json`]);
+		expect(await env.REPORTS.get("issues/42.json")).toBeNull();
 	});
 });
 
@@ -321,6 +326,7 @@ describe("shared settings", () => {
 		expect(answer.issue).toBe(issueLink);
 		expect(await stored()).toEqual([`settings/${answer.id}.json`]);
 		expect(JSON.parse(await (await env.REPORTS.get(`settings/${answer.id}.json`))!.text()).report).toEqual(share);
+		expect(JSON.parse(await (await env.REPORTS.get("issues/42.json"))!.text()).kept).toBe(`settings/${answer.id}.json`);
 
 		expect(github).toHaveLength(1);
 		expect(github[0].body.title).toBe("Untested Game: plays well");
@@ -437,7 +443,7 @@ describe("a reply", () => {
 		const response = await send({ ...reply, key: await replyKey(42, "test-key") }, { path: "/reply" });
 		expect(response.status).toBe(201);
 		const { id } = await response.json<{ id: string }>();
-		const saved = JSON.parse(await (await env.REPORTS.get(`replies/${id}.json`))!.text());
+		const saved = JSON.parse(await (await env.REPORTS.get(`replies/42/${id}.json`))!.text());
 		expect(saved.issue).toBe(42);
 		expect(saved.verified).toBe(true);
 		expect(saved.reply.text).toBe(reply.text);
@@ -448,18 +454,31 @@ describe("a reply", () => {
 		expect(check.url).toBe("https://api.github.com/repos/Prateek-Srivastav/corkscrew/issues/42");
 		expect(comment.url).toBe("https://api.github.com/repos/Prateek-Srivastav/corkscrew/issues/42/comments");
 		expect(comment.body.body).toContain("**The sender answered**, with 1 launch log");
-		expect(comment.body.body).toContain(`stored privately under id \`${id}\``);
+		expect(comment.body.body).toContain("The answer is stored privately.");
+		expect(comment.body.body).not.toContain(id);
+		expect(JSON.parse(await (await env.REPORTS.get("issues/42.json"))!.text())).toEqual({ issue: 42, replies: [`replies/42/${id}.json`] });
 		expect(comment.body.body).not.toContain("may not be from");
 		// The answer and the logs stay private.
 		expect(comment.body.body).not.toContain("disc image");
 		expect(comment.body.body).not.toContain("log_line_only_in_r2");
 	});
 
+	it("is added to the issue's link next to the report", async () => {
+		const sent = await (await send(report)).json<{ id: string; key: string }>();
+		const first = await (await send({ ...reply, key: sent.key }, { path: "/reply" })).json<{ id: string }>();
+		const second = await (await send({ ...reply, key: sent.key }, { path: "/reply" })).json<{ id: string }>();
+		expect(JSON.parse(await (await env.REPORTS.get("issues/42.json"))!.text())).toEqual({
+			issue: 42,
+			kept: `reports/${sent.id}.json`,
+			replies: [`replies/42/${first.id}.json`, `replies/42/${second.id}.json`],
+		});
+	});
+
 	it("without a key is taken, but marked as unchecked", async () => {
 		const response = await send({ ...reply, logs: [] }, { path: "/reply" });
 		expect(response.status).toBe(201);
 		const { id } = await response.json<{ id: string }>();
-		expect(JSON.parse(await (await env.REPORTS.get(`replies/${id}.json`))!.text()).verified).toBe(false);
+		expect(JSON.parse(await (await env.REPORTS.get(`replies/42/${id}.json`))!.text()).verified).toBe(false);
 		const comment = github.at(-1)!.body.body;
 		expect(comment).toContain("**The sender answered**, with Reply");
 		expect(comment).toContain("may not be from the person who sent the report");
@@ -725,7 +744,7 @@ describe("the issue", () => {
 	it("keeps the report's text in code blocks it can't close", () => {
 		expect(codeBlock("a ``` b")).toBe("````text\na ``` b\n````");
 		expect(codeBlock("plain")).toBe("```text\nplain\n```");
-		const { title, body } = issueFor(parseReport({ ...report, title: "Example\ncrashed\u0007", summary: "@someone ```" }), "id");
+		const { title, body } = issueFor(parseReport({ ...report, title: "Example\ncrashed\u0007", summary: "@someone ```" }));
 		expect(title).toBe("Example crashed");
 		expect(body).toContain("````text\n@someone ```\n````");
 	});

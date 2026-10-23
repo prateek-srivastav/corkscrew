@@ -34,7 +34,7 @@ interface Route {
 	labels: string[];
 	/** The answer gives the issue's reply key (POST /reply). */
 	repliable?: boolean;
-	read(value: unknown): { kind: string; device?: string; issue(id: string): { title: string; body: string } };
+	read(value: unknown): { kind: string; device?: string; issue(): { title: string; body: string } };
 }
 
 const routes = new Map<string, Route>([
@@ -44,7 +44,7 @@ const routes = new Map<string, Route>([
 		repliable: true,
 		read(value) {
 			const report = parseReport(value);
-			return { kind: report.kind, device: report.device, issue: (id) => issueFor(report, id) };
+			return { kind: report.kind, device: report.device, issue: () => issueFor(report) };
 		},
 	}],
 	["/settings", {
@@ -130,9 +130,10 @@ export default {
 		}
 		try {
 			const token = app !== undefined ? await installationToken(app) : env.GITHUB_TOKEN!;
-			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token }, report.issue(id), route.labels);
+			const issue = await openIssue({ repository: env.GITHUB_REPOSITORY, token }, report.issue(), route.labels);
 			await link(issue);
 			const number = issueNumber(issue);
+			if (number !== undefined) await pointTo(env, number, `${route.folder}/${id}.json`, "kept");
 			if (route.repliable && number !== undefined) return answer(201, { issue, id, key: await replyKey(number, env.RATE_LIMIT_KEY) });
 			return answer(201, { issue, id });
 		} catch (error) {
@@ -182,7 +183,7 @@ async function device(request: Request, env: Env): Promise<Response> {
 
 /**
  * POST /reply: the sender's answer to the developer's note, with launch logs if they chose. The
- * answer and the logs are kept privately in R2 (`replies/<id>.json`), and a comment on the issue
+ * answer and the logs are kept privately in R2 (`replies/<issue>/<id>.json`), and a comment on the issue
  * says there is one. Only an open issue with the `crash-report` label takes replies. A reply with
  * the report's key is checked; one without (reports from 1.0.2 and older) is taken but marked as
  * unchecked. Shares the hourly limit with reports, and the daily limit with issues. Answers 201
@@ -231,10 +232,11 @@ async function reply(request: Request, env: Env): Promise<Response> {
 	}
 
 	const id = crypto.randomUUID();
-	await env.REPORTS.put(`replies/${id}.json`, JSON.stringify({ id, received: new Date(now).toISOString(), issue: value.issue, verified, reply: value }, null, 2), {
+	await env.REPORTS.put(`replies/${value.issue}/${id}.json`, JSON.stringify({ id, received: new Date(now).toISOString(), issue: value.issue, verified, reply: value }, null, 2), {
 		httpMetadata: { contentType: "application/json" },
 		customMetadata: { issue: String(value.issue), verified: String(verified) },
 	});
+	await pointTo(env, value.issue, `replies/${value.issue}/${id}.json`, "replies");
 	if (github === undefined) return answer(202, { id });
 
 	const today = windowAt(now, day);
@@ -244,11 +246,26 @@ async function reply(request: Request, env: Env): Promise<Response> {
 		return answer(202, { id });
 	}
 	try {
-		await commentOnIssue(github, value.issue, replyComment(value, id, verified));
+		await commentOnIssue(github, value.issue, replyComment(value, verified));
 		return answer(201, { id });
 	} catch (error) {
 		console.error(`Reply ${id} kept without a comment: ${error instanceof Error ? error.message : error}`);
 		return answer(202, { id });
+	}
+}
+
+/** Keeps `issues/<number>.json` with the R2 keys of the issue's private copies: `kept` for the report
+ * or the shared settings, `replies` for the sender's answers. The public issue names neither, so the
+ * maintainer finds them by the issue's number. */
+async function pointTo(env: Env, issue: number, key: string, as: "kept" | "replies"): Promise<void> {
+	const name = `issues/${issue}.json`;
+	try {
+		const link: { issue: number; kept?: string; replies?: string[] } = (await (await env.REPORTS.get(name))?.json()) ?? { issue };
+		if (as === "kept") link.kept = key;
+		else link.replies = [...(link.replies ?? []), key];
+		await env.REPORTS.put(name, JSON.stringify(link), { httpMetadata: { contentType: "application/json" } });
+	} catch (error) {
+		console.error(`Issue ${issue} has no link to ${key}: ${error instanceof Error ? error.message : error}`);
 	}
 }
 
