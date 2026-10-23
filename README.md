@@ -69,7 +69,7 @@ curl -fsSL https://prateek-srivastav.github.io/corkscrew/install.sh | DO_NOT_TRA
 
 ### Crash and error reports
 
-When a program crashes, quits after an error message, or doesn't start, or Corkscrew itself quits unexpectedly, Corkscrew shows a report. For a crash that only the program's own handler caught, the report has the exception from its crash dump; the dump itself is never sent. An error message has a **Report…** button too. The report has what happened, the Corkscrew, macOS and Wine versions, the Mac, the bottle, the program's graphics and settings, Wine's backtrace and the end of the log. Your home folder shows as `~` and your user name as `<user>`.
+When a program crashes, quits after an error message, or doesn't start, or Corkscrew itself quits unexpectedly, Corkscrew shows a report. For a crash that only the program's own handler caught, or when Wine's backtrace is missing, the report has the exception from its crash dump; the dump itself is never sent. An error message has a **Report…** button too. The report has what happened, the Corkscrew, macOS and Wine versions, the Mac, the bottle, the program's graphics and settings, whether Advanced mode is on, how the program was added to Corkscrew, Wine's backtrace and the end of the log. Your home folder shows as `~` and your user name as `<user>`.
 
 A program in Offline Programs that tried to reach the internet and then crashed or quit with an error gets no report. Corkscrew says it needs the internet and offers to move it to Online Programs: it copies the program's folder there and points the library entry at the copy. The files in Offline Programs stay. A program that a setup installed may need its setup run again in Online Programs.
 
@@ -77,7 +77,7 @@ Nothing is sent until you click. **Send Report** sends the report to Corkscrew's
 
 When the relay opens an issue, Corkscrew keeps its number and the report's title on your Mac. Each time it opens, it reads [the fix list](docs/fixes.json) from GitHub, and tells you once when this version or the next update fixes your report. A fix that many may have hit is told once to everyone whose version has it.
 
-Corkscrew turns off Wine's crash dialog in each bottle, so Wine writes the backtrace into the launch log (**Show Log**) instead of a `backtrace.txt` you would have to save from the dialog.
+Corkscrew turns off Wine's crash dialog in each bottle and has Wine's debugger write its backtrace to a file in the bottle (`C:\windows\temp\winedbg.txt`), which the report reads and then deletes. A program with a window has no console, so the debugger would otherwise lose its output. You don't have to save a `backtrace.txt` from the dialog.
 
 ### Share settings that work
 
