@@ -1691,6 +1691,8 @@ final class AppModel {
     private(set) var reportsChecked = false
     /// Raised by a click on a report notification: ContentView opens the Reports page.
     var reportsToOpen = 0
+    /// The check at launch, every half hour and on a click on Reports: never two at once.
+    @ObservationIgnored private let reportsCheck = OneAtATime()
 
     /// A report whose fix the user can get, or a fix for everyone in this version: the app's own
     /// popup says what was wrong and what changed, once.
@@ -1855,11 +1857,20 @@ final class AppModel {
             await updateCheck?.value
             var wasSetUp = wasSetUp
             while let self {
-                await self.checkReports(wasSetUp: wasSetUp)
+                let setUp = wasSetUp
+                await self.reportsCheck.run { await self.checkReports(wasSetUp: setUp) }
                 wasSetUp = true
                 try? await Task.sleep(for: Self.reportsCheckInterval)
             }
         }
+    }
+
+    /// Reads the fix list and the tracked issues again: a click on Reports in the sidebar. A check
+    /// that runs already is waited for. Before the first check (it waits for the update check) it
+    /// does nothing; that check's news comes soon.
+    func checkReportsNow() async {
+        guard reportsChecked else { return }
+        await reportsCheck.run { [weak self] in await self?.checkReports(wasSetUp: true) }
     }
 
     private func checkReports(wasSetUp: Bool) async {
