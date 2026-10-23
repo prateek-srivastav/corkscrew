@@ -284,10 +284,11 @@ public struct BottleStore: Sendable {
     }
 
     /// What the first launch would otherwise set, each in a Wine session of its own that it then waits
-    /// out (5 s before Steam's first start): Wine's crash dialog off, and mode emulation as the default
-    /// Retina mode wants it. `create` writes them in the session `wineboot --init` started.
+    /// out (5 s before Steam's first start): Wine's crash dialog off and its debugger writing to a file,
+    /// and mode emulation as the default Retina mode wants it. `create` writes them in the session
+    /// `wineboot --init` started.
     static func launchSettings(engine: Engine) -> [(arguments: [String], log: String)] {
-        var settings = [(CrashDialog.command, "crash-dialog")]
+        var settings = CrashDialog.commands.enumerated().map { ($1, "crash-dialog-\($0)") }
         if let emulation = ModeEmulation.wanted(retinaMode: GameProfile().retinaMode, engine: engine) {
             settings.append((ModeEmulation.command(enabled: emulation), "mode-emulation"))
         }

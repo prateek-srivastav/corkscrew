@@ -143,8 +143,35 @@ public struct ProblemReport: Sendable, Equatable, Codable {
     /// The last crash in a launch log: Wine's "Unhandled …" line and winedbg's backtrace after it,
     /// up to its system information. Reads only the end of the file (launch logs can be hundreds
     /// of MB with Wine's debug channels on). Nil when the program didn't crash.
-    public static func crash(inLog url: URL, maxBytes: Int = 4 << 20) -> (summary: String, backtrace: String)? {
-        tail(of: url, maxBytes: maxBytes).flatMap(crash(in:))
+    ///
+    /// winedbg's output is in the log only for console programs of bottles older than the debugger
+    /// setting (`CrashDialog`); otherwise it's in the bottle's file, read when written since `since`.
+    public static func crash(inLog url: URL, prefix: URL? = nil, since: Date = .distantPast,
+                             maxBytes: Int = 4 << 20) -> (summary: String, backtrace: String)? {
+        guard let crash = tail(of: url, maxBytes: maxBytes).flatMap(crash(in:)) else { return nil }
+        guard !hasBacktrace(crash.backtrace), let prefix,
+              let output = debuggerOutput(prefix: prefix, since: since, maxBytes: maxBytes) else { return crash }
+        // Wine's own line (summary) from the log, then winedbg's block from the file.
+        return (crash.summary, crash.summary + "\n" + output.backtrace)
+    }
+
+    /// The last crash in winedbg's file (`CrashDialog.output`), when it was written since `since`.
+    static func debuggerOutput(prefix: URL, since: Date, maxBytes: Int = 4 << 20) -> (summary: String, backtrace: String)? {
+        let file = CrashDialog.output(prefix: prefix)
+        guard let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, date >= since,
+              let crash = tail(of: file, maxBytes: maxBytes).flatMap(crash(in:)), hasBacktrace(crash.backtrace) else { return nil }
+        return crash
+    }
+
+    /// Removes winedbg's file once a session's crash was looked for, so a later report can't show
+    /// this crash again.
+    public static func removeDebuggerOutput(prefix: URL) {
+        try? FileManager.default.removeItem(at: CrashDialog.output(prefix: prefix))
+    }
+
+    /// Whether a crash block has winedbg's backtrace, not only Wine's "Unhandled …" line.
+    public static func hasBacktrace(_ block: String) -> Bool {
+        block.contains("Backtrace:")
     }
 
     /// Lines that start a crash in Wine's output.

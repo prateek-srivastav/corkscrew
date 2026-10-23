@@ -338,4 +338,123 @@ struct ProblemReportTests {
             #expect(CrashDialog.command == ["reg", "add", #"HKCU\Software\Wine\WineDbg"#, "/v", "ShowCrashDialog", "/t", "REG_DWORD", "/d", "0", "/f"])
         }
     }
+
+    /// Wine's default debugger gets a new console for a GUI program, so its output missed the log
+    /// (issues #55 and #64). Both registry views get the one that writes to a file.
+    @Test func debuggerSettingIsReadFromTheBottle() throws {
+        try withTempDir { prefix in
+            let keys = [#"HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug"#,
+                        #"HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug"#]
+            let debugger = keys.map {
+                ["reg", "add", $0, "/v", "Debugger", "/t", "REG_SZ", "/d", #"cmd /c winedbg --auto %ld %ld >>C:\windows\temp\winedbg.txt 2>&1"#, "/f"]
+            }
+            #expect(CrashDialog.commands == [CrashDialog.command] + debugger)
+            #expect(CrashDialog.missingCommands(prefix: prefix) == CrashDialog.commands)
+            #expect(CrashDialog.output(prefix: prefix).path == prefix.appending(path: "drive_c/windows/temp/winedbg.txt").path)
+
+            // A bottle from before: Wine's default in both views, the dialog already off.
+            try "WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\WineDbg] 1792000000\n\"ShowCrashDialog\"=dword:00000000\n"
+                .write(to: prefix.appending(path: "user.reg"), atomically: true, encoding: .utf8)
+            func system(_ debuggers: [String]) throws {
+                let sections = zip(CrashDialog.debuggerKeys, debuggers).map { key, debugger in
+                    "[\(key.replacingOccurrences(of: #"\"#, with: #"\\"#))] 1792447993\n#time=1dd601708b288b6\n\"Auto\"=\"1\"\n\"Debugger\"=\"\(debugger)\"\n"
+                }
+                try ("WINE REGISTRY Version 2\n\n" + sections.joined(separator: "\n"))
+                    .write(to: prefix.appending(path: "system.reg"), atomically: true, encoding: .utf8)
+            }
+            try system(["winedbg --auto %ld %ld", "winedbg --auto %ld %ld"])
+            #expect(CrashDialog.missingCommands(prefix: prefix) == debugger)
+            // As Wine saves it: backslashes escaped.
+            let saved = #"cmd /c winedbg --auto %ld %ld >>C:\\windows\\temp\\winedbg.txt 2>&1"#
+            try system([saved, "winedbg --auto %ld %ld"])
+            #expect(CrashDialog.missingCommands(prefix: prefix) == [debugger[1]])
+            try system([saved, saved])
+            #expect(CrashDialog.missingCommands(prefix: prefix).isEmpty)
+        }
+    }
+
+    /// What a GUI program's crash leaves in the launch log: Wine's line, then only the fixmes of
+    /// the console winedbg got (issue #64).
+    static let crashWithoutDebugger = """
+        0024:fixme:d3d:CreateSwapChain unsupported swap effect 3
+        wine: Unhandled division by zero at address 782560CF (thread 00d4), starting debugger...
+        00d8:fixme:conhost:init_tty_output unsupported
+        00e0:fixme:process:get_thread_times not implemented
+        """
+
+    @Test func readsWinedbgsFileWhenTheLogHasNoBacktrace() throws {
+        try withTempDir { prefix in
+            let log = prefix.appending(path: "launch.log"), output = CrashDialog.output(prefix: prefix)
+            try log.write(Self.crashWithoutDebugger)
+            let launched = Date.now - 60
+
+            // No file (a bottle without the setting yet): Wine's line, as before.
+            let alone = try #require(ProblemReport.crash(inLog: log, prefix: prefix, since: launched))
+            #expect(alone.summary == "wine: Unhandled division by zero at address 782560CF (thread 00d4), starting debugger...")
+            #expect(!ProblemReport.hasBacktrace(alone.backtrace))
+
+            // A Steam web helper crash earlier, then the program's.
+            let helper = Self.crash.replacingOccurrences(of: "in game", with: "in libcef")
+            try output.write((helper + "\n" + Self.crash).replacingOccurrences(of: "\n", with: "\r\n"))
+            let crash = try #require(ProblemReport.crash(inLog: log, prefix: prefix, since: launched))
+            #expect(crash.summary == alone.summary)
+            #expect(crash.backtrace.hasPrefix(alone.summary + "\nUnhandled exception: page fault"))
+            #expect(crash.backtrace.contains("=>0 0x00000001428aa602 in game (+0x28aa602)"))
+            #expect(crash.backtrace.hasSuffix("Host version: 25.0.0"))
+            #expect(!crash.backtrace.contains("libcef") && !crash.backtrace.contains("conhost"))
+            #expect(ProblemReport.hasBacktrace(crash.backtrace))
+
+            // Without a log line, the file alone isn't a crash of this program.
+            let quiet = prefix.appending(path: "quiet.log")
+            try quiet.write("0024:fixme:heap:RtlSetHeapInformation\n")
+            #expect(ProblemReport.crash(inLog: quiet, prefix: prefix, since: launched) == nil)
+
+            // Older than the launch: another session's crash.
+            try FileManager.default.setAttributes([.modificationDate: launched - 3_600], ofItemAtPath: output.path)
+            #expect(ProblemReport.crash(inLog: log, prefix: prefix, since: launched)?.backtrace == alone.backtrace)
+
+            // Only the web helper's crash in the file.
+            try output.write(helper)
+            #expect(ProblemReport.crash(inLog: log, prefix: prefix, since: launched)?.backtrace == alone.backtrace)
+
+            ProblemReport.removeDebuggerOutput(prefix: prefix)
+            #expect(!FileManager.default.fileExists(atPath: output.path))
+            ProblemReport.removeDebuggerOutput(prefix: prefix)
+        }
+    }
+
+    /// A console program's crash (or a bottle without the setting): the log has winedbg's block,
+    /// which is reported once, without the file's copy.
+    @Test func logsOwnBacktraceComesFirst() throws {
+        try withTempDir { prefix in
+            let log = prefix.appending(path: "launch.log")
+            try log.write(Self.crash)
+            try CrashDialog.output(prefix: prefix).write(Self.crash.replacingOccurrences(of: "in game", with: "in other"))
+            let crash = try #require(ProblemReport.crash(inLog: log, prefix: prefix))
+            #expect(crash == (try #require(ProblemReport.crash(in: Self.crash))))
+            #expect(crash.backtrace.components(separatedBy: "Backtrace:").count == 2)
+        }
+    }
+
+    /// Unity's crash handler (UnityCrashHandler32.exe) writes the game's dump to
+    /// `%TEMP%\<Company>\<Product>\Crashes`; the report names it when winedbg's backtrace is missing.
+    /// The handler's own dump starts with the handler, so it isn't the game's.
+    @Test func findsUnitysCrashDump() throws {
+        try withTempDir { prefix in
+            let exe = prefix.appending(path: "drive_c/Games/Kairo/KairoGames.exe")
+            let game = Game(name: "Kairo", executable: exe, bottleID: UUID())
+            let crashes = prefix.appending(path: "drive_c/users/crossover/AppData/Local/Temp/Kairosoft/Game/Crashes/Crash_2026-10-23_101500")
+            let modules: [(path: String, base: UInt64, size: UInt32)] = [
+                (#"C:\Games\Kairo\KairoGames.exe"#, 0x40_0000, 0x10_0000), (#"C:\Games\Kairo\UnityPlayer.dll"#, 0x7800_0000, 0x200_0000)]
+            let handler = [(path: #"C:\Games\Kairo\UnityCrashHandler32.exe"#, base: UInt64(0x40_0000), size: UInt32(0x10_0000))]
+            try crashes.appending(path: "crash.dmp").write(Self.minidump(modules, exception: (0xc000_0094, 0x7825_60cf)))
+            try crashes.appending(path: "handler.dmp").write(Self.minidump(handler, exception: (0xc000_0094, 0x7825_60cf)))
+            let found = ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: .now - 60,
+                                                executables: ["KairoGames.exe"])
+            #expect(found?.summary == "Integer division by zero (c0000094) at UnityPlayer.dll+0x2560cf")
+            #expect(found?.file == "crash.dmp")
+            #expect(ProblemReport.crashDump(in: ProblemReport.dumpFolders(for: game, prefix: prefix), since: .now - 60,
+                                            executables: ["UnityCrashHandler64.exe"]) == nil)
+        }
+    }
 }

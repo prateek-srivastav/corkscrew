@@ -198,7 +198,7 @@ public enum Launcher {
             notes.append("Sized Red Dead Redemption 2's window to the \(desktop.width)×\(desktop.height) desktop.")
         }
         // After Retina mode, which reads whether the bottle runs: this starts a short Wine session.
-        await CrashDialog.turnOff(in: context, log: logs.appending(path: "crash-dialog.log"))
+        await CrashDialog.apply(in: context, log: logs.appending(path: "crash-dialog.log"))
         return Prepared(plan: plan, context: context, log: logs.appending(path: LaunchLogs.fileName(startedAt: startedAt)),
                         inspection: inspection, notes: notes, steamGame: steamGame, steamWindowCounter: steamWindowCounter,
                         steamWebHelperWrapper: Steam.isClient(executable) ? steamWebHelperWrapper : nil,
