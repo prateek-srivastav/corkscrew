@@ -116,11 +116,14 @@ private struct ReportCard: View {
         withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
     }
 
-    /// The developer's notes and the user's replies, newest first.
+    /// The developer's notes and the user's replies, oldest first, so the newest sits by the Reply button.
+    /// Equal dates keep their order: notes, then replies, each as stored.
     private var thread: [Message] {
         let notes = (report.issue?.notes ?? []).map(Message.note)
         let replies = (report.replies ?? []).map(Message.reply)
-        return (notes + replies).sorted { $0.date > $1.date }
+        return (notes + replies).enumerated()
+            .sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }
+            .map(\.element)
     }
 
     private enum Message: Identifiable {
@@ -187,7 +190,7 @@ private struct NoteView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("From the developer · \(note.date.formatted(date: .abbreviated, time: .omitted))")
+            Text("From the developer · \(note.date.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(Self.markdown(note.text))
@@ -210,7 +213,7 @@ private struct ReplyView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("You · \(reply.date.formatted(date: .abbreviated, time: .omitted))"
+            Text("You · \(reply.date.formatted(date: .abbreviated, time: .shortened))"
                  + (reply.logs == 0 ? "" : " · \(reply.logs == 1 ? "1 launch log" : "\(reply.logs) launch logs")"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)

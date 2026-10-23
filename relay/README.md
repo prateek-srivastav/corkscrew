@@ -11,7 +11,8 @@ answers to the developer's notes (`POST /reply`, see [Replies](#replies)). It al
    under a random id;
 3. opens a public GitHub issue with a summary: the title, the summary line, the details and the start
    of the backtrace, labelled `bug` and `crash-report`. The issue says the full report is stored
-   privately under its id. A GitHub App opens it, so the author is the app's bot (for example
+   privately, but not where: the relay keeps `issues/<number>.json` in R2 with the copy's key. A
+   GitHub App opens it, so the author is the app's bot (for example
    `corkscrew-reports[bot]`), not a person;
 4. answers the app with the issue's link and the report's reply key.
 
@@ -32,8 +33,8 @@ anyone could answer for any report. Reports from Corkscrew 1.0.2 and older have 
 are kept with `verified: false`, and the issue comment says they may not be from the sender.
 
 The relay answers 403 for a wrong key, and 404 unless the issue is open and has `crash-report`. It
-keeps the reply in R2 under `replies/<id>.json` and adds a comment to the issue that the sender
-answered, with the id. The answer and the logs are not in the comment. It answers 201 `{"id": "<id>"}`,
+keeps the reply in R2 under `replies/<issue>/<id>.json` and adds a comment to the issue that the
+sender answered. The answer, the logs and the id are not in the comment. It answers 201 `{"id": "<id>"}`,
 or 202 when it couldn't comment (GitHub failed, or the day's issue limit is reached). Replies count
 against the same hourly limit as reports. The app keeps its own copy of each answer and shows it on
 the card.
@@ -234,22 +235,21 @@ missing, and uses the app when all three are set. To move:
 
 ## Read a stored report
 
-The issue gives the id. Get the report with:
+The issue doesn't name its private copies. `issues/<number>.json` gives their keys: `kept` for the
+report (`reports/<id>.json`, or `settings/<id>.json` for shared settings) and `replies` for the
+sender's answers (`replies/<number>/<id>.json`):
 
 ```bash
+npx wrangler r2 object get corkscrew-reports/issues/<number>.json --remote --pipe
 npx wrangler r2 object get corkscrew-reports/reports/<id>.json --remote --file report.json
 ```
 
 Or open **R2 → corkscrew-reports → reports/** in the Cloudflare dashboard. The file holds the id, the
-time the relay received it and the report as the app sent it. Shared settings are under `settings/`.
+time the relay received it and the report as the app sent it. Issues opened before 2026-10-23 have no
+`issues/` file; their body gives the id instead.
 
-The issue comment for a reply gives its id:
-
-```bash
-npx wrangler r2 object get corkscrew-reports/replies/<id>.json --remote --file reply.json
-```
-
-The file holds the id, the time, the issue, `verified` and the reply as the app sent it.
+A reply's file holds the id, the time, the issue, `verified` and the reply as the app sent it.
+Replies kept before 2026-10-23 are `replies/<id>.json`, with the id in the issue comment.
 
 ## Read device data
 

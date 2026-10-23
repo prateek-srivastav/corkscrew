@@ -16,7 +16,7 @@ const kindNames: Record<Kind, string> = {
 /** The public issue for a report: what happened, the details and the start of the backtrace. The
  * note and the log stay private. Everything from the report is in code blocks, so it can't
  * mention people or render as Markdown. */
-export function issueFor(report: ProblemReport, id: string): { title: string; body: string } {
+export function issueFor(report: ProblemReport): { title: string; body: string } {
 	const parts = [`**${kindNames[report.kind]}**, reported ${new Date(report.date).toISOString()} with Send Report in Corkscrew.`];
 	if (report.summary.trim() !== "") parts.push(codeBlock(report.summary.trim()));
 	parts.push("### Details", codeBlock(report.details.join("\n")));
@@ -32,7 +32,7 @@ export function issueFor(report: ProblemReport, id: string): { title: string; bo
 	].filter((part): part is string => part !== false);
 	parts.push(
 		"---",
-		`The full report${kept.length > 0 ? ` (${kept.join(", ")})` : ""} is stored privately under id \`${id}\`.`,
+		`The full report${kept.length > 0 ? ` (${kept.join(", ")})` : ""} is stored privately.`,
 	);
 	return { title: oneLine(report.title).slice(0, 256), body: parts.join("\n\n") };
 }

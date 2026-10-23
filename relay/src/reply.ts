@@ -60,9 +60,9 @@ export function issueNumber(link: string): number | undefined {
 }
 
 /** The public comment for a reply. The answer and the logs stay private. */
-export function replyComment(reply: Reply, id: string, verified: boolean): string {
+export function replyComment(reply: Reply, verified: boolean): string {
 	const logs = reply.logs.length === 0 ? "" : `, with ${reply.logs.length} launch ${reply.logs.length === 1 ? "log" : "logs"}`;
-	const parts = [`**The sender answered**${logs}, with Reply in Corkscrew. The answer is stored privately under id \`${id}\`.`];
+	const parts = [`**The sender answered**${logs}, with Reply in Corkscrew. The answer is stored privately.`];
 	if (!verified) {
 		parts.push("It came without the report's key (Corkscrew 1.0.2 and older don't keep one), so it may not be from the person who sent the report.");
 	}
