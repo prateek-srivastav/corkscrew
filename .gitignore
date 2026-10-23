@@ -13,3 +13,5 @@ xcuserdata/
 /.claude/
 /.memory/
 /.resources/
+/.agents/
+/skills-lock.json
