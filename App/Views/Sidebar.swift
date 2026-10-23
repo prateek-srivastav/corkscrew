@@ -74,7 +74,10 @@ struct Sidebar: View {
                 }
                 // Once there's a report to follow (Help > Your Reports opens the page before that).
                 if !model.trackedReports.isEmpty || navigator.route.section == .reports {
-                    section(.reports, title: "Reports", systemImage: "exclamationmark.bubble.fill", needsAttention: model.hasReportNews)
+                    // Each click reads the issues again, also when the page is open.
+                    section(.reports, title: "Reports", systemImage: "exclamationmark.bubble.fill", needsAttention: model.hasReportNews) {
+                        Task { await model.checkReportsNow() }
+                    }
                 }
                 section(.setup, title: "Settings", systemImage: "gearshape.fill",
                         needsAttention: !model.isReady || model.availableUpdate != nil)
@@ -163,10 +166,12 @@ struct Sidebar: View {
         }
     }
 
-    private func section(_ section: SidebarItem, title: String, systemImage: String, needsAttention: Bool = false) -> some View {
+    private func section(_ section: SidebarItem, title: String, systemImage: String, needsAttention: Bool = false,
+                         onOpen: @escaping () -> Void = {}) -> some View {
         SidebarRow(title: title, icon: .symbol(systemImage), tint: .white, isSelected: navigator.route.section == section,
                    needsAttention: needsAttention) {
             navigator.go(section)
+            onOpen()
         }
     }
 
