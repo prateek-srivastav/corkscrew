@@ -63,4 +63,18 @@ struct HostRootCertificatesTests {
             #expect(ContinuousClock.now - start < .seconds(1))
         }
     }
+
+    /// The Mac still lists the emSign root whose intermediates' keys leaked; bottles don't get it, and
+    /// one that imported it before loses it.
+    @Test func dropsDistrustedRoots() throws {
+        let emSign = "3043FA4FF257DCA0C380EE2E58EA78B23FE6BBC1"
+        #expect(!HostRootCertificates.load().map(HostRootCertificates.thumbprint).contains(emSign))
+        try withTempDir { prefix in
+            let header = #"[Software\\Microsoft\\SystemCertificates\\Root\\Certificates\\"#
+            try Data((header + emSign + "] 1791375674\n\"Blob\"=hex:00\n").utf8).write(to: prefix.appending(path: "system.reg"))
+            #expect(HostRootCertificates.distrustedSaved(prefix: prefix) == [emSign])
+            let file = HostRootCertificates.registryFile([], removing: [emSign])
+            #expect(file.contains(#"[-HKEY_LOCAL_MACHINE\Software\Microsoft\SystemCertificates\Root\Certificates\"# + emSign + "]"))
+        }
+    }
 }

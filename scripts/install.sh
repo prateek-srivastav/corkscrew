@@ -16,6 +16,10 @@ APP_ID=io.github.prateek-srivastav.Corkscrew
 # Aptabase app key, the same as `Analytics.appKey` in the app. Public: anyone can read it here.
 # Empty: no count is sent.
 ANALYTICS_KEY=${CORKSCREW_ANALYTICS_KEY:-A-US-8232382106}
+# The SHA-1 of Corkscrew's signing certificate (docs/RELEASING.md, Signing). The Pages workflow fills
+# it in from the CORKSCREW_SIGNING_SHA1 variable; a copy where it's still the placeholder (from main)
+# checks only that the signature is intact.
+SIGNING_SHA1=@CORKSCREW_SIGNING_SHA1@
 
 # Everything runs from main, called on the last line, so a download cut short runs nothing.
 main() {
@@ -84,6 +88,12 @@ main() {
   xattr -dr com.apple.quarantine "$NEW" 2>/dev/null || true
   codesign --verify --deep --strict "$NEW" 2>/dev/null \
     || fail "The app in $name doesn't pass codesign --verify. Nothing was installed."
+  # The SHA-256 comes from the same release as the DMG, so it only proves the download is whole; the
+  # certificate proves who made it. Versions before 1.0.3 are ad hoc signed.
+  if [[ $SIGNING_SHA1 =~ ^[0-9A-Fa-f]{40}$ && -z ${CORKSCREW_RELEASES:-} && ! $version =~ ^(0\.|1\.0\.[0-2]$) ]]; then
+    codesign --verify --deep --strict -R="identifier \"$APP_ID\" and certificate leaf = H\"$SIGNING_SHA1\"" "$NEW" 2>/dev/null \
+      || fail "The app in $name isn't signed with Corkscrew's certificate. Nothing was installed."
+  fi
   rm -rf "$dir/Corkscrew.app"
   mv "$NEW" "$dir/Corkscrew.app" && NEW=
 

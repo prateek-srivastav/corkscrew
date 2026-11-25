@@ -34,10 +34,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Assemble the site
+        env:
+          # Public: the install script checks the app is signed with this certificate.
+          SIGNING_SHA1: ${{ vars.CORKSCREW_SIGNING_SHA1 }}
         run: |
+          [[ $SIGNING_SHA1 =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "::error::The CORKSCREW_SIGNING_SHA1 variable is missing: see docs/RELEASING.md"; exit 1; }
           mkdir _site
           cp -R site/. _site/
-          cp scripts/install.sh _site/install.sh
+          sed "s/@CORKSCREW_SIGNING_SHA1@/$SIGNING_SHA1/" scripts/install.sh >_site/install.sh
+          grep -q "^SIGNING_SHA1=$SIGNING_SHA1\$" _site/install.sh
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

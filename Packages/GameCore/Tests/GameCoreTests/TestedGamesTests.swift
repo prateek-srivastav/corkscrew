@@ -166,4 +166,16 @@ struct TestedGamesTests {
         #expect(body["minutes"] as? Int == 47)
         #expect(body["date"] as? String == "2026-10-14T17:46:40Z")
     }
+
+    /// A list from main can't set what runs, even though only a maintainer's push changes it.
+    @Test func testedListDropsVariablesThatPickWhatRuns() throws {
+        let json = #"""
+        [{"appID": "1", "name": "Game", "profile": {"environment": {
+          "DYLD_INSERT_LIBRARIES": "evil.dylib", "VK_ICD_FILENAMES": "x.json", "HOME": "tmp", "WINEPREFIX": "x",
+          "DXVK_CONFIG_FILE": "dxvk.conf", "BAD": "a/b",
+          "WINEDLLOVERRIDES": "dinput8=n,b", "DXVK_HUD": "fps", "MVK_CONFIG_LOG_LEVEL": "1"}}}]
+        """#
+        let games = try Steam.testedList(from: Data(json.utf8))
+        #expect(games.first?.profile.environment == ["WINEDLLOVERRIDES": "dinput8=n,b", "DXVK_HUD": "fps", "MVK_CONFIG_LOG_LEVEL": "1"])
+    }
 }

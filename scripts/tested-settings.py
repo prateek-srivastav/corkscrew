@@ -31,8 +31,10 @@ ARGUMENT = re.compile(r"[A-Za-z0-9_.,:=+\-]{1,64}")
 ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 ENV_VALUE = re.compile(r"[A-Za-z0-9_.,:;=+\- ]{0,128}")
 # Variables that pick what runs or where files are: never from a report.
-ENV_DENIED_PREFIXES = ("DYLD_", "LD_", "WINE", "CX_", "CORKSCREW_")
-ENV_DENIED = {"PATH", "HOME", "TMPDIR", "USER", "SHELL", "PYTHONPATH", "SSL_CERT_FILE", "CURL_CA_BUNDLE"}
+# The app checks the list it reads again with the same rules (TestedGame.allowedEnvironment): keep them alike.
+ENV_DENIED_PREFIXES = ("DYLD_", "LD_", "WINE", "CX_", "CORKSCREW_", "VK_")
+ENV_DENIED = {"PATH", "HOME", "TMPDIR", "USER", "SHELL", "PYTHONPATH", "SSL_CERT_FILE", "CURL_CA_BUNDLE",
+              "DXVK_CONFIG_FILE", "DXVK_LOG_PATH", "VKD3D_SHADER_CACHE_PATH"}
 # Allowed after all, since games need them: which DLLs Wine loads from the game's folder.
 ENV_ALLOWED = {"WINEDLLOVERRIDES", "WINEESYNC", "WINEMSYNC", "WINE_LARGE_ADDRESS_AWARE"}
 

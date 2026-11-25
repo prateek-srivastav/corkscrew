@@ -8,3 +8,8 @@ updates:
     directory: /Packages/GameCore
     schedule:
       interval: weekly
+  # The relay's build tools (wrangler, vitest, typescript); deployed by hand from a maintainer's Mac.
+  - package-ecosystem: npm
+    directory: /relay
+    schedule:
+      interval: weekly
