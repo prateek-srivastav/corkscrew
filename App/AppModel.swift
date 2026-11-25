@@ -80,6 +80,11 @@ final class AppModel {
     private(set) var steamRunning: Set<Bottle.ID> = []
     /// `Game.storeKey`s of Steam games with a program running: started here or from Steam's window.
     private(set) var runningSteamApps: Set<String> = []
+    /// Red Dead Redemption 2's quality levels that went down since its kept settings, by game
+    /// (`checkRDR2Settings`).
+    private(set) var rdr2SettingsDrops: [Game.ID: [RockstarLauncher.SettingDrop]] = [:]
+    /// Red Dead Redemption 2 games whose settings are the tested ones: there's nothing to restore.
+    private(set) var rdr2HasTestedSettings: Set<Game.ID> = []
     func isPending(_ action: Pending) -> Bool { pending.contains(action) }
 
     /// A program for the Add Program sheet: opened from Finder or dropped on the window, or nil
@@ -1205,6 +1210,73 @@ final class AppModel {
         return await Task.detached(priority: .utility) { BottleProcesses.windowsOnScreen(prefix: prefix, of: include) }.value
     }
 
+    /// Red Dead Redemption 2 from Steam, which `restoreRDR2Settings` applies to.
+    func isRDR2(_ game: Game) -> Bool {
+        game.store?.store == Steam.store && game.store?.appID == RockstarLauncher.rdr2AppID
+    }
+
+    /// Puts back RDR2's tested graphics settings, for when the game reset itself to Safe Mode's.
+    /// Returns whether it did.
+    func restoreRDR2Settings(for game: Game) async -> Bool {
+        guard let (prefix, desktop) = rdr2Target(game) else { return false }
+        guard await perform("Restoring Red Dead Redemption 2's graphics settings…", {
+            try RockstarLauncher.restoreTestedSettings(prefix: prefix, desktop: desktop)
+        }) != nil else { return false }
+        rdr2SettingsDrops[game.id] = nil
+        setHasTestedSettings(game, true)
+        return true
+    }
+
+    /// Looks for RDR2 quality levels that went down since the kept settings
+    /// (`RockstarLauncher.settingDrops`), once the game isn't running: it saves its settings when
+    /// it quits. Levels the player raised become the kept ones first (`keepRaisedSettings`).
+    func checkRDR2Settings(for game: Game) async {
+        guard isRDR2(game), !isRunning(game), let (prefix, _) = rdr2Target(game) else { return }
+        let (drops, isTested) = await Task.detached(priority: .utility) {
+            _ = try? RockstarLauncher.keepRaisedSettings(prefix: prefix)
+            return (RockstarLauncher.settingDrops(prefix: prefix), RockstarLauncher.hasTestedSettings(prefix: prefix))
+        }.value
+        rdr2SettingsDrops[game.id] = drops.isEmpty || isRunning(game) || answeredSettingsDrop(game) ? nil : drops
+        setHasTestedSettings(game, isTested)
+    }
+
+    /// Where `game`'s settings are (its bottle's prefix), and the desktop size the game sees.
+    private func rdr2Target(_ game: Game) -> (prefix: URL, desktop: (width: Int, height: Int)?)? {
+        bottle(for: game).map { (prefix(of: $0), RetinaMode.desktopSize(enabled: game.profile.retinaMode)) }
+    }
+
+    private func setHasTestedSettings(_ game: Game, _ isTested: Bool) {
+        if isTested { rdr2HasTestedSettings.insert(game.id) } else { rdr2HasTestedSettings.remove(game.id) }
+    }
+
+    /// Games whose settings notice the player answered: from then on the game page's ⋯ menu has the
+    /// restore, and the notice doesn't come back.
+    private static let answeredSettingsDropsKey = "AnsweredRDR2SettingsDrops"
+
+    private var answeredSettingsDrops: [String] {
+        UserDefaults.standard.stringArray(forKey: Self.answeredSettingsDropsKey) ?? []
+    }
+
+    private func answeredSettingsDrop(_ game: Game) -> Bool {
+        answeredSettingsDrops.contains(game.id.uuidString)
+    }
+
+    private func markSettingsDropAnswered(_ game: Game) {
+        guard !answeredSettingsDrop(game) else { return }
+        UserDefaults.standard.set(answeredSettingsDrops + [game.id.uuidString], forKey: Self.answeredSettingsDropsKey)
+    }
+
+    /// Puts back RDR2's kept settings (or `keep`s the lower ones as the player's own).
+    func resolveRDR2SettingsDrop(for game: Game, keep: Bool) async {
+        guard let (prefix, desktop) = rdr2Target(game) else { return }
+        let title = keep ? "Keeping Red Dead Redemption 2's graphics settings…" : "Restoring Red Dead Redemption 2's graphics settings…"
+        guard await perform(title, {
+            if keep { try RockstarLauncher.keepSettings(prefix: prefix) } else { try RockstarLauncher.restoreKeptSettings(prefix: prefix, desktop: desktop) }
+        }) != nil else { return }
+        rdr2SettingsDrops[game.id] = nil
+        setHasTestedSettings(game, RockstarLauncher.hasTestedSettings(prefix: prefix))
+        markSettingsDropAnswered(game)
+    }
     // MARK: Bottle folders
 
     /// A standard bottle whose Windows folders link to the Mac's: the folders sheet asks whether they

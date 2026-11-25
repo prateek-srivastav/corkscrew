@@ -469,6 +469,10 @@ struct GameHero: View {
     let remove: (() -> Void)?
     /// Nil when there's nothing to uninstall (Steam itself, a Steam game that isn't installed).
     let uninstall: (() -> Void)?
+    @State private var isConfirmingRDR2Restore = false
+    /// After Keep These: the notice shrinks into ⋯, where the restore stays.
+    @State private var showsRestoreHint = false
+    @Namespace private var settingsDrop
 
     var body: some View {
         let session = model.session(for: game)
@@ -515,7 +519,18 @@ struct GameHero: View {
                         .buttonStyle(.pill)
                 }
                 moreMenu(state: state, isActive: isActive)
-                if isLaunching {
+                    .overlay {
+                        if showsRestoreHint, model.rdr2SettingsDrops[game.id] == nil {
+                            Circle().stroke(.orange, lineWidth: 2)
+                                .matchedGeometryEffect(id: "notice", in: settingsDrop)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                if showsRestoreHint, model.rdr2SettingsDrops[game.id] == nil {
+                    Text("Restore tested settings anytime from here")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                } else if isLaunching {
                     HStack(spacing: 6) {
                         if case .stuck = launchPhase {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -553,6 +568,10 @@ struct GameHero: View {
                       systemImage: "arrow.down.circle")
                     .font(.body).foregroundStyle(.secondary)
             }
+            if !isActive, !isLaunching, let drops = model.rdr2SettingsDrops[game.id] {
+                SettingsDropNotice(game: game, drops: drops, answer: answerSettingsDrop)
+                    .matchedGeometryEffect(id: "notice", in: settingsDrop)
+            }
             // Launch details (Retina mode, anti-cheat found, …): Advanced mode only.
             if advancedMode {
                 ForEach(session?.notes ?? [], id: \.self) { note in
@@ -562,6 +581,21 @@ struct GameHero: View {
         }
         .frame(maxWidth: 640, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.spring(duration: 0.6, bounce: 0.2), value: model.rdr2SettingsDrops[game.id] == nil)
+        .confirmRDR2Restore(isPresented: $isConfirmingRDR2Restore, game: game)
+        // The game saves its settings when it quits.
+        .task(id: isActive) { await model.checkRDR2Settings(for: game) }
+    }
+
+    /// Keeps the lower settings or restores the kept ones. The notice doesn't come back: it shrinks
+    /// into ⋯ and says the restore is there.
+    private func answerSettingsDrop(keep: Bool) {
+        showsRestoreHint = true
+        Task {
+            await model.resolveRDR2SettingsDrop(for: game, keep: keep)
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation(.easeOut(duration: 0.4)) { showsRestoreHint = false }
+        }
     }
 
     private func moreMenu(state: Steam.InstallState, isActive: Bool) -> some View {
@@ -571,6 +605,11 @@ struct GameHero: View {
             if game.store == nil {
                 Button("Change Program (.exe)…") { model.programChange = game }
                     .disabled(isActive)
+            }
+            if model.isRDR2(game), state == .installed {
+                // The game saves its own settings when it quits. Dimmed while they're the tested ones.
+                Button("Restore Tested Graphics Settings…") { isConfirmingRDR2Restore = true }
+                    .disabled(isActive || model.rdr2HasTestedSettings.contains(game.id))
             }
             if uninstall != nil || remove != nil { Divider() }
             if let uninstall {
@@ -597,6 +636,69 @@ struct GameHero: View {
         case .downloading: "Downloading in Steam"
         case .notInstalled: "Not installed"
         }
+    }
+}
+
+/// Red Dead Redemption 2's graphics went down since its kept settings: put those back, or keep the
+/// lower ones.
+struct SettingsDropNotice: View {
+    @Environment(AppModel.self) private var model
+    let game: Game
+    let drops: [RockstarLauncher.SettingDrop]
+    /// Keep These (true) or Restore (false).
+    let answer: (_ keep: Bool) -> Void
+
+    /// Shown in the bar; the rest are in its tooltip. The hero has a fixed height.
+    private static let shown = 2
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Graphics settings went down").font(.body.weight(.semibold))
+                Text(summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .help(drops.map(\.text).joined(separator: "\n")
+                  + "\n\nChanged in the game's menu, or reset after a launch that didn't shut down cleanly.")
+            Spacer(minLength: 8)
+            Button("Keep These") { answer(true) }
+                .buttonStyle(.pill)
+            Button("Restore") { answer(false) }
+                .buttonStyle(.prominentPill)
+                .help("Puts the kept settings back. The current ones are saved as system.xml.bak.")
+        }
+        .padding(.vertical, 10).padding(.horizontal, 14)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: Theme.cornerRadius))
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// "Shadow quality: High → Medium, Texture quality: Ultra → High", and how many more.
+    private var summary: String {
+        let more = drops.count - Self.shown
+        return drops.prefix(Self.shown).map(\.text).joined(separator: ", ") + (more > 0 ? ", +\(more) more" : "")
+    }
+}
+
+private struct RDR2RestoreConfirmation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Binding var isPresented: Bool
+    let game: Game
+    let done: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Restore the tested graphics settings?", isPresented: $isPresented) {
+            Button("Restore") { Task { done(await model.restoreRDR2Settings(for: game)) } }
+        } message: {
+            Text("This replaces the game's current graphics settings, including any you changed in the game. "
+                 + "They're kept as system.xml.bak next to the game's settings.")
+        }
+    }
+}
+
+extension View {
+    /// Asks before `AppModel.restoreRDR2Settings`; `done` gets whether it restored.
+    func confirmRDR2Restore(isPresented: Binding<Bool>, game: Game, done: @escaping (Bool) -> Void = { _ in }) -> some View {
+        modifier(RDR2RestoreConfirmation(isPresented: isPresented, game: game, done: done))
     }
 }
 

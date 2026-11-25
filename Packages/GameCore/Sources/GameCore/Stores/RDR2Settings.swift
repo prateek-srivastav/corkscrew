@@ -1,12 +1,18 @@
 extension RockstarLauncher {
     /// Red Dead Redemption 2's `system.xml` as tested on a 14" MacBook Pro (M4, 16 GB): DirectX 12 on
-    /// D3DMetal 3.0, Fullscreen, Ultra textures, High shadows, reflections, lighting and tessellation,
-    /// Medium water, volumetrics and most of the rest, and DLSS (MetalFX through D3DMetal). About
-    /// 50 FPS at the 1512×982 desktop, 25 with Retina mode (2026-10-11). Written only before the
-    /// game's first launch, so a player's own settings are never replaced.
+    /// D3DMetal 3.0, Ultra textures, High shadows, reflections, lighting and tessellation, Medium
+    /// water, volumetrics and most of the rest, and DLSS (MetalFX through D3DMetal). About 50 FPS at
+    /// the 1512×982 desktop, 25 with Retina mode (2026-10-11), tested in Fullscreen. Written only
+    /// before the game's first launch, so a player's own settings are never replaced.
     ///
-    /// Left out so the game fills them in for each Mac: the refresh rate and the adapter's name. The
-    /// screen size is the tested Mac's; `fitWindow` replaces it with each Mac's desktop on the first
+    /// Windowed Borderless, not Fullscreen: under Wine both are a window covering the screen, but in
+    /// Fullscreen the game drops to a window when it loses focus while starting (a Mission Control
+    /// swipe) and stays there. Borderless has nothing to drop out of.
+    ///
+    /// Left out so the game fills them in for each Mac: the refresh rate and the adapter's name. A
+    /// restore keeps the ones the game wrote (`withMachineLines`): without the adapter's name, the
+    /// game replaces the settings with its defaults for a new GPU. The
+    /// screen size is the tested Mac's; `fitWindow` replaces it with each Mac's desktop before every
     /// launch.
     ///
     /// To update: copy `Documents/Rockstar Games/Red Dead Redemption 2/Settings/system.xml` from a
@@ -108,7 +114,7 @@ extension RockstarLauncher {
             <resolutionIndexWindowed value="0" />
             <screenWidthWindowed value="1512" />
             <screenHeightWindowed value="982" />
-            <windowed value="0" />
+            <windowed value="2" />
             <vSync value="0" />
             <tripleBuffered value="false" />
             <ReflexSettings>kSettingReflex_Off</ReflexSettings>

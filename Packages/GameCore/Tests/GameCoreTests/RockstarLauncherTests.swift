@@ -133,23 +133,118 @@ struct RockstarLauncherTests {
     @Test func rdr2sTestedSettingsFitAnyMac() throws {
         let settings = RockstarLauncher.rdr2TestedSettings
         #expect(settings.contains("<API>kSettingAPI_DX12</API>"))
-        #expect(RockstarLauncher.settingValue("windowed", in: settings) == RockstarLauncher.fullscreen)
+        #expect(RockstarLauncher.settingValue("windowed", in: settings) == RockstarLauncher.borderless,
+                "a Mission Control swipe while it starts can't knock it out of fullscreen")
         #expect(!settings.contains("\r"), "line endings as the game writes them")
         for machineSpecific in ["refreshRate", "videoCardDescription"] {
             #expect(!settings.contains(machineSpecific), "the game fills in \(machineSpecific) for each Mac")
         }
 
-        // Made on a 1512×982 desktop: on their first launch they get this Mac's, also in fullscreen.
+        // Made on a 1512×982 desktop: every launch gives the borderless window this Mac's.
         try withTempDir { prefix in
             try RockstarLauncher.ensureDX12(prefix: prefix)
-            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169)) == false,
-                    "later launches keep the player's fullscreen resolution")
-            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169), anyScreenType: true))
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169)))
             let text = try String(contentsOf: RockstarLauncher.rdr2Settings(prefix: prefix), encoding: .utf8)
             for (name, value) in [("screenWidth", "1800"), ("screenHeight", "1169"),
                                   ("screenWidthWindowed", "1800"), ("screenHeightWindowed", "1169")] {
                 #expect(RockstarLauncher.settingValue(name, in: text) == value)
             }
+        }
+    }
+
+    @Test func seesALauncherThatLostItsService() throws {
+        try withTempDir { prefix in
+            let log = RockstarLauncher.launcherLog(prefix: prefix)
+            let launch = Date()
+            #expect(!RockstarLauncher.hasLostService(prefix: prefix, since: launch), "no launcher yet")
+
+            // As logged on 2026-10-31: the service answered.
+            try log.write("""
+                [2026-10-31 02:11:47.096] [DISPLAY] [Main ] [svc] Connected to service (976 -> 1164)
+                [2026-10-31 02:11:47.463] [DISPLAY] [bgsvc] [svc] Handshake received from service.
+                """)
+            #expect(!RockstarLauncher.hasLostService(prefix: prefix, since: launch.addingTimeInterval(-60)))
+
+            // On 2026-10-30: it didn't, and the launcher never started the game.
+            try log.write("""
+                [2026-10-30 23:02:32.877] [DISPLAY] [Main ] [svc] Connected to service (964 -> 1148)
+                [2026-10-30 23:02:33.389] [WARNING] [Main ] [svc] Handshake with service timed out. Setting message protocol to version 0.
+                """)
+            #expect(RockstarLauncher.hasLostService(prefix: prefix, since: launch.addingTimeInterval(-60)))
+            #expect(!RockstarLauncher.hasLostService(prefix: prefix, since: launch.addingTimeInterval(60)),
+                    "an earlier launcher's log, before this launch's launcher starts")
+        }
+    }
+
+    @Test func restoreKeepsTheLinesAboutThisMac() throws {
+        try withTempDir { prefix in
+            let file = RockstarLauncher.rdr2Settings(prefix: prefix)
+            // What the game wrote on 2026-10-31, with its line endings: without the GPU's name, it
+            // took the restored settings for a new GPU's and replaced them.
+            let game = ["<rage__fwuiSystemSettingsCollection>", "  <video>",
+                        "    <screenHeightWindowed value=\"720\" />", "    <refreshRateIndex value=\"1\" />",
+                        "    <refreshRateNumerator value=\"120000\" />", "    <refreshRateDenominator value=\"1000\" />",
+                        "    <windowed value=\"0\" />", "  </video>",
+                        "  <videoCardDescription>AMD Compatibility Mode</videoCardDescription>",
+                        "</rage__fwuiSystemSettingsCollection>", ""].joined(separator: "\r\n")
+            try file.write(game)
+
+            try RockstarLauncher.restoreTestedSettings(prefix: prefix, desktop: nil)
+            let text = try String(contentsOf: file, encoding: .utf8)
+            #expect(text.contains("""
+                        <screenHeightWindowed value="982" />
+                        <refreshRateIndex value="1" />
+                        <refreshRateNumerator value="120000" />
+                        <refreshRateDenominator value="1000" />
+                        <windowed value="2" />
+                    """))
+            #expect(text.hasSuffix("""
+                      </video>
+                      <videoCardDescription>AMD Compatibility Mode</videoCardDescription>
+                    </rage__fwuiSystemSettingsCollection>
+                    """ + "\n"))
+            #expect(!text.contains("\r"))
+            #expect(RockstarLauncher.withMachineLines(of: game, in: text) == text, "once is enough")
+
+            // Restored, there's nothing left to restore: the lines about this Mac and its desktop's
+            // size don't count, any other change does.
+            #expect(RockstarLauncher.hasTestedSettings(prefix: prefix))
+            try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169))
+            #expect(RockstarLauncher.hasTestedSettings(prefix: prefix))
+            #expect(!RockstarLauncher.isTested(text.replacingOccurrences(of: "<shadowQuality>kSettingLevel_High", with: "<shadowQuality>kSettingLevel_Low")))
+            #expect(!RockstarLauncher.isTested(text.replacingOccurrences(of: "<dlssIndex value=\"3\" />", with: "<dlssIndex value=\"0\" />")))
+            #expect(!RockstarLauncher.isTested(game), "the game's own defaults")
+        }
+    }
+
+    @Test func restoresRDR2sTestedSettingsAfterSafeMode() throws {
+        try withTempDir { prefix in
+            let file = RockstarLauncher.rdr2Settings(prefix: prefix)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // What the game wrote in Safe Mode (2026-10-14): Windowed Borderless, 1147×745, all Low.
+            let safeMode = ["<rage__fwuiSystemSettingsCollection>", "  <graphics>",
+                            "    <textureQuality>kSettingLevel_Low</textureQuality>", "  </graphics>", "  <video>",
+                            "    <screenWidth value=\"1147\" />", "    <screenHeight value=\"745\" />",
+                            "    <windowed value=\"2\" />", "  </video>", "</rage__fwuiSystemSettingsCollection>"]
+                .joined(separator: "\n")
+            try safeMode.write(to: file, atomically: true, encoding: .utf8)
+
+            try RockstarLauncher.restoreTestedSettings(prefix: prefix, desktop: (width: 1800, height: 1169))
+            let text = try String(contentsOf: file, encoding: .utf8)
+            #expect(text == RockstarLauncher.rdr2TestedSettings
+                .replacingOccurrences(of: "1512", with: "1800").replacingOccurrences(of: "982", with: "1169"))
+            #expect(RockstarLauncher.settingValue("windowed", in: text) == RockstarLauncher.borderless)
+            #expect(try String(contentsOf: file.appendingPathExtension("bak"), encoding: .utf8) == safeMode,
+                    "the replaced settings are kept")
+
+            // Again: the backup is the settings just replaced. Without settings or a display, the
+            // tested ones as they are.
+            try RockstarLauncher.restoreTestedSettings(prefix: prefix, desktop: nil)
+            #expect(try String(contentsOf: file.appendingPathExtension("bak"), encoding: .utf8) == text)
+            #expect(try String(contentsOf: file, encoding: .utf8) == RockstarLauncher.rdr2TestedSettings)
+            try FileManager.default.removeItem(at: file.deletingLastPathComponent())
+            try RockstarLauncher.restoreTestedSettings(prefix: prefix, desktop: nil)
+            #expect(try String(contentsOf: file, encoding: .utf8) == RockstarLauncher.rdr2TestedSettings)
         }
     }
 

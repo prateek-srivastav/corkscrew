@@ -192,6 +192,7 @@ If something doesn't work, check [Known issues](#known-issues), then the game's 
 
 - **Isolated bottles use `sandbox-exec`**, which Apple has deprecated. It works on macOS 26 and 27, and the tests check the sandbox, but a future macOS could remove it. ([#6](https://github.com/Prateek-Srivastav/corkscrew/issues/6))
 - **RDR2 crashes after changing graphics settings in game** ("No DirectX 12 adapter or runtime found"). Change settings, then quit and relaunch. ([#7](https://github.com/Prateek-Srivastav/corkscrew/issues/7))
+- **RDR2 asks you to update your NVIDIA driver.** D3DMetal shows the Mac's GPU to the game as an NVIDIA card. Click OK: Cancel quits the game uncleanly, and it then starts in Safe Mode (a small window, everything Low). To undo that, quit the game, then click **Restore** where RDR2's page says its graphics settings went down (or **Restore Tested Graphics Settings** in its panel).
 - **The Rockstar launcher sometimes can't reach its library service.** Close it and play again. ([#8](https://github.com/Prateek-Srivastav/corkscrew/issues/8))
 - **Networks that intercept TLS** break Steam downloads and put the Rockstar launcher offline. ([#9](https://github.com/Prateek-Srivastav/corkscrew/issues/9))
 - **FSR 3 Frame Generation crashes DX12 games on D3DMetal.** Keep it off; DLSS (MetalFX) works. ([#10](https://github.com/Prateek-Srivastav/corkscrew/issues/10))
