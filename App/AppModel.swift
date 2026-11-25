@@ -993,7 +993,6 @@ final class AppModel {
                 let prepared = try await Launcher.prepare(gameID: game.id, executable: game.executable, profile: game.profile,
                                                           bottle: bottle, engine: engine, paths: paths,
                                                           steamWebHelperWrapper: Self.steamWebHelperWrapper,
-                                                          visibleWindowsHelper: Self.visibleWindowsHelper,
                                                           depthEqualShim: Self.depthEqualShim)
                 try Task.checkCancellation()
                 self?.sessions[game.id]?.log = prepared.log
@@ -1029,6 +1028,10 @@ final class AppModel {
     /// macOS opens a Wine program's first window behind it (the Rockstar launcher's Sign In, say).
     private func launchProgressed(_ gameID: Game.ID, _ progress: Launcher.LaunchProgress) {
         guard sessions[gameID]?.isActive == true else { return }
+        if case .stuck(let program) = progress.phase, sessions[gameID]?.phase != progress.phase, !NSApp.isActive,
+           let game = games.first(where: { $0.id == gameID }) {
+            LaunchNotifications.postStuck(game, program: program)
+        }
         sessions[gameID]?.phase = progress.phase
         if let pid = progress.front, NSApp.isActive, sessions[gameID]?.broughtForward.insert(pid).inserted == true {
             NSRunningApplication(processIdentifier: pid)?.activate(from: .current, options: [])
@@ -1114,6 +1117,69 @@ final class AppModel {
         }
     }
 
+    /// Shown when quitting found games running (`gamesBlockingQuit`): Show opens a game's page,
+    /// Force Quit stops them and quits.
+    var quitBlockers: [Game] = []
+    /// Set by Force Quit: the quit stops every bottle, games too.
+    private(set) var forcesQuit = false
+    /// Brings the window back, also after it was closed (set by `ContentView`).
+    @ObservationIgnored var showWindow: (() -> Void)?
+
+    /// What keeps Corkscrew from quitting cleanly: games and programs that run or are starting,
+    /// including Steam games started from Steam's window. Steam itself, opened from the library,
+    /// isn't one: it quits as its own Exit does.
+    func gamesBlockingQuit() async -> [Game] {
+        refreshRunningBottles()
+        await refreshRunningPrograms()
+        var games = sessions.values.filter { $0.isActive && !Self.isSteamItself($0.game) }.map(\.game)
+        for game in allGames where game.storeKey.map(runningSteamApps.contains) == true && !games.contains(where: { $0.id == game.id }) {
+            games.append(game)
+        }
+        return games
+    }
+
+    func forceQuit() {
+        forcesQuit = true
+        quitBlockers = []
+        NSApp.terminate(nil)
+    }
+
+    private static func isSteamItself(_ game: Game) -> Bool {
+        Steam.isClient(game.executable) && !game.profile.arguments.contains("-applaunch")
+    }
+
+    /// As Corkscrew quits: every bottle stops. Steam quits first, as its own Exit does, so it saves
+    /// its state; then what else runs in the bottle (a launcher, Wine's services) stops. A bottle
+    /// where a game runs is left alone, unless Force Quit stops it at once.
+    func stopBottlesForQuit() async {
+        let paths = self.paths
+        var stops: [(bottle: Bottle, engine: Engine, steam: URL?)] = []
+        for bottle in bottles where Launcher.isRunning(bottle, paths: paths) {
+            let prefix = self.prefix(of: bottle)
+            let processes = BottleProcesses.list(prefix: prefix, maxAge: .zero)
+            let gameRuns = sessions.values.contains { $0.isActive && $0.game.bottleID == bottle.id && !Self.isSteamItself($0.game) }
+                || !Steam.runningApps(prefix: prefix, processes: processes).isEmpty
+            guard !gameRuns || forcesQuit, let engine = try? RuntimeStore(paths: paths).engine(id: bottle.engineID) else { continue }
+            let steam = processes.contains(where: \.isSteamClient) && !gameRuns
+                ? Steam.root(inPrefix: prefix)?.appending(path: "steam.exe") : nil
+            stops.append((bottle, engine, steam))
+        }
+        guard !stops.isEmpty else { return }
+        activity = stops.contains { $0.steam != nil } ? "Quitting Steam…" : "Stopping bottles…"
+        await withTaskGroup(of: Void.self) { group in
+            for stop in stops {
+                group.addTask {
+                    if let steam = stop.steam {
+                        try? await Launcher.quitSteam(in: stop.bottle, steam: steam, engine: stop.engine, paths: paths,
+                                                      log: paths.logsRoot.appending(path: "bottles/\(stop.bottle.id.uuidString)/steam-quit.log"))
+                    } else {
+                        try? Launcher.stop(stop.bottle, engine: stop.engine, paths: paths)
+                    }
+                }
+            }
+        }
+    }
+
     /// Marks `action` pending until `isDone` turns true, `timeout` passes, or (with a bottle) the
     /// bottle shows a window it didn't show before, of the processes `include` picks: the game's,
     /// or Steam's shown again.
@@ -1138,7 +1204,6 @@ final class AppModel {
         guard let prefix else { return [] }
         return await Task.detached(priority: .utility) { BottleProcesses.windowsOnScreen(prefix: prefix, of: include) }.value
     }
-
 
     // MARK: Bottle folders
 
@@ -1262,8 +1327,6 @@ final class AppModel {
 
     /// Built from `tools/steamwebhelper-wrapper` into the app's resources (see project.yml).
     private static let steamWebHelperWrapper = Bundle.main.url(forResource: "steamwebhelper-wrapper", withExtension: "exe")
-    /// Built from `tools/visible-windows` into the app's resources (see project.yml).
-    private static let visibleWindowsHelper = Bundle.main.url(forResource: "visible-windows", withExtension: "exe")
     /// Built from `tools/depth-equal-fix` into the app's resources (see project.yml).
     private static let depthEqualShim = Bundle.main.url(forResource: "depth-equal-fix", withExtension: "dll")
 
@@ -1816,6 +1879,13 @@ final class AppModel {
     private(set) var reportsChecked = false
     /// Raised by a click on a report notification: ContentView opens the Reports page.
     var reportsToOpen = 0
+    /// Set by a click on a launch notification: ContentView opens the game's page. Each click is new,
+    /// so a second click on the same game's opens it again.
+    var gameToOpen: GameToOpen?
+    struct GameToOpen: Equatable {
+        let id: Game.ID
+        let click = UUID()
+    }
     /// The check at launch, every half hour and on a click on Reports: never two at once.
     @ObservationIgnored private let reportsCheck = OneAtATime()
 
@@ -2108,6 +2178,12 @@ final class AppModel {
     func openReports() {
         NSApp.activate()
         reportsToOpen += 1
+    }
+
+    /// A click on a launch notification.
+    func openGame(_ id: Game.ID) {
+        NSApp.activate()
+        gameToOpen = GameToOpen(id: id)
     }
 
     /// Corkscrew and the Mac, then the program and its settings: what a report says besides the error.

@@ -112,8 +112,74 @@ public enum RockstarLauncher {
         return data.range(of: Data(socialClubPatchMarker.utf8)) != nil
     }
 
-    static let rdr2AppID = "1174180"
+    public static let rdr2AppID = "1174180"
     static let dx12 = "kSettingAPI_DX12"
+
+    static let launcherProgram = #"C:\Program Files\Rockstar Games\Launcher\Launcher.exe"#
+
+    /// Whether `program` (as `BottleProcesses.Entry` has it, lowercased) only starts the Rockstar
+    /// Games Launcher for the Steam game in `installFolder`: `PlayRDR2.exe`, in the game's folder
+    /// itself, in a game that ships the launcher's installer.
+    static func isBootstrapper(_ program: String, installFolder: URL) -> Bool {
+        let folder = "\\steamapps\\common\\\(installFolder.lastPathComponent.lowercased())\\"
+        guard let range = program.range(of: folder) else { return false }
+        let file = program[range.upperBound...]
+        return file.hasPrefix("play") && !file.contains("\\")
+            && FileManager.default.fileExists(atPath: installFolder.appending(path: "Redistributables/Rockstar-Games-Launcher.exe").path)
+    }
+
+    /// The launcher's log. Each start moves the last one to `launcher.01.log`.
+    static func launcherLog(prefix: URL) -> URL {
+        BottleStore.windowsUserFolder(inPrefix: prefix).appending(path: "Documents/Rockstar Games/Launcher/launcher.log")
+    }
+
+    /// Logged when the launcher's background service (RockstarService) doesn't answer its handshake
+    /// in half a second; it usually takes about 0.35. The launcher then speaks an older protocol
+    /// that the service ignores ("Unhandled message"), restarts it every 30 seconds, and never
+    /// starts the game: 89 tries in 25 minutes on 2026-10-30, with a new service each time. The
+    /// next launch worked.
+    static let lostServiceLine = "Handshake with service timed out"
+
+    /// Whether a launcher started since `since` has lost its service, so only a new launch helps.
+    static func hasLostService(prefix: URL, since: Date) -> Bool {
+        var watch = LostServiceWatch(prefix: prefix, since: since)
+        return watch.update()
+    }
+
+    /// `hasLostService` for a launch that asks on every wake: reads only what the launcher wrote
+    /// since the last call, as its log grows with every restart of the service.
+    struct LostServiceWatch {
+        private let log: URL
+        private let since: Date
+        private var offset: UInt64 = 0
+        private var hasLostService = false
+        /// Read again from this far before the last read's end: a line may have been cut there.
+        private static let overlap = UInt64(lostServiceLine.utf8.count)
+
+        init(prefix: URL, since: Date) {
+            log = RockstarLauncher.launcherLog(prefix: prefix)
+            self.since = since
+        }
+
+        /// True once a launcher started since `since` has logged `lostServiceLine`.
+        mutating func update() -> Bool {
+            guard !hasLostService else { return true }
+            // Not `URL.resourceValues`: a URL keeps the values it read first.
+            var info = stat()
+            guard stat(log.path, &info) == 0 else { return false }
+            let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
+            let size = UInt64(info.st_size)
+            // A new log: the launcher started again.
+            if size < offset { offset = 0 }
+            guard modified >= since, size > offset, let handle = try? FileHandle(forReadingFrom: log) else { return false }
+            defer { try? handle.close() }
+            let start = offset > Self.overlap ? offset - Self.overlap : 0
+            guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.read(upToCount: Int(size - start)) else { return false }
+            offset = start + UInt64(data.count)
+            hasLostService = data.range(of: Data(lostServiceLine.utf8)) != nil
+            return hasLostService
+        }
+    }
 
     static func rdr2Settings(prefix: URL) -> URL {
         BottleStore.windowsUserFolder(inPrefix: prefix)
@@ -157,8 +223,8 @@ public enum RockstarLauncher {
     /// defaults (and Safe Mode) pick one smaller than the desktop: 1147×745 on a 1512×982 MacBook,
     /// a small window mid-screen. Sets a borderless window's resolution to the desktop's (also
     /// after moving between displays). With `anyScreenType`, also a fullscreen or windowed one: for
-    /// the tested settings on their first launch, which were made on another Mac's desktop. Returns
-    /// whether it changed anything.
+    /// the tested settings on their first launch, which were made on another Mac's desktop.
+    /// Returns whether it changed anything.
     @discardableResult
     static func fitWindow(prefix: URL, desktop: (width: Int, height: Int), anyScreenType: Bool = false) throws -> Bool {
         let file = rdr2Settings(prefix: prefix)

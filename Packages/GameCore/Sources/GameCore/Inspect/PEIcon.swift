@@ -54,9 +54,10 @@ extension PEFile {
 }
 
 /// The three-level resource directory (type → name → language) of a PE image.
-private struct ResourceTree {
+struct ResourceTree {
     static let icon: UInt32 = 3
     static let groupIcon: UInt32 = 14
+    static let version: UInt32 = 16
     /// Icons are small; anything bigger than this is a damaged or hostile file.
     static let maxDataSize = 8 << 20
 
