@@ -184,6 +184,7 @@ private struct BottleDetail: View {
     let reset: () -> Void
     let installSteam: () -> Void
     let delete: () -> Void
+    @State private var isConfirmingLink = false
 
     var body: some View {
         Form {
@@ -215,6 +216,9 @@ private struct BottleDetail: View {
                     }
                 }
             }
+            if bottle.kind == .standard {
+                folders
+            }
             Section {
                 if bottle.role != .steam {
                     Button("Run Program…") { model.addProgram(in: bottle) }
@@ -243,6 +247,35 @@ private struct BottleDetail: View {
             }
         }
         .panelForm()
+        .confirmationDialog("Link \(bottle.name)'s folders to your Mac's?", isPresented: $isConfirmingLink) {
+            Button("Link Folders") { Task { await model.linkFoldersToMac(bottle) } }
+        } message: {
+            Text("Its files are copied into your Mac's folders, folder into folder. Of two files with the same name, the older one goes to the Trash.")
+        }
+    }
+
+    private var keepsFoldersInside: Bool {
+        if case .inside = bottle.folders { true } else { false }
+    }
+
+    /// Where its Documents, Downloads, … are: its own, or the Mac's (`BottleFolders`).
+    private var folders: some View {
+        Section {
+            Toggle("Keep Windows folders in Corkscrew", isOn: Binding(get: { keepsFoldersInside }, set: { inside in
+                if inside { Task { await model.chooseFolders(for: bottle) } } else { isConfirmingLink = true }
+            }))
+            .disabled(model.isPending(.moveFolders(bottle.id)) || model.runningBottles.contains(bottle.id)
+                      || !model.canLinkFoldersToMac(bottle))
+            Text(!model.canLinkFoldersToMac(bottle)
+                 ? "Game saves stay in this bottle: its folders never linked to your Mac's. Deleting it moves them to the Trash."
+                 : keepsFoldersInside
+                 ? "Game saves stay in this bottle. Deleting it moves them to the Trash."
+                 : "Games save into your Mac's Documents.")
+                .font(.body).foregroundStyle(.secondary)
+            if let documents = model.documents(of: bottle) {
+                Button("Show Documents in Finder") { NSWorkspace.shared.open(documents) }
+            }
+        }
     }
 }
 

@@ -64,6 +64,8 @@ final class AppModel {
         case stopBottle(Bottle.ID)
         case resetBottle(Bottle.ID)
         case deleteBottle(Bottle.ID)
+        /// Copying a bottle's files into its Windows folders, or back to the Mac's (`BottleFolders`).
+        case moveFolders(Bottle.ID)
         case createBottle
         case importBottle
         case addRuntime
@@ -245,6 +247,7 @@ final class AppModel {
         pingDevice()
         offerAppCrashReport()
         checkReports(after: checkForUpdate())
+        Task { await askAboutFolders() }
     }
 
     /// `~/Library/…/Corkscrew`, or one folder for everything when the `DataRoot` default is set
@@ -467,6 +470,7 @@ final class AppModel {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self else { return }
                 sweepWineLeftovers(in: bottles.filter { stopped.contains($0.id) && !runningBottles.contains($0.id) && !hasActiveSession(in: $0.id) })
+                await askAboutFolders()
             }
         }
         if running.isEmpty { unregisterLoaderBundles() }
@@ -503,7 +507,7 @@ final class AppModel {
             let games = Set(sessions.values.filter { $0.isActive && !Steam.isClient($0.game.executable) }
                 .map { $0.game.executable.lastPathComponent.lowercased() })
             for bottle in bottles where runningBottles.contains(bottle.id) {
-                loweredPrograms.formUnion(BackgroundPrograms.lower(prefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix, sparing: games))
+                loweredPrograms.formUnion(BackgroundPrograms.lower(prefix: prefix(of: bottle), sparing: games))
             }
         } else if !playing || !UserDefaults.standard.bool(forKey: Self.lowersLaunchersKey) {
             restoreLaunchers()
@@ -777,7 +781,7 @@ final class AppModel {
     func bottle(containing program: URL) -> Bottle? {
         let path = program.standardizedFileURL.resolvingSymlinksInPath().path
         return bottles.first { bottle in
-            let prefix = BottleLocation(bottleID: bottle.id, paths: paths).prefix.standardizedFileURL.resolvingSymlinksInPath().path
+            let prefix = self.prefix(of: bottle).standardizedFileURL.resolvingSymlinksInPath().path
             return path.hasPrefix(prefix + "/")
         }
     }
@@ -966,7 +970,7 @@ final class AppModel {
     }
 
     private func isSteamRunning(in bottle: Bottle) -> Bool {
-        BottleProcesses.isSteamRunning(prefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix)
+        BottleProcesses.isSteamRunning(prefix: prefix(of: bottle))
     }
 
     func start(_ game: Game, transient: Bool) {
@@ -1135,6 +1139,122 @@ final class AppModel {
         return await Task.detached(priority: .utility) { BottleProcesses.windowsOnScreen(prefix: prefix, of: include) }.value
     }
 
+
+    // MARK: Bottle folders
+
+    /// A standard bottle whose Windows folders link to the Mac's: the folders sheet asks whether they
+    /// become its own, and which items of the Mac folders are copied in.
+    struct FolderChoice: Identifiable {
+        let bottle: Bottle
+        let links: [BottleFolders.Link]
+        /// What's in the Mac folders, once the user asked to look (macOS asks them to allow each).
+        var scan: BottleFolders.Scan?
+        var id: Bottle.ID { bottle.id }
+    }
+
+    var folderChoice: FolderChoice?
+    /// Bottles the folders sheet asked about since the app started: Later asks again at the next start.
+    @ObservationIgnored private var askedAboutFolders: Set<Bottle.ID> = []
+
+    /// Asks about a standard bottle made before Corkscrew kept the Windows folders inside, once nothing
+    /// runs in it (its programs write into the folders).
+    func askAboutFolders() async {
+        guard folderChoice == nil, let bottle = bottles.first(where: {
+            $0.kind == .standard && $0.folders == nil && !askedAboutFolders.contains($0.id) && !runningBottles.contains($0.id)
+        }) else { return }
+        askedAboutFolders.insert(bottle.id)
+        await chooseFolders(for: bottle)
+    }
+
+    /// Opens the folders sheet for `bottle`, or (when nothing links out any more) just records that the
+    /// folders are inside. Doesn't look in the Mac's folders: macOS would ask before the sheet says why.
+    func chooseFolders(for bottle: Bottle) async {
+        let prefix = self.prefix(of: bottle)
+        let links = await Task.detached(priority: .utility) { BottleFolders.links(prefix: prefix) }.value
+        guard !links.isEmpty else {
+            await setFolders(of: bottle, title: nil) { _ in .inside(macFolders: [:]) }
+            return
+        }
+        guard folderChoice == nil, !runningBottles.contains(bottle.id) else { return }
+        folderChoice = FolderChoice(bottle: bottle, links: links)
+    }
+
+    /// The folders sheet's Look for Files: what changed in the Mac's folders since the bottle was made.
+    func lookForFiles() async {
+        guard let bottle = folderChoice?.bottle else { return }
+        let prefix = self.prefix(of: bottle)
+        // When the bottle ran: its programs' launch logs, Steam's games included.
+        let logFolders = (games + steamGames).filter { $0.bottleID == bottle.id }.map { paths.logs(for: $0.id) }
+        let scan = await Task.detached(priority: .userInitiated) {
+            BottleFolders.scan(prefix: prefix, since: bottle.createdAt, sessions: BottleFolders.sessions(logFolders: logFolders))
+        }.value
+        guard folderChoice?.bottle.id == bottle.id else { return }
+        folderChoice?.scan = scan
+    }
+
+    /// The folders sheet's Keep in Corkscrew: copies `items` in and replaces the links with the bottle's
+    /// own folders. The originals stay in the Mac's folders.
+    func keepFoldersInside(_ bottle: Bottle, copying items: [BottleFolders.Item]) async {
+        folderChoice = nil
+        await setFolders(of: bottle, title: "Copying \(bottle.name)'s files into Corkscrew…") { prefix in
+            .inside(macFolders: try BottleFolders.keepInside(prefix: prefix, copying: items))
+        }
+    }
+
+    /// The folders sheet's Keep Linked, or the bottle page's switch turned off: links the folders to the
+    /// Mac's, copying back what the bottle's hold.
+    func linkFoldersToMac(_ bottle: Bottle) async {
+        folderChoice = nil
+        guard canLinkFoldersToMac(bottle) else {
+            errorMessage = "\(bottle.name)'s Windows folders never linked to your Mac's, so there's nothing to link them back to."
+            return
+        }
+        await setFolders(of: bottle, title: "Linking \(bottle.name)'s folders to your Mac's…") { prefix in
+            if case .inside(let macFolders) = bottle.folders { try BottleFolders.linkToMac(prefix: prefix, macFolders: macFolders) }
+            return .linked
+        }
+    }
+
+    /// Whether the bottle's folders can link to the Mac's: false for folders kept inside that never
+    /// linked out (Wine made no links in the bottle), which record no Mac folder to link to.
+    func canLinkFoldersToMac(_ bottle: Bottle) -> Bool {
+        if case .inside(let macFolders) = bottle.folders { !macFolders.isEmpty } else { true }
+    }
+
+    /// Changes the folders while nothing runs in the bottle, and saves where they are.
+    private func setFolders(of bottle: Bottle, title: String?,
+                            _ change: @escaping @Sendable (URL) throws -> Bottle.FolderPlacement) async {
+        guard !isPending(.moveFolders(bottle.id)) else { return }
+        guard !runningBottles.contains(bottle.id) else {
+            errorMessage = "Quit what runs in \(bottle.name) first: its programs write into these folders."
+            return
+        }
+        pending.insert(.moveFolders(bottle.id))
+        defer { pending.remove(.moveFolders(bottle.id)) }
+        let paths = self.paths
+        let work: @Sendable () async throws -> Void = {
+            let store = BottleStore(paths: paths)
+            var bottle = try store.list().first { $0.id == bottle.id } ?? bottle
+            bottle.folders = try change(store.location(of: bottle).prefix)
+            try store.save(bottle)
+        }
+        if let title {
+            await perform(title, work)
+        } else {
+            do { try await work() } catch { errorMessage = Self.describe(error) }
+            reload()
+        }
+    }
+
+    /// The bottle's Documents folder: its own, or the Mac's it links to. Wine's user, not its Public.
+    func documents(of bottle: Bottle) -> URL? {
+        let documents = BottleStore(paths: paths).windowsUserFolder(of: bottle).appending(path: "Documents", directoryHint: .isDirectory)
+        let fm = FileManager.default
+        // The link, not what's behind it: reading the Mac's Documents makes macOS ask.
+        if let destination = try? fm.destinationOfSymbolicLink(atPath: documents.path) { return URL(fileURLWithPath: destination, isDirectory: true) }
+        return fm.fileExists(atPath: documents.path) ? documents : nil
+    }
+
     /// Set once something has ended.
     final class Flag {
         var isSet = false
@@ -1263,8 +1383,13 @@ final class AppModel {
         }
     }
 
+    /// The bottle's Wine prefix.
+    func prefix(of bottle: Bottle) -> URL {
+        BottleLocation(bottleID: bottle.id, paths: paths).prefix
+    }
+
     func driveC(of bottle: Bottle) -> URL {
-        BottleLocation(bottleID: bottle.id, paths: paths).prefix.appending(path: "drive_c", directoryHint: .isDirectory)
+        prefix(of: bottle).appending(path: "drive_c", directoryHint: .isDirectory)
     }
 
     // MARK: Runtimes and components
@@ -2125,7 +2250,7 @@ final class AppModel {
 
     /// Whether Steam's files are in the bottle, listed in the library or not.
     func hasSteam(in bottle: Bottle) -> Bool {
-        Steam.root(inPrefix: BottleLocation(bottleID: bottle.id, paths: paths).prefix) != nil
+        Steam.root(inPrefix: prefix(of: bottle)) != nil
     }
 
     /// Downloads Valve's installer and installs Steam into `bottle`; Steam then shows up in the library.

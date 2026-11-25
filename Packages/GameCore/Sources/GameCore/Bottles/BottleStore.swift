@@ -74,6 +74,9 @@ public struct BottleStore: Sendable {
                 try WineMono.link(prefix: location.prefix, runtime: engine.root)
                 try PrefixHardening.apply(prefix: location.prefix)
                 try snapshotClean(bottle)
+            } else {
+                let unlinked = try PrefixHardening.unlinkShellFolders(prefix: location.prefix)
+                bottle.folders = .inside(macFolders: BottleFolders.macFolders(of: unlinked))
             }
             try save(bottle)
         } catch {
@@ -89,11 +92,22 @@ public struct BottleStore: Sendable {
         // --restart skips the Run keys and Startup folder: a plain --update starts every program that
         // registered itself to start with Windows (Steam -silent), and the session never ends.
         try await runSetup(["wineboot", "--update", "--restart"], bottle: bottle, engine: engine, name: "update")
-        if bottle.kind == .isolated { try PrefixHardening.apply(prefix: location(of: bottle).prefix) }
+        try keepFoldersApart(bottle)
         var bottle = bottle
         bottle.runtimeModules = RuntimeModules.fingerprint(runtime: engine.root)
         try save(bottle)
         return bottle
+    }
+
+    /// Cuts the links to the Mac Wine may have made again: all of an isolated bottle's
+    /// (`PrefixHardening`), a standard one's folders when they're kept inside (`BottleFolders`).
+    public func keepFoldersApart(_ bottle: Bottle) throws {
+        let prefix = location(of: bottle).prefix
+        if bottle.kind == .isolated {
+            try PrefixHardening.apply(prefix: prefix)
+        } else if case .inside = bottle.folders {
+            try BottleFolders.unlinkAgain(prefix: prefix)
+        }
     }
 
     /// What `prepareForLaunch` did.

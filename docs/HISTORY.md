@@ -27,6 +27,13 @@
   - `corkscrew://launch/<id>` and `corkscrew://stop/<id>` links.
 - Zero setup in a dev checkout: the app finds the built runtime and components, and creates a "Games" bottle.
 - Steam games that are uninstalled keep their library entry as "Not Downloaded"; Play opens their Steam store page.
+- Standard bottles keep their Windows folders inside them. Wine links Documents, Downloads, Music, Pictures and Videos to the Mac's, so games saved among the user's files (`~/Documents/Rockstar Games`), and macOS asked for access to Documents after every update of a build signed without a fixed certificate.
+  - A new standard bottle gets folders of its own. Wine links an empty one again when it updates a bottle, so the links are cut again before every launch, as in isolated bottles.
+  - A bottle made before asks once, when nothing runs in it. On **Look for Files** it lists what in the Mac's Documents changed since the bottle was made, and ticks what changed at least 90% of the time while the bottle ran (from its launch logs; Rockstar's launcher writes its cache after a launch's log ends). The ticked items are copied in as APFS clones; the originals stay.
+  - Only Documents is looked in, where Windows games keep saves and settings, and only after the click. macOS asks to let Corkscrew into each of Documents, Downloads, Music ("Apple Music"), Pictures and Movies: looking in all five at startup brought five prompts before the sheet said why. What games put in the other folders (screenshots, clips) stays in the Mac's.
+  - A folder macOS didn't let Corkscrew read keeps its link and nothing is copied: read as empty, its link would have been swapped for an empty folder, hiding the saves from the game.
+  - All or nothing: the copies go into a folder beside each link, and the links are replaced only when every copy is made. A file that can't be copied (one iCloud can't download) leaves the bottle as it was.
+  - The bottle's page switches it either way. Linking again merges the bottle's folders into the Mac's, folder into folder, so a Mac folder of the same name (`My Games`) keeps other games' saves. Of two files with the same name, the newer stays and the older goes to the Trash.
 
 ## Red Dead Redemption 2
 Getting RDR2 to run took several fixes, all of them applied automatically before launch:

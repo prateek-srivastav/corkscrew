@@ -58,6 +58,17 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
     public var runtimeModules: String?
     /// Nil for bottles the user made.
     public var role: Role?
+    /// Where a standard bottle's Windows folders (Documents, Downloads, …) are (`BottleFolders`); nil
+    /// for a bottle made before Corkscrew kept them inside, until the user chooses.
+    public var folders: FolderPlacement?
+
+    public enum FolderPlacement: Codable, Sendable, Equatable {
+        /// Linked to the Mac's folders, as Wine makes them.
+        case linked
+        /// Folders of their own in the bottle. `macFolders`: the Mac folder each one linked to, by its
+        /// path in the prefix (`drive_c/users/crossover/Documents`), for linking them again.
+        case inside(macFolders: [String: String])
+    }
 
     public init(
         id: UUID = UUID(),
@@ -68,7 +79,8 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         isolation: IsolationPolicy = IsolationPolicy(),
         createdAt: Date = .now,
         runtimeModules: String? = nil,
-        role: Role? = nil
+        role: Role? = nil,
+        folders: FolderPlacement? = nil
     ) {
         self.id = id
         self.name = name
@@ -79,6 +91,7 @@ public struct Bottle: Codable, Sendable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.runtimeModules = runtimeModules
         self.role = role
+        self.folders = folders
     }
 }
 
