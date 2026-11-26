@@ -28,6 +28,9 @@ struct CorkscrewApp: App {
                     Color.clear.sheet(item: $model.pendingShare) { ShareSettingsSheet(prompt: $0).environment(model) }
                 }
                 .background {
+                    Color.clear.sheet(item: $model.folderChoice) { BottleFoldersSheet(choice: $0).environment(model) }
+                }
+                .background {
                     Color.clear.alert("A fix for \(model.fixedGame?.name ?? "the game") is ready",
                                       isPresented: Binding(get: { model.fixedGame != nil }, set: { if !$0 { model.fixedGame = nil } }),
                                       presenting: model.fixedGame) { game in

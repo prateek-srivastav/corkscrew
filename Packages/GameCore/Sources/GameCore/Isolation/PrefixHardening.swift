@@ -30,17 +30,20 @@ public enum PrefixHardening {
         }
 
         // Desktop, Documents, … that Wine linked to the Mac user's folders.
-        let users = prefix.appending(path: "drive_c/users", directoryHint: .isDirectory)
-        for user in (try? fm.contentsOfDirectory(atPath: users.path)) ?? [] {
-            let profile = users.appending(path: user, directoryHint: .isDirectory)
-            for folder in (try? fm.contentsOfDirectory(atPath: profile.path)) ?? [] where shellFolders.contains(folder) {
-                let link = profile.appending(path: folder)
-                guard let destination = try? fm.destinationOfSymbolicLink(atPath: link.path) else { continue }
-                try fm.removeItem(at: link)
-                try fm.createDirectory(at: link, withIntermediateDirectories: false)
-                changes.append("Unlinked \(user)/\(folder) from \(destination)")
-            }
-        }
+        changes += try unlinkShellFolders(prefix: prefix).map { "Unlinked \($0.path) from \($0.macFolder.path)" }
         return changes
+    }
+
+    /// Replaces the folders Wine linked to the Mac user's (Desktop, Documents, …,
+    /// `BottleFolders.links`) with empty folders of their own, and returns the links it cut.
+    static func unlinkShellFolders(prefix: URL) throws -> [BottleFolders.Link] {
+        let fm = FileManager.default
+        let links = BottleFolders.links(prefix: prefix)
+        for link in links {
+            let folder = prefix.appending(path: link.path)
+            try fm.removeItem(at: folder)
+            try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+        }
+        return links
     }
 }
