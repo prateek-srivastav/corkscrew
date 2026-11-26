@@ -47,8 +47,28 @@ public struct TestedGame: Codable, Sendable, Equatable {
         name = try c.decode(String.self, forKey: .name)
         listed = try c.decodeIfPresent(Bool.self, forKey: .listed) ?? false
         profile = try c.decode(GameProfile.self, forKey: .profile)
+        profile.environment = Self.allowedEnvironment(profile.environment)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
         source = try c.decodeIfPresent(String.self, forKey: .source)
+    }
+}
+
+extension TestedGame {
+    /// Variables that pick what runs or where files are, which a list from main never sets. The same
+    /// rules as `scripts/tested-settings.py`, which checks a shared report; this checks again here,
+    /// since anyone who can push to main (a stolen token) changes what every Mac reads.
+    static let deniedPrefixes = ["DYLD_", "LD_", "WINE", "CX_", "CORKSCREW_", "VK_"]
+    static let denied: Set = ["PATH", "HOME", "TMPDIR", "USER", "SHELL", "PYTHONPATH", "SSL_CERT_FILE", "CURL_CA_BUNDLE",
+                              "DXVK_CONFIG_FILE", "DXVK_LOG_PATH", "VKD3D_SHADER_CACHE_PATH"]
+    /// Allowed after all, since games need them: which DLLs Wine loads from the game's folder.
+    static let allowed: Set = ["WINEDLLOVERRIDES", "WINEESYNC", "WINEMSYNC", "WINE_LARGE_ADDRESS_AWARE"]
+
+    /// `environment` without the variables a tested entry can't set, or with characters a report can't have.
+    static func allowedEnvironment(_ environment: [String: String]) -> [String: String] {
+        environment.filter { name, value in
+            name.wholeMatch(of: /[A-Z][A-Z0-9_]{0,63}/) != nil && value.wholeMatch(of: /[A-Za-z0-9_.,:;=+\- ]{0,128}/) != nil
+                && (allowed.contains(name) || !(denied.contains(name) || deniedPrefixes.contains { name.hasPrefix($0) }))
+        }
     }
 }
 

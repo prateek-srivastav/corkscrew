@@ -172,4 +172,17 @@ struct AppUpdateTests {
             #expect(Self.version(of: installed) == "0.8.1")
         }
     }
+
+    /// An ad hoc app has no certificate to pin, so updating a build from source keeps working; a
+    /// requirement naming a certificate refuses it.
+    @Test func pinsTheSignersCertificate() async throws {
+        try await withTempDir { root in
+            let app = root.appending(path: "Corkscrew.app")
+            try await Self.makeApp(at: app, version: "0.9.0")
+            #expect(try CodeSigning.certificateRequirement(of: app) == nil)
+            try CodeSigning.check(app, satisfies: CodeSigning.requirement("identifier \"\(Self.bundleID)\""))
+            let certificate = try CodeSigning.requirement(#"certificate leaf = H"0000000000000000000000000000000000000000""#)
+            #expect(throws: CodeSigning.Failure.self) { try CodeSigning.check(app, satisfies: certificate) }
+        }
+    }
 }

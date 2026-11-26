@@ -24,6 +24,8 @@
 #    such as D3DMetal's functions, so mods can hook a game's graphics (ntdll).
 #  - The Install Engine (inseng) reads CIF files and downloads (Wine Staging), so Microsoft's
 #    DirectX web installer works instead of crashing.
+#  - crypt32 never trusts a chain through the compromised eMudhra intermediates (October 2026),
+#    under any root, and honors the Windows Disallowed store (by key).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -885,6 +887,217 @@ if ! patch -d "$WINE_SRC" -p1 -R -s -f --dry-run <"$inseng_patch" >/dev/null 2>&
     || { echo "inseng changed upstream; update INSENG_PATCH_URL in scripts/runtime-pins.env" >&2; exit 1; }
   patch -d "$WINE_SRC" -p1 -N -s -f <"$inseng_patch"
 fi
+
+log "Patching crypt32: distrusted keys (eMudhra intermediates) and the Disallowed store"
+# In October 2026 the private keys of eight eMudhra intermediates turned out to be recoverable from
+# their own certificates (Bugzilla 2083449), and over 100,000 forged google.com certificates under
+# them are public. Each key has a certificate from eMudhra's root (cross-signed by emSign ECC Root
+# CA - G3) and one from Sectigo's AAA Certificate Services. Apple blocks them in data only its own
+# frameworks read; Wine's crypt32 imports every root the Mac trusts and checks none of that, and
+# AAA must stay trusted for legitimate sites. So crypt32 now marks a chain element
+# CERT_TRUST_IS_EXPLICIT_DISTRUST when its SubjectPublicKeyInfo SHA-256 is in a built-in list
+# (Chrome's CRLSet blocked the same SPKIs), which covers both certificates of each key, or when a
+# certificate with the same key is in the Disallowed store (HKLM or HKCU), so the app can block
+# more without a new engine. Windows only matches Disallowed by certificate; by key also covers
+# cross-certificates. The store is read at the first chain a process builds. The base, SSL and
+# Authenticode policies fail such a chain with TRUST_E_EXPLICIT_DISTRUST, whatever the ignore flags,
+# looking at the elements because winhttp clears the chain's status first; winhttp and wininet fail
+# it as an invalid certificate, wintrust with TRUST_E_EXPLICIT_DISTRUST. A chain without a
+# distrusted element ranks above one with it. Programs log the first as
+# "corkscrew: distrusted certificate key: <name>". The SPKI hashes were computed from the
+# certificates on crt.sh, each checked against the SHA-256s Apple (support.apple.com/en-us/149555)
+# and ctlogs.dev/blog/emudhra-ca-compromise list.
+python3 - "$WINE_SRC/dlls" <<'PATCH'
+import sys, pathlib
+d = pathlib.Path(sys.argv[1])
+
+def patch(name, old, new):
+    p = d / name; s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, f"{name} changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch("crypt32/chain.c", '''static void CRYPT_CheckSimpleChain(CertificateChainEngine *engine,
+ PCERT_SIMPLE_CHAIN chain, LPFILETIME time)
+{''', '''/* Corkscrew: keys never trusted, by the SHA-256 of their SubjectPublicKeyInfo, so every
+ * certificate of a key is covered, cross-certificates included. These are the eight eMudhra
+ * intermediates whose keys can be recovered from their certificates (October 2026, Bugzilla
+ * 2083449), each certified by emSign's root and by Sectigo's AAA Certificate Services.
+ */
+static const BYTE distrusted_spki_sha256[][32] =
+{
+    /* EM DV TLS CA - G3B */
+    { 0xeb,0xed,0x64,0x75,0xc2,0xc2,0xd8,0x0f,0xcb,0x19,0x9f,0x3f,0xe8,0xdd,0x6e,0x6b,
+      0x3c,0xe6,0x0b,0x77,0xeb,0x15,0xd4,0xe4,0x2c,0x3d,0xec,0x0c,0x6f,0x5b,0x51,0x05 },
+    /* EM OV TLS CA - G3B */
+    { 0x43,0xbf,0xfa,0x19,0xd6,0xef,0x65,0x14,0x51,0xf6,0x84,0x1e,0x01,0x99,0x31,0xe9,
+      0x6f,0x6f,0x2e,0xae,0xff,0x28,0xab,0x4b,0x6f,0x1c,0xe4,0x57,0x6d,0xe2,0x71,0x7b },
+    /* EM EV TLS CA - G3B */
+    { 0xe0,0x25,0x4c,0x7f,0xcd,0xc2,0x65,0xe2,0xf0,0xf8,0xa4,0x28,0xda,0xbb,0x75,0xab,
+      0x4a,0xe0,0x39,0xb4,0x87,0x2d,0x62,0xf5,0xee,0x57,0xf0,0x87,0x7d,0x5a,0x8a,0x41 },
+    /* EM DV TLS CA - G3C */
+    { 0x49,0xdd,0x35,0x3d,0xc2,0xb9,0x19,0xa3,0x77,0x06,0x45,0x11,0x7d,0x0e,0x60,0xc1,
+      0x61,0x15,0xe7,0xd1,0xbc,0x25,0x9e,0xef,0xe7,0x34,0xb0,0x0e,0xa4,0x34,0xfe,0x5f },
+    /* EM OV TLS CA - G3C */
+    { 0x63,0xec,0xef,0xee,0x43,0x1d,0x49,0x52,0x3b,0xc1,0x13,0x6c,0x4e,0x72,0xd0,0x20,
+      0x6a,0x47,0x70,0x86,0xca,0xf6,0x06,0xcd,0x5c,0xf0,0x25,0x68,0x6c,0x10,0x9c,0xf8 },
+    /* EM EV TLS CA - G3C */
+    { 0x5c,0x06,0x60,0xa2,0xb1,0x64,0x91,0x0d,0x8f,0xf5,0x89,0xc1,0x8e,0x14,0x55,0x2e,
+      0x9e,0x0e,0xc2,0x37,0xdc,0xef,0xe2,0xcb,0x73,0x6d,0x41,0xa4,0x81,0x1f,0x81,0xa0 },
+    /* EM OV CS CA - G3B */
+    { 0xec,0x4f,0xfa,0x1a,0xd0,0xac,0x88,0x08,0x13,0x14,0xb7,0xaa,0xff,0xef,0x6a,0x91,
+      0xf9,0x7c,0xd5,0x72,0x91,0xbb,0x5b,0xa6,0x86,0xc5,0x41,0x5f,0x5e,0xb4,0xf6,0xb6 },
+    /* EM OV CS CA - G3C */
+    { 0x92,0xc0,0x63,0xd6,0x7e,0x8f,0x14,0xdb,0x71,0xd2,0x88,0xe1,0x12,0x66,0xff,0xda,
+      0xf6,0x9c,0xbf,0x11,0x5f,0x7b,0xab,0x14,0xf3,0xbc,0x2f,0x68,0xd2,0x5e,0x0e,0x30 },
+};
+
+static HCERTSTORE disallowed_store;
+
+/* Corkscrew: the Disallowed stores of HKLM and HKCU, read once per process. */
+static HCERTSTORE CRYPT_GetDisallowedStore(void)
+{
+    static const DWORD locations[] = { CERT_SYSTEM_STORE_LOCAL_MACHINE,
+     CERT_SYSTEM_STORE_CURRENT_USER };
+    HCERTSTORE store, location;
+    DWORD i;
+
+    if (disallowed_store)
+        return disallowed_store;
+    store = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
+     CERT_STORE_CREATE_NEW_FLAG, NULL);
+    if (!store)
+        return NULL;
+    for (i = 0; i < ARRAY_SIZE(locations); i++)
+    {
+        location = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W, 0, 0,
+         locations[i] | CERT_STORE_READONLY_FLAG | CERT_STORE_OPEN_EXISTING_FLAG,
+         L"Disallowed");
+        if (location)
+        {
+            CertAddStoreToCollection(store, location, 0, 0);
+            CertCloseStore(location, 0);
+        }
+    }
+    if (InterlockedCompareExchangePointer(&disallowed_store, store, NULL))
+        CertCloseStore(store, 0);
+    return disallowed_store;
+}
+
+/* Corkscrew: whether cert's key is in the built-in list or in the Disallowed store. */
+static BOOL CRYPT_IsKeyDistrusted(PCCERT_CONTEXT cert)
+{
+    static LONG logged;
+    BYTE *spki, hash[32];
+    DWORD size, hashSize = sizeof(hash), i;
+    HCERTSTORE store;
+    PCCERT_CONTEXT found;
+    BOOL ret = FALSE;
+
+    if (CryptEncodeObjectEx(X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO,
+     &cert->pCertInfo->SubjectPublicKeyInfo, CRYPT_ENCODE_ALLOC_FLAG, NULL,
+     &spki, &size))
+    {
+        if (CryptHashCertificate2(L"SHA256", 0, NULL, spki, size, hash,
+         &hashSize) && hashSize == sizeof(hash))
+            for (i = 0; !ret && i < ARRAY_SIZE(distrusted_spki_sha256); i++)
+                ret = !memcmp(hash, distrusted_spki_sha256[i], sizeof(hash));
+        LocalFree(spki);
+    }
+    if (!ret && (store = CRYPT_GetDisallowedStore()))
+    {
+        found = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0,
+         CERT_FIND_PUBLIC_KEY, &cert->pCertInfo->SubjectPublicKeyInfo, NULL);
+        if (found)
+        {
+            CertFreeCertificateContext(found);
+            ret = TRUE;
+        }
+    }
+    if (ret && !InterlockedExchange(&logged, 1))
+    {
+        WCHAR name[256];
+
+        CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, name,
+         ARRAY_SIZE(name));
+        MESSAGE("corkscrew: distrusted certificate key: %s\\n", debugstr_w(name));
+    }
+    return ret;
+}
+
+static void CRYPT_CheckSimpleChain(CertificateChainEngine *engine,
+ PCERT_SIMPLE_CHAIN chain, LPFILETIME time)
+{''')
+
+patch("crypt32/chain.c", '''            chain->rgpElement[i]->TrustStatus.dwErrorStatus |=
+             CERT_TRUST_INVALID_EXTENSION |
+             CERT_TRUST_HAS_NOT_SUPPORTED_CRITICAL_EXT;
+        CRYPT_CombineTrustStatus(&chain->TrustStatus,
+         &chain->rgpElement[i]->TrustStatus);''', '''            chain->rgpElement[i]->TrustStatus.dwErrorStatus |=
+             CERT_TRUST_INVALID_EXTENSION |
+             CERT_TRUST_HAS_NOT_SUPPORTED_CRITICAL_EXT;
+        if (CRYPT_IsKeyDistrusted(chain->rgpElement[i]->pCertContext))
+            chain->rgpElement[i]->TrustStatus.dwErrorStatus |=
+             CERT_TRUST_IS_EXPLICIT_DISTRUST;
+        CRYPT_CombineTrustStatus(&chain->TrustStatus,
+         &chain->rgpElement[i]->TrustStatus);''')
+
+patch("crypt32/chain.c", '''#define CHAIN_QUALITY_SIGNATURE_VALID   0x16''', '''#define CHAIN_QUALITY_NOT_DISTRUSTED    0x20
+#define CHAIN_QUALITY_SIGNATURE_VALID   0x16''')
+
+patch("crypt32/chain.c", '''#define CHAIN_QUALITY_HIGHEST \\
+ CHAIN_QUALITY_SIGNATURE_VALID |''', '''#define CHAIN_QUALITY_HIGHEST \\
+ CHAIN_QUALITY_NOT_DISTRUSTED | CHAIN_QUALITY_SIGNATURE_VALID |''')
+
+patch("crypt32/chain.c", '''    DWORD quality = CHAIN_QUALITY_HIGHEST;
+''', '''    DWORD quality = CHAIN_QUALITY_HIGHEST;
+
+    if (IS_TRUST_ERROR_SET(&chain->context.TrustStatus,
+     CERT_TRUST_IS_EXPLICIT_DISTRUST))
+        quality &= ~CHAIN_QUALITY_NOT_DISTRUSTED;''')
+
+patch("crypt32/chain.c", '''static BOOL WINAPI verify_base_policy(LPCSTR szPolicyOID,''', '''/* Corkscrew: looks at the elements, as winhttp clears the chain's status before checking a policy. */
+static BOOL find_distrusted_element(PCCERT_CHAIN_CONTEXT chain, LONG *iChain,
+ LONG *iElement)
+{
+    LONG i = -1, j = -1;
+
+    find_element_with_error(chain, CERT_TRUST_IS_EXPLICIT_DISTRUST, &i, &j);
+    if (i == -1)
+        return FALSE;
+    *iChain = i;
+    *iElement = j;
+    return TRUE;
+}
+
+static BOOL WINAPI verify_base_policy(LPCSTR szPolicyOID,''')
+
+patch("crypt32/chain.c", '''    pPolicyStatus->dwError = NO_ERROR;
+    if (pChainContext->TrustStatus.dwErrorStatus &
+     CERT_TRUST_IS_NOT_SIGNATURE_VALID)''', '''    pPolicyStatus->dwError = NO_ERROR;
+    if (find_distrusted_element(pChainContext, &pPolicyStatus->lChainIndex,
+     &pPolicyStatus->lElementIndex))
+        pPolicyStatus->dwError = TRUST_E_EXPLICIT_DISTRUST;
+    else if (pChainContext->TrustStatus.dwErrorStatus &
+     CERT_TRUST_IS_NOT_SIGNATURE_VALID)''')
+
+patch("crypt32/chain.c", '''        checks = sslPara->fdwChecks;
+    pPolicyStatus->lChainIndex = pPolicyStatus->lElementIndex = -1;
+    if (pChainContext->TrustStatus.dwErrorStatus &
+     CERT_TRUST_IS_NOT_SIGNATURE_VALID)''', '''        checks = sslPara->fdwChecks;
+    pPolicyStatus->lChainIndex = pPolicyStatus->lElementIndex = -1;
+    if (find_distrusted_element(pChainContext, &pPolicyStatus->lChainIndex,
+     &pPolicyStatus->lElementIndex))
+        pPolicyStatus->dwError = TRUST_E_EXPLICIT_DISTRUST;
+    else if (pChainContext->TrustStatus.dwErrorStatus &
+     CERT_TRUST_IS_NOT_SIGNATURE_VALID)''')
+
+patch("wintrust/softpub.c", '''    if (errorStatus & CERT_TRUST_IS_NOT_SIGNATURE_VALID)
+        error = TRUST_E_CERT_SIGNATURE;''', '''    if (errorStatus & CERT_TRUST_IS_EXPLICIT_DISTRUST)
+        error = TRUST_E_EXPLICIT_DISTRUST;
+    else if (errorStatus & CERT_TRUST_IS_NOT_SIGNATURE_VALID)
+        error = TRUST_E_CERT_SIGNATURE;''')
+PATCH
 
 log "Staging MoltenVK $MOLTENVK_VERSION"
 if [[ ! -f $DEPS/lib/libMoltenVK.dylib ]]; then

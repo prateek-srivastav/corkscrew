@@ -32,6 +32,9 @@ jobs:
       BRANCH: tested-settings/issue-${{ github.event.issue.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Not while the untrusted report is read: the push below signs in through gh.
+          persist-credentials: false
       - name: Add the settings
         env:
           # From the environment, never in the script's text: the report is untrusted.
@@ -41,7 +44,10 @@ jobs:
           python3 -I scripts/tested-settings.py --title-out "$RUNNER_TEMP/title" --body-out "$RUNNER_TEMP/body" \
             --error-out "$RUNNER_TEMP/error"
       - name: Open a pull request
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
         run: |
+          gh auth setup-git
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
@@ -50,7 +56,7 @@ jobs:
           if [[ -n $(gh pr list --head "$BRANCH" --json number --jq '.[].number') ]]; then
             gh pr edit "$BRANCH" --title "$(cat "$RUNNER_TEMP/title")" --body-file "$RUNNER_TEMP/body"
           else
-            gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+            gh pr create --base "$BASE" --head "$BRANCH" \
               --title "$(cat "$RUNNER_TEMP/title")" --body-file "$RUNNER_TEMP/body"
           fi
       - name: Say why it wasn't added

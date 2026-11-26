@@ -58,6 +58,21 @@ Packages/GameCore/.build/debug/gamecore-cli runtime download --data /tmp/corkscr
 
 The app takes the same override: `-EnginePackURL <url>`.
 
+### Distrusted keys
+
+`build-runtime.sh` patches crypt32 so that no chain through a distrusted key is ever trusted: the element gets `CERT_TRUST_IS_EXPLICIT_DISTRUST`, and the base, SSL and Authenticode policies fail with `TRUST_E_EXPLICIT_DISTRUST` whatever ignore flags the program passes. It matches keys by the SHA-256 of their SubjectPublicKeyInfo, as Chrome's CRLSet does, so one entry covers every certificate of a key, cross-certificates included. Wine imports every root the Mac trusts, but not Apple's own blocks, so a compromised intermediate under a root that must stay trusted (such as AAA Certificate Services) can only be blocked here. Programs log the first block as `corkscrew: distrusted certificate key: <name>`.
+
+The built-in list holds the eight eMudhra intermediates of October 2026 (both certificates of each). To add a key:
+
+- **Without a new engine:** put any certificate with that key in the bottle's `Disallowed` store (`HKLM` or `HKCU\Software\Microsoft\SystemCertificates\Disallowed\Certificates`, as Windows stores it). Each program reads the store at the first chain it builds, so add it before the program starts.
+- **In the engine:** download the certificates from crt.sh, check each SHA-256 against the CA's or a root program's list, compute the SPKI hash (`openssl x509 -in cert.pem -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256`), add it to `distrusted_spki_sha256` in `build-runtime.sh`, then make a new engine pack.
+
+Releasing the eMudhra block (or any change to the list):
+
+1. Commit `scripts/build-runtime.sh` and build a new engine pack as above, with the next revision (`scripts/package-engine.sh 26.3.0-9`). The patches are idempotent, so an existing `build/src` tree picks it up.
+2. Before publishing, check the block in a bottle of the new runtime: a chain through a forged certificate (for example one of the published google.com certificates signed by "EM EV TLS CA - G3B", checked at a time inside its validity) must fail `CertGetCertificateChain` with `CERT_TRUST_IS_EXPLICIT_DISTRUST` and the SSL policy with `0x800B0111`, through both the AAA and the emSign path, while a real HTTPS site still loads over WinHTTP.
+3. Commit `EnginePackPin.swift`, publish the pack, then release an app version that pins it. Existing runtimes from older packs are replaced when the app opens, so every bottle gets the block, the Steam bottle included.
+
 ## A new app version
 
 1. Set the version in `project.yml` (`CFBundleShortVersionString`, and bump `CFBundleVersion`). Commit and push.
@@ -107,7 +122,7 @@ It writes `~/.corkscrew-signing/corkscrew-signing.p12` and its password file, an
 
 The **Release** workflow passes these to `scripts/make-dmg.sh`, which imports the certificate into a keychain of its own (deleted at the end) and signs the app and `perf-overlay` with it. Every run in this repository uses the same secret, whoever pushed the tag, so every release has the same fingerprint; the build stops if the certificate's SHA-1 isn't `CORKSCREW_SIGNING_SHA1`, or if either is missing. Forks and pull requests from forks get no secrets: their builds are ad hoc signed, and they can't sign as Corkscrew. Without the variables, `make-dmg.sh` signs ad hoc (builds from source, local tries). To check a build: `codesign -d -r- Corkscrew.app`.
 
-The in-app updater keeps the signature as it is: it unpacks the zip with `ditto`, removes the quarantine attribute and runs `codesign --verify --deep --strict`, which a self-signed signature passes. Users who update from an ad hoc version (1.0.2 and older) get each permission prompt once more; after that, updates keep them.
+The in-app updater keeps the signature as it is: it unpacks the zip with `ditto`, removes the quarantine attribute and runs `codesign --verify --deep --strict`, which a self-signed signature passes. Then it checks that the new app meets the installed app's designated requirement (`AppUpdate.stage`, `CodeSigning`), so only an app signed with this certificate installs: a SHA-256 from the same release proves only that the download is whole, and anyone holding a token that can publish a release could replace both. An ad hoc installed app (a build from source) skips that check. The install script does the same with the certificate's SHA-1, which the Pages workflow fills in from `CORKSCREW_SIGNING_SHA1` (the workflow stops if the variable is missing). Users who update from an ad hoc version (1.0.2 and older) get each permission prompt once more; after that, updates keep them.
 
 The certificate isn't a Developer ID and the app isn't notarized, so Gatekeeper still rejects a downloaded DMG: users confirm it once with **Open Anyway**. The install script and the updater remove the quarantine attribute, so they don't ask. A Developer ID and notarization would remove that step; they need an Apple Developer Program membership, and would change the designated requirement once more.
 
