@@ -10,6 +10,9 @@ struct ReportSheet: View {
     @State var pending: AppModel.PendingReport
     @State private var isSending = false
     @State private var sent = false
+    /// Sent, but the relay kept it without opening an issue (its daily limit, or GitHub refused):
+    /// nobody sees it on GitHub, so the sheet says so and offers Report on GitHub.
+    @State private var keptWithoutIssue = false
     @State private var sendError: String?
     @State private var copied = false
 
@@ -51,6 +54,10 @@ struct ReportSheet: View {
 
             if let sendError {
                 Label(sendError, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            } else if keptWithoutIssue {
+                Label("Corkscrew's server kept the report but couldn't open its GitHub issue, so it may not be seen soon. Report on GitHub opens one with this report filled in.",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {
@@ -61,9 +68,9 @@ struct ReportSheet: View {
                 }
                 Spacer()
                 Button(copied ? "Copied" : "Copy Report") { copy() }
-                if sent {
+                if sent, !keptWithoutIssue {
                     Label("Report sent", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                } else if let relay = AppModel.reportRelay, sendError == nil {
+                } else if !sent, let relay = AppModel.reportRelay, sendError == nil {
                     Button(isSending ? "Sending…" : "Send Report") { send(to: relay) }
                         .keyboardShortcut(.defaultAction)
                         .disabled(isSending)
@@ -125,7 +132,11 @@ struct ReportSheet: View {
             do {
                 var report = report
                 report.device = AppModel.deviceID
-                if let sent = try await report.send(to: relay) { model.remember(report, sent: sent, game: pending.gameID) }
+                if let sent = try await report.send(to: relay) {
+                    model.remember(report, sent: sent, game: pending.gameID)
+                } else {
+                    keptWithoutIssue = true
+                }
                 sent = true
             } catch {
                 sendError = "Couldn't send the report: \(AppModel.describe(error)). You can report it on GitHub instead."
