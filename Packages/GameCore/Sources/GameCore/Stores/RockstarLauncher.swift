@@ -215,6 +215,19 @@ public enum RockstarLauncher {
         return true
     }
 
+    /// Puts back the tested settings (`rdr2TestedSettings`) at `desktop`'s size, keeping the replaced
+    /// ones next to them (`system.xml.bak`). For when the game reset itself to Safe Mode's after a
+    /// launch that didn't shut down cleanly (Cancel on its graphics driver prompt quits it that way):
+    /// Windowed Borderless at 1147×745, everything Low. Run it while the game isn't running; the game
+    /// writes its settings back when they change and when it quits.
+    /// Without a `desktop` (no display found) they keep the tested Mac's 1512×982. The tested
+    /// settings become the kept ones (`settingDrops`) again.
+    public static func restoreTestedSettings(prefix: URL, desktop: (width: Int, height: Int)?) throws {
+        try replaceSettings(prefix: prefix, with: rdr2TestedSettings)
+        try? FileManager.default.removeItem(at: keptSettings(prefix: prefix))
+        if let desktop { try fitWindow(prefix: prefix, desktop: desktop, anyScreenType: true) }
+    }
+
     /// RDR2's screen types (`<windowed value="…" />`).
     static let fullscreen = "0"
     static let borderless = "2"

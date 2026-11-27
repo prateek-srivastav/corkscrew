@@ -8,6 +8,8 @@ struct GameDetailView: View {
     @State private var arguments = ""
     @State private var selectedLog: URL?
     @State private var logs: [URL] = []
+    @State private var isConfirmingRDR2Restore = false
+    @State private var restoredRDR2Settings = false
 
     var body: some View {
         let session = model.session(for: game)
@@ -64,6 +66,28 @@ struct GameDetailView: View {
                     .onChange(of: arguments) { saveArguments() }
             }
             .disabled(isActive)
+
+            if model.isRDR2(game), state == .installed {
+                Section("Graphics Settings") {
+                    let gameIsRunning = model.isRunning(game)
+                    let isTested = model.rdr2HasTestedSettings.contains(game.id)
+                    Button("Restore Tested Graphics Settings…") { isConfirmingRDR2Restore = true }
+                        .disabled(gameIsRunning || isTested)
+                    Text(gameIsRunning
+                         ? "Quit the game first: it saves its own settings when it quits."
+                         : restoredRDR2Settings
+                         ? "Restored. The game starts filling this Mac's screen."
+                         : isTested
+                         ? "The game has the tested settings."
+                         : "If the game starts in a small window at low quality, it has reset its settings "
+                           + "(after a launch that didn't shut down cleanly, such as Cancel on its graphics driver prompt). "
+                           + "This puts back a borderless window filling the screen and the tested quality settings.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                // Once the game has run again, its settings are its own again.
+                .onChange(of: model.isRunning(game)) { restoredRDR2Settings = false }
+                .confirmRDR2Restore(isPresented: $isConfirmingRDR2Restore, game: game) { restoredRDR2Settings = $0 }
+            }
 
             Section("Logs") {
                 if logs.isEmpty {
