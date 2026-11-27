@@ -4,6 +4,8 @@
 - Scripts that build Wine's x86_64 dependencies (FreeType, GnuTLS, Nettle, SDL2) and winecx 26.3, with every download pinned by version and SHA-256 (`scripts/runtime-pins.env`).
   - Libraries are relocatable through `@rpath`.
   - The loader is marked as a game for macOS Game Mode.
+- **Sound follows the Mac's output.** Earphones connected while a game ran got none of its sound: Wine tied the game's sound to the output that was the Mac's default when the game opened it. On Windows a game hears that the default changed and switches; Wine only says so when its own registry setting changes, never when macOS switches.
+  - A runtime patch (winecoreaudio): sound played to the Mac's default output uses Apple's DefaultOutput unit, which follows the default as Mac apps do. Sound sent to a specific other output stays there.
 - **No chain through a distrusted key is trusted.** Wine imported every root the Mac trusts, but not Apple's own blocks: a compromised certificate under a root that must stay trusted (AAA Certificate Services) still signed programs. crypt32 now marks a chain element explicitly distrusted by the SHA-256 of its public key, covering both certificates of the eight eMudhra intermediates of October 2026, and honors the Windows Disallowed store by key. Needs a new engine pack.
 - **Updates check the app's signing requirement**, not just the release's SHA-256: only an app signed with Corkscrew's certificate installs. The certificate's SHA-1 is checked in CI, the install script and the updater.
 - Installing DXMT, DXVK-macOS and D3DMetal (taken from Apple's Game Porting Toolkit disk image) as switchable backends.

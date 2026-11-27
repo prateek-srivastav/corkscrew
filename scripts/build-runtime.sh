@@ -24,6 +24,8 @@
 #    such as D3DMetal's functions, so mods can hook a game's graphics (ntdll).
 #  - The Install Engine (inseng) reads CIF files and downloads (Wine Staging), so Microsoft's
 #    DirectX web installer works instead of crashing.
+#  - Sound played to the default output follows the Mac's output, so earphones connected while a
+#    game runs get its sound (winecoreaudio).
 #  - crypt32 never trusts a chain through the compromised eMudhra intermediates (October 2026),
 #    under any root, and honors the Windows Disallowed store (by key).
 set -euo pipefail
@@ -873,6 +875,119 @@ patch("socket.c", '''    free( params );
     note_no_internet( name, status );
     SetLastError( NtStatusToWSAError( status ) );
 ''')
+PATCH
+
+log "Patching winecoreaudio: sound follows the Mac's output"
+# A program's sound went to the output that was the Mac's default when it opened its stream: Wine
+# turns the default endpoint into that device's ID and ties the stream to it (HALOutput with
+# CurrentDevice). Earphones connected mid-game became the Mac's output, and the game kept playing
+# through the speakers. On Windows the program hears that the default changed and reopens its
+# stream; mmdevapi only says so when Wine's own registry default changes, never for macOS's. Now
+# a playback stream opened on the Mac's current default output uses Apple's DefaultOutput unit,
+# which follows the default as Mac apps do, converting to the new device's format; the latency and
+# volume calls ask that unit for its device. Streams on another device stay tied to it.
+python3 - "$WINE_SRC/dlls/winecoreaudio.drv/coreaudio.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+
+def patch(old, new):
+    s = p.read_text()
+    if new not in s:
+        assert s.count(old) == 1, "coreaudio.c changed upstream; update this patch"
+        p.write_text(s.replace(old, new))
+
+patch('''    AudioDeviceID dev_id;
+
+    EDataFlow flow;''', '''    AudioDeviceID dev_id;
+    BOOL follows_default; /* Corkscrew: plays to whatever output the Mac uses now */
+
+    EDataFlow flow;''')
+
+patch('''static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID adevid)
+{''', '''/* Corkscrew: the Mac's default output now. */
+static AudioDeviceID default_output_device(void)
+{
+    const AudioObjectPropertyAddress addr =
+    {
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+        .mSelector = kAudioHardwarePropertyDefaultOutputDevice,
+    };
+    AudioDeviceID id = kAudioObjectUnknown;
+    UInt32 size = sizeof(id);
+
+    if(AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, NULL, &size, &id) != noErr)
+        return kAudioObjectUnknown;
+    return id;
+}
+
+static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID adevid, BOOL follow_default)
+{''')
+
+patch('''    desc.componentSubType = kAudioUnitSubType_HALOutput;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;''', '''    desc.componentSubType = follow_default ? kAudioUnitSubType_DefaultOutput : kAudioUnitSubType_HALOutput;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;''')
+
+patch('''    sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &adevid, sizeof(adevid));
+    if(sc != noErr){
+        WARN("Couldn't set audio unit device\\n");
+        AudioComponentInstanceDispose(unit);
+        return NULL;
+    }
+
+    return unit;
+}''', '''    if(follow_default)
+        return unit;
+
+    sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &adevid, sizeof(adevid));
+    if(sc != noErr){
+        WARN("Couldn't set audio unit device\\n");
+        AudioComponentInstanceDispose(unit);
+        return NULL;
+    }
+
+    return unit;
+}
+
+/* Corkscrew: the device the stream plays to now; a stream that follows the default asks its unit. */
+static AudioDeviceID stream_device(struct coreaudio_stream *stream)
+{
+    AudioDeviceID id;
+    UInt32 size = sizeof(id);
+
+    if(stream->follows_default && AudioUnitGetProperty(stream->unit, kAudioOutputUnitProperty_CurrentDevice,
+                                                       kAudioUnitScope_Global, 0, &id, &size) == noErr)
+        return id;
+    return stream->dev_id;
+}''')
+
+patch('''    if(!(stream->unit = get_audiounit(stream->flow, stream->dev_id))){''',
+      '''    stream->follows_default = stream->flow == eRender && stream->dev_id != kAudioObjectUnknown
+                              && stream->dev_id == default_output_device();
+    if(!(stream->unit = get_audiounit(stream->flow, stream->dev_id, stream->follows_default))){''')
+
+patch('''    unit = get_audiounit(params->flow, dev_id);''', '''    unit = get_audiounit(params->flow, dev_id, FALSE);''')
+
+for old, new in [
+    ('''    sc = AudioObjectGetPropertyDataSize(stream->dev_id, &addr, 0, NULL, &size);
+    if(sc != noErr){
+        WARN("Unable to get size for _Streams property: %x\\n", (int)sc);''',
+     '''    sc = AudioObjectGetPropertyDataSize(stream_device(stream), &addr, 0, NULL, &size);
+    if(sc != noErr){
+        WARN("Unable to get size for _Streams property: %x\\n", (int)sc);'''),
+    ('''    sc = AudioObjectGetPropertyData(stream->dev_id, &addr, 0, NULL, &size, ids);''',
+     '''    sc = AudioObjectGetPropertyData(stream_device(stream), &addr, 0, NULL, &size, ids);'''),
+    ('''    sc = AudioObjectGetPropertyData(stream->dev_id, &addr, 0, NULL, &size, &latency);''',
+     '''    sc = AudioObjectGetPropertyData(stream_device(stream), &addr, 0, NULL, &size, &latency);'''),
+    ('''    sc = AudioObjectSetPropertyData(stream->dev_id, &prop_addr, 0, NULL, sizeof(float), &level);''',
+     '''    sc = AudioObjectSetPropertyData(stream_device(stream), &prop_addr, 0, NULL, sizeof(float), &level);'''),
+    ('''        sc = AudioObjectSetPropertyData(stream->dev_id, &prop_addr, 0, NULL, sizeof(float), &vol);''',
+     '''        sc = AudioObjectSetPropertyData(stream_device(stream), &prop_addr, 0, NULL, sizeof(float), &vol);'''),
+]:
+    patch(old, new)
+assert "stream->dev_id, &" not in p.read_text(), "a use of stream->dev_id this patch doesn't cover"
 PATCH
 
 log "Patching inseng: CIF reader and downloads (Wine Staging)"
