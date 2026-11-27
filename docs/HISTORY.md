@@ -34,6 +34,7 @@
   - A folder macOS didn't let Corkscrew read keeps its link and nothing is copied: read as empty, its link would have been swapped for an empty folder, hiding the saves from the game.
   - All or nothing: the copies go into a folder beside each link, and the links are replaced only when every copy is made. A file that can't be copied (one iCloud can't download) leaves the bottle as it was.
   - The bottle's page switches it either way. Linking again merges the bottle's folders into the Mac's, folder into folder, so a Mac folder of the same name (`My Games`) keeps other games' saves. Of two files with the same name, the newer stays and the older goes to the Trash.
+- The app is filed under Utilities, not Games: the games run from the loader, which is the one marked as a game for Game Mode.
 
 ## Red Dead Redemption 2
 Getting RDR2 to run took several fixes, all of them applied automatically before launch:
@@ -49,6 +50,19 @@ Getting RDR2 to run took several fixes, all of them applied automatically before
   - In Windowed Borderless, RDR2 sizes its window from its resolution setting, and its defaults pick a size smaller than the desktop.
   - Fix: the app sets that resolution to the desktop's size.
 - **Launch and quit like a native game.**
-  - A Steam game's launch follows the game's own processes rather than `steam.exe`.
-  - When the game quits, the app closes what it started: Steam and the launcher.
-  - It closes the Rockstar launcher with a hard kill, because a normal quit signs you out and breaks automatic sign-in.
+  - A Steam game's launch follows what Steam itself logs of the game (`logs/gameprocess_log.txt`), not the bottle's processes:
+    - Steam logs every program it follows for the game: the one it started (`PlayRDR2.exe`), and the ones that program starts (the Rockstar launcher, `RDR2.exe`, its crash handler).
+    - Steam logs when it stops following each one, and when the game has ended. That includes a game that quits inside Rockstar's launcher before `RDR2.exe` ever runs.
+    - The launch wakes when Steam writes to that log, or a program exits. It doesn't look every few seconds. For a minute after each thing Steam logs, it also looks for the game's windows, to bring them forward.
+  - Next to Play, the status line shows the launch as it happens: "Waiting for Steam…", then "Starting" with the newest program's name, from the program itself, as Task Manager shows it ("Rockstar Games Launcher").
+  - After Steam ends the game, what started with it closes by itself ("Closing Rockstar Games Launcher…"), and the launch follows those programs until they exit, for up to 30 seconds. Corkscrew ends none of them. If Steam never logs the end, the player ends the launch with Force Stop, which stops the bottle, also when Steam was open before. If Steam starts nothing for the game in 10 minutes, and none of its installers run, the launch ends by itself.
+  - `launch-tracking.log` next to the launch's log records each step and which programs ran.
+  - **A Rockstar launcher that can't start the game.** Now and then its background service (RockstarService) doesn't answer the launcher's handshake within half a second; it usually takes about 0.35. The launcher then talks to it in an older protocol it ignores, restarts it every 30 seconds, and never starts the game: 89 tries in 25 minutes once, while the next launch worked first time. It wasn't memory: the launch that worked had more of the Mac swapped out.
+    - The launch reads the launcher's `launcher.log` while it starts. On "Handshake with service timed out", the status line says "Rockstar Games Launcher is stuck. Force Stop, then Play again." with a warning sign, and when Corkscrew isn't in front, a notification says so; a click opens the game's page. Corkscrew stops nothing itself. If the game starts after all, the status line follows it again. The log is read as it grows, not whole on every look.
+  - Then Steam quits as its own Exit does ("Quitting Steam…"), when the game's launch started it and no other Steam game runs. A Steam the player opened stays open.
+    - Only Steam is asked to quit. What the game left running stays, and Wine's own services end once nothing runs in the bottle.
+    - For a while Steam stayed open after the game, so the next launch skipped Steam's start: 1 second to the Rockstar launcher instead of 25. Idle, it held about 1.4 GB (its Chromium web helper alone 1 GB, most of it compressed by macOS) and a few percent of one core. Steam can't run without that web helper, so a warm Steam can't be made lighter; Steam quits again instead.
+- **Quitting Corkscrew quits what it runs.**
+  - Steam quits as its own Exit does, so it saves its state. Then what's left in each bottle stops.
+  - While a game runs or starts, Corkscrew doesn't quit. It asks instead: Show opens the game's page, Force Quit stops the game and quits, and ✕ stays.
+  - Steam used to quit 30 seconds after its window closed. Corkscrew checked its windows every 10 seconds for that, and the check is gone.

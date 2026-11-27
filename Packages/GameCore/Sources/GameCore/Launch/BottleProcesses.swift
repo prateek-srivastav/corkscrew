@@ -20,6 +20,15 @@ public enum BottleProcesses {
         /// Steam's interface (`steamwebhelper.exe`): its main and sign-in windows are this
         /// program's. `steam.exe` only shows the small updater and start-up windows.
         public var isSteamWebHelper: Bool { program.hasSuffix("\\steamwebhelper.exe") }
+        /// One of Wine's own programs (`c:\windows\…`: services, `explorer.exe`), not a game's.
+        var isWineService: Bool { program.hasPrefix("c:\\windows\\") }
+        /// The program's file name, lowercased: `rdr2.exe`.
+        var fileName: String { BottleProcesses.fileName(of: program) }
+    }
+
+    /// A Windows path's file name: `RDR2.exe` for `C:\…\RDR2.exe`.
+    static func fileName(of path: String) -> String {
+        path.split(separator: "\\").last.map(String.init) ?? path
     }
 
     /// Our own processes whose environment has WINEPREFIX=prefix. Callers within `maxAge` of each

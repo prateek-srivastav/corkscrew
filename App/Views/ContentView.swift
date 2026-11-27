@@ -10,6 +10,7 @@ struct ContentView: View {
     @Environment(Navigator.self) private var navigator
     @AppStorage(Theme.advancedModeKey) private var advancedMode = false
     @AppStorage(Theme.sidebarCollapsedKey) private var isSidebarCollapsed = false
+    @Environment(\.openWindow) private var openWindow
 
     private var pageShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(topLeadingRadius: Theme.windowCornerRadius, bottomLeadingRadius: Theme.windowCornerRadius,
@@ -54,6 +55,7 @@ struct ContentView: View {
         .animation(.snappy(duration: 0.3), value: isSidebarCollapsed)
         .background { WindowButtonsPlacement() }
         .background { NoFocusAtOpen() }
+        .background { FocusRelease() }
         .background(Theme.background)
         .overlay(alignment: .bottom) { ActivityBar().padding(.bottom, 16) }
         .preferredColorScheme(.dark)
@@ -80,7 +82,15 @@ struct ContentView: View {
         .onChange(of: advancedMode, initial: true) { if !advancedMode { navigator.remove(.bottles) } }
         // A click on a report notification.
         .onChange(of: model.reportsToOpen) { navigator.go(.reports) }
-        .onAppear { if !model.isSetUp { navigator.reset(to: .init(section: .setup)) } }
+        // A click on a launch notification.
+        .onChange(of: model.gameToOpen) {
+            if let id = model.gameToOpen?.id { navigator.go(library: .game(id, from: .all)) }
+        }
+        .onAppear {
+            if !model.isSetUp { navigator.reset(to: .init(section: .setup)) }
+            // Kept after the window closes: a quit that has to ask opens it again.
+            model.showWindow = { [openWindow] in openWindow(id: "main") }
+        }
         // Fetches the art pages open with, so a page doesn't show dark while it downloads. Only
         // fetched, not decoded: a page decodes its own art from disk in a few milliseconds.
         .task(id: model.allGames.map(\.id)) {
@@ -236,23 +246,26 @@ extension AppModel.Session.Status {
 }
 
 extension Launcher.LaunchPhase {
-    /// While a Steam game starts: what happens now. Nil once its window shows.
+    /// While a Steam game starts or closes: what happens now, from Steam's log. Nil while it plays.
     var text: String? {
         switch self {
         case .steam: "Waiting for Steam…"
-        case .installing: "Installing what the game needs…"
-        case .rockstar: "Rockstar is signing you in…"
-        case .loading: "Loading the game…"
+        case .starting(let program): "Starting \(program)…"
         case .playing: nil
+        case .stuck(let program): "\(program) is stuck. Force Stop, then Play again."
+        case .closing(let programs): "Closing \(programs.formatted())…"
+        case .quittingSteam: "Quitting Steam…"
         }
     }
 
     var info: String {
         switch self {
-        case .steam: "Steam gets the game ready to start. When Steam isn't open yet, it starts first, which takes about a minute."
-        case .installing: "On a game's first launch, Steam installs the programs it needs. An installer may ask you to click through it."
-        case .rockstar: "Rockstar's launcher signs you in, checks your games and syncs cloud saves. This takes about a minute."
-        case .loading, .playing: "The game runs and opens its window soon."
+        case .steam: "Steam gets the game ready to start. When Steam isn't open yet, it starts first, which takes about a minute. On a game's first launch, Steam also installs what the game needs."
+        case .starting: "Steam started this program for the game. A launcher may sign you in or update itself before the game starts."
+        case .playing: "The game runs."
+        case .stuck: "It lost touch with its background service and won't start the game, however long it runs. This happens now and then, and a new launch usually works."
+        case .closing: "Steam has ended the game. These programs started with it are closing by themselves."
+        case .quittingSteam: "The game has ended. Steam started for it, so it quits now, as its own Exit does."
         }
     }
 }

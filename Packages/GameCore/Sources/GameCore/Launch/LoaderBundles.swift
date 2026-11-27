@@ -113,7 +113,9 @@ public enum LoaderBundles {
     /// Makes (or refreshes, after a runtime update or with another Info.plist) the bundle `name`.app
     /// in `folder`: Info.plist with the games category, the loader hard-linked as its executable, and
     /// ntdll.so next to it. `dockName`: the name the Dock and the menu bar show, in place of `name`.
-    static func prepare(name: String, identifier id: String, dockName: String? = nil, engine: Engine, in folder: URL) throws -> URL {
+    /// `isGame`: false for a program that isn't one (Steam), which Game Mode must not follow.
+    static func prepare(name: String, identifier id: String, dockName: String? = nil, isGame: Bool = true,
+                        engine: Engine, in folder: URL) throws -> URL {
         let fm = FileManager.default
         let loader = loader(of: engine)
         let bundle = folder.appending(path: "\(name).app", directoryHint: .isDirectory)
@@ -130,10 +132,12 @@ public enum LoaderBundles {
             "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1.0",
             "NSPrincipalClass": "WineApplication",
-            "LSApplicationCategoryType": "public.app-category.games",
-            "LSSupportsGameMode": true,
             "LSUIElement": "1",
         ]
+        if isGame {
+            plist["LSApplicationCategoryType"] = "public.app-category.games"
+            plist["LSSupportsGameMode"] = true
+        }
         if dockName != nil {
             // The Dock shows the bundle's file name. LaunchServices shows the localized display name
             // (InfoPlist.strings) instead only while the plain one is that file name.
@@ -170,19 +174,20 @@ public enum LoaderBundles {
     /// Steam's window belongs to `steamwebhelper_real.exe`, Steam's own helper behind our wrapper
     /// (`Steam.installWebHelperWrapper`). Its bundle is made before Steam starts, so the Dock and the
     /// menu bar show "Steam": in the prebuilt folder for isolated bottles, else in Wine's folder,
-    /// where the runtime uses a bundle it finds (with the identifier its own bundles have).
+    /// where the runtime uses a bundle it finds (with the identifier its own bundles have). It isn't
+    /// marked as a game: Steam stays open after a game quits, and Game Mode would stay on with it.
     @discardableResult
     public static func prepareSteamWebHelper(engine: Engine, isolated: Bool, paths: AppPaths,
                                              temporary: URL? = temporaryDirectory) throws -> URL? {
         let name = "steamwebhelper_real.exe"
         if isolated {
-            return try prepare(name: name, identifier: identifier(for: name), dockName: "Steam", engine: engine,
+            return try prepare(name: name, identifier: identifier(for: name), dockName: "Steam", isGame: false, engine: engine,
                                in: prebuiltFolder(for: engine, paths: paths))
         }
         guard let folder = temporary.flatMap({ wineFolder(for: engine, in: $0) }) else { return nil }
         // As Wine makes it.
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        return try prepare(name: name, identifier: identifier, dockName: "Steam", engine: engine, in: folder)
+        return try prepare(name: name, identifier: identifier, dockName: "Steam", isGame: false, engine: engine, in: folder)
     }
 
     /// Wine's folder of bundles for `engine` in `temporary`, named as `create_tempdir` in ntdll's

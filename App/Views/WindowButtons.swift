@@ -37,6 +37,35 @@ struct NoFocusAtOpen: NSViewRepresentable {
     }
 }
 
+/// With keyboard navigation on, Tab leaves a focus line on a button that neither a click on empty
+/// space nor Esc takes away. Both do now (not while text is being edited, where Esc and clicks
+/// keep their own meaning).
+struct FocusRelease: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { MonitorView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class MonitorView: NSView {
+        private var monitor: Any?
+        private static let escape: UInt16 = 53
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+                guard let window = self?.window, event.window === window, !(window.firstResponder is NSText) else { return event }
+                if event.type == .leftMouseDown || event.keyCode == Self.escape { window.makeFirstResponder(nil) }
+                return event
+            }
+        }
+
+        private func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+    }
+}
+
 /// Moves the window's close, minimize and zoom buttons onto `TopBar`'s line. AppKit puts them
 /// back after a resize, full screen or a focus change, so they move again after each.
 struct WindowButtonsPlacement: NSViewRepresentable {

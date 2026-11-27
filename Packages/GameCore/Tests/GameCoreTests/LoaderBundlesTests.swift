@@ -107,6 +107,8 @@ struct LoaderBundlesTests {
             let plist = try #require(LoaderBundles.infoPlist(of: bundle))
             #expect(plist["CFBundleName"] as? String == "Steam" && plist["CFBundleDisplayName"] as? String == name)
             #expect(plist["CFBundleIdentifier"] as? String == LoaderBundles.identifier)
+            // Wine's own bundle was a game; Steam isn't one, so Game Mode ends with the game.
+            #expect(plist["LSSupportsGameMode"] == nil && plist["LSApplicationCategoryType"] == nil)
             #expect(try String(contentsOf: bundle.appending(path: "Contents/Resources/en.lproj/InfoPlist.strings"), encoding: .utf8)
                 == "CFBundleDisplayName = \"Steam\";\n")
             #expect(FileManager.default.displayName(atPath: bundle.path) == "Steam")
@@ -114,6 +116,7 @@ struct LoaderBundlesTests {
             let isolated = try #require(try LoaderBundles.prepareSteamWebHelper(engine: engine, isolated: true, paths: paths, temporary: temporary))
             #expect(isolated.deletingLastPathComponent() == LoaderBundles.prebuiltFolder(for: engine, paths: paths))
             #expect(LoaderBundles.bundleIdentifier(of: isolated) == LoaderBundles.identifier(for: name))
+            #expect(LoaderBundles.infoPlist(of: isolated)?["LSSupportsGameMode"] == nil)
             #expect(FileManager.default.displayName(atPath: isolated.path) == "Steam")
         }
     }

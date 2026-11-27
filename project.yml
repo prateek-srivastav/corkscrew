@@ -54,20 +54,6 @@ targets:
           - $(SRCROOT)/tools/steamwebhelper-wrapper/wrapper.c
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/steamwebhelper-wrapper.exe
-      # Counts a bottle's visible windows, so closing Steam's window can quit Steam (Launcher.run).
-      - name: Build visible-windows helper
-        script: |
-          set -e
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-          command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "error: mingw-w64 is missing: run scripts/bootstrap.sh"; exit 1; }
-          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
-          x86_64-w64-mingw32-gcc -O2 -Wall -municode -mconsole \
-            -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/visible-windows.exe" \
-            "$SRCROOT/tools/visible-windows/visible-windows.c"
-        inputFiles:
-          - $(SRCROOT)/tools/visible-windows/visible-windows.c
-        outputFiles:
-          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/visible-windows.exe
       # God of War's white specks: a d3d11.dll in front of DXMT that the launch puts next to the game.
       - name: Build depth-equal fix
         script: |
@@ -101,7 +87,7 @@ targets:
         CFBundleShortVersionString: "1.0.4"
         CFBundleVersion: "20"
         NSHumanReadableCopyright: "Copyright © 2026 Prateek Srivastav. Free software under the GNU GPL v3 or later."
-        LSApplicationCategoryType: public.app-category.games
+        LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: "26.0"
         NSPrincipalClass: NSApplication
         # "release" in the DMG and the update zip (scripts/make-dmg.sh); empty in builds from source.

@@ -216,9 +216,13 @@ public enum Steam {
         guard !processes.isEmpty else { return [:] }
         var running: [String: [pid_t]] = [:]
         for app in installedApps(steamRoot: root, prefix: prefix) {
-            // The game's own programs: `PlayRDR2.exe` runs on while Rockstar's launcher closes.
-            let pids = Launcher.SteamGameLook(processes, installDir: app.installFolder.lastPathComponent,
-                                              usesRockstarLauncher: Launcher.usesRockstarLauncher(installFolder: app.installFolder)).game.map(\.pid)
+            // The programs from the game's folder, but not the one that only starts Rockstar's launcher
+            // (`PlayRDR2.exe`): it runs on after the game while the launcher closes.
+            let installDir = app.installFolder.lastPathComponent
+            let pids = processes.filter {
+                BottleProcesses.isFromSteamGame($0.program, installDir: installDir)
+                    && !RockstarLauncher.isBootstrapper($0.program, installFolder: app.installFolder)
+            }.map(\.pid)
             if !pids.isEmpty { running[app.appID, default: []] += pids }
         }
         return running

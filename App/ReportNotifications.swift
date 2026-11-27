@@ -43,7 +43,11 @@ enum ReportNotifications {
         }
 
         func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-            await MainActor.run { AppModel.shared.openReports() }
+            // A launch notification (`LaunchNotifications`) names its game.
+            let game = (response.notification.request.content.userInfo["game"] as? String).flatMap(UUID.init(uuidString:))
+            await MainActor.run {
+                if let game { AppModel.shared.openGame(game) } else { AppModel.shared.openReports() }
+            }
         }
     }
 }

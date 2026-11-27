@@ -341,7 +341,7 @@ private struct GamesPage: View {
     @ViewBuilder
     private func menu(for game: Game) -> some View {
         if model.isRunning(game) {
-            busyItem("Stop", "Stopping…", model.isPending(.stop(game.id))) { model.stop(game) }
+            busyItem("Force Stop", "Stopping…", model.isPending(.stop(game.id))) { model.stop(game) }
         } else if model.installState(of: game) != .installed {
             busyItem("Open in Steam", "Opening…", model.isPending(.steamPage(game.id))) { model.openInSteam(game) }
         } else {
@@ -474,10 +474,15 @@ struct GameHero: View {
         let session = model.session(for: game)
         let isActive = model.isRunning(game)
         let state = model.installState(of: game)
+        let launchPhase = session?.status == .running ? session?.phase : nil
+        let launchText = launchPhase?.text
+        let isLaunching = model.isPending(.launch(game.id)) || launchText != nil
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 if model.bottle(for: game)?.kind == .isolated { Image(systemName: "lock.shield.fill").foregroundStyle(Theme.isolated) }
-                SectionLabel([model.bottle(for: game)?.name ?? "No bottle", subtitle(state)].joined(separator: " · "))
+                // Not "Steam · Steam" for a game in the Steam bottle.
+                let bottleName = model.bottle(for: game)?.name ?? "No bottle"
+                SectionLabel(bottleName == subtitle(state) ? bottleName : "\(bottleName) · \(subtitle(state))")
             }
             SteamArt(game: game, kind: .logo, contentMode: .fit, maxSize: CGSize(width: 440, height: 130)) {
                 Text(game.name)
@@ -489,16 +494,11 @@ struct GameHero: View {
             .frame(maxWidth: 560, alignment: .leading)
 
             HStack(spacing: 10) {
-                if model.isPending(.launch(game.id)) {
-                    // Until its window shows: a launch takes a while (Steam may update first).
-                    BusyButton("Play", busyTitle: "Starting…", isBusy: true) {}
-                        .buttonStyle(.prominentPill)
-                }
                 if model.isPending(.uninstallGame(game.id)) {
                     BusyButton("Uninstall", busyTitle: "Uninstalling…", isBusy: true) {}
                         .buttonStyle(.destructivePill)
-                } else if isActive {
-                    BusyButton("Stop", systemImage: "stop.fill", busyTitle: "Stopping…", isBusy: model.isPending(.stop(game.id))) {
+                } else if isActive || isLaunching {
+                    BusyButton("Force Stop", systemImage: "stop.fill", busyTitle: "Stopping…", isBusy: model.isPending(.stop(game.id))) {
                         model.stop(game)
                     }
                     .buttonStyle(.destructivePill)
@@ -515,10 +515,14 @@ struct GameHero: View {
                         .buttonStyle(.pill)
                 }
                 moreMenu(state: state, isActive: isActive)
-                if let session, session.status == .running, let phase = session.phase, let text = phase.text {
+                if isLaunching {
                     HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini)
-                        InfoLine(text, info: phase.info)
+                        if case .stuck = launchPhase {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        } else {
+                            ProgressView().controlSize(.mini)
+                        }
+                        InfoLine(launchText ?? AppModel.Session.Status.preparing.text, info: launchPhase?.info)
                     }
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
@@ -666,7 +670,7 @@ struct GameCard: View {
                         }
                         .buttonStyle(.plain)
                         .padding(10)
-                        .help(isRunning ? "Stop" : state == .installed ? "Play" : "Open its page in Steam to download it")
+                        .help(isRunning ? "Force Stop" : state == .installed ? "Play" : "Open its page in Steam to download it")
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                 }

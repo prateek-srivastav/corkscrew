@@ -31,6 +31,11 @@ struct CorkscrewApp: App {
                     Color.clear.sheet(item: $model.folderChoice) { BottleFoldersSheet(choice: $0).environment(model) }
                 }
                 .background {
+                    Color.clear.sheet(isPresented: Binding(get: { !model.quitBlockers.isEmpty }, set: { if !$0 { model.quitBlockers = [] } })) {
+                        QuitBlockedSheet(games: model.quitBlockers).environment(model).environment(navigator)
+                    }
+                }
+                .background {
                     Color.clear.alert("A fix for \(model.fixedGame?.name ?? "the game") is ready",
                                       isPresented: Binding(get: { model.fixedGame != nil }, set: { if !$0 { model.fixedGame = nil } }),
                                       presenting: model.fixedGame) { game in
@@ -109,6 +114,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Games keep running when the window closes; quitting the app doesn't stop them either.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Counts quits, so a reply belongs to the quit it was for.
+    private var quitAttempt = 0
+    private var repliedToQuit = 0
+
+    /// Steam and the bottles stop with Corkscrew (`AppModel.stopBottlesForQuit`), which waits for
+    /// them `stopWait` at most. While a game runs, Corkscrew can't quit cleanly: it stays, and asks
+    /// (`QuitBlockedSheet`), unless macOS is logging out, restarting or shutting down (`isSystemQuit`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let model = AppModel.shared
+        quitAttempt += 1
+        let attempt = quitAttempt
+        // Read now: the quit event is only current while this runs.
+        let isSystemQuit = Self.isSystemQuit
+        Task { @MainActor in
+            if !model.forcesQuit, !isSystemQuit {
+                let blockers = await model.gamesBlockingQuit()
+                if !blockers.isEmpty {
+                    reply(sender, attempt: attempt, quit: false)
+                    model.quitBlockers = blockers
+                    model.showWindow?()
+                    NSApp.activate()
+                    return
+                }
+            }
+            await model.stopBottlesForQuit()
+            reply(sender, attempt: attempt, quit: true)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.stopWait)
+            reply(sender, attempt: attempt, quit: true)
+        }
+        return .terminateLater
+    }
+
+    /// Longer than Steam gets to quit (`Launcher.quitSteam`), so the rest of its bottle stops too.
+    private static let stopWait: Duration = .seconds(40)
+
+    /// Whether macOS asks Corkscrew to quit because it logs out, restarts or shuts down. A running
+    /// game mustn't cancel that: Steam still quits as its own Exit does, and macOS ends the rest.
+    private static var isSystemQuit: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventClass == AEEventClass(kCoreEventClass), event.eventID == AEEventID(kAEQuitApplication),
+              let reason = event.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAERestart, kAEShowShutdownDialog, kAEShutDown]
+            .map { OSType($0) }.contains(reason)
+    }
+
+    private func reply(_ sender: NSApplication, attempt: Int, quit: Bool) {
+        guard attempt == quitAttempt, repliedToQuit < attempt else { return }
+        repliedToQuit = attempt
+        sender.reply(toApplicationShouldTerminate: quit)
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = ReportNotifications.delegate
