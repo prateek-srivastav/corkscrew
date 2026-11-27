@@ -16,12 +16,15 @@ public struct AppUpdate: Sendable, Equatable {
         case notWritable(String)
         /// The archive doesn't hold this app at the expected version.
         case wrongApp(String)
+        /// The new app isn't signed with the installed app's certificate.
+        case untrustedSignature
         case toolFailed(String)
 
         public var description: String {
             switch self {
             case .httpStatus(let status): "the update check failed (HTTP \(status))"
             case .checksumMismatch: "the download doesn't match its SHA-256, so it wasn't installed"
+            case .untrustedSignature: "the download isn't signed with Corkscrew's certificate, so it wasn't installed"
             case .notWritable(let folder):
                 "Corkscrew can't replace itself in \(folder). Install the new version with the install command on Corkscrew's website."
             case .wrongApp(let reason): "the download isn't the expected app (\(reason))"
@@ -105,6 +108,13 @@ public struct AppUpdate: Sendable, Equatable {
             guard info?["CFBundleShortVersionString"] as? String == version else { throw UpdateError.wrongApp("not version \(version)") }
             RuntimeStore.removeQuarantine(in: new)
             try await Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", new.path])
+            // The SHA-256 comes from the same release as the zip, so it only proves the download is
+            // whole. The certificate proves who made it: someone who can publish a release (a stolen
+            // token) still can't sign as Corkscrew. An ad hoc installed app (a build from source)
+            // has no certificate to compare with.
+            if let requirement = try CodeSigning.certificateRequirement(of: installed) {
+                do { try CodeSigning.check(new, satisfies: requirement) } catch { throw UpdateError.untrustedSignature }
+            }
             return new
         } catch {
             try? FileManager.default.removeItem(at: staging)

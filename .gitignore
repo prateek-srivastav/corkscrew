@@ -9,6 +9,13 @@ xcuserdata/
 /fixtures/bin/
 /App/Info.plist
 
+# Signing keys and secrets never go in the repository (docs/RELEASING.md, Signing)
+*.p12
+*.pem
+*.key
+.env
+.env.*
+
 # Local Claude context (private, see .claude/CLAUDE.md)
 /.claude/
 /.memory/

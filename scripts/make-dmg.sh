@@ -63,6 +63,9 @@ if [[ -n ${CORKSCREW_SIGNING_P12:-} ]]; then
   security import "$SIGNING/signing.p12" -k "$KEYCHAIN" -f pkcs12 -P "${CORKSCREW_SIGNING_PASSWORD:?}" \
     -T /usr/bin/codesign >/dev/null
   rm "$SIGNING/signing.p12"
+  # The key is in the keychain now: what runs next (xcodegen, xcodebuild and the build scripts, which
+  # use Homebrew's tools) doesn't get it in its environment.
+  unset CORKSCREW_SIGNING_P12 CORKSCREW_SIGNING_PASSWORD
   security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
   # Self-signed, so not trusted (CSSMERR_TP_NOT_TRUSTED): codesign takes it by its SHA-1 all the same.
   IDENTITY=$(security find-identity -p codesigning "$KEYCHAIN" | awk '/\) [0-9A-F]{40} /{print $2; exit}')
