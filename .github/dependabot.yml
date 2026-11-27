@@ -1,9 +1,14 @@
 version: 2
 updates:
+  # The actions' and the relay's updates each come as one pull request a week (groups), not one per
+  # package: the relay's shared a lockfile, so each merge made the next conflict and need approving again.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: swift
     directory: /Packages/GameCore
     schedule:
@@ -13,3 +18,6 @@ updates:
     directory: /relay
     schedule:
       interval: weekly
+    groups:
+      relay:
+        patterns: ["*"]
